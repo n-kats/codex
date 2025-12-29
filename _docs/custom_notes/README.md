@@ -19,4 +19,4 @@
 
 ## 動作確認の共通ルール
 
-- `make` 経由の動作確認は、デフォルトで `CODEX_HOME=$PWD/_cache/codex_home` を使う（`Makefile` で指定）。
+- `make` 経由の動作確認は、デフォルトで `CODEX_HOME=<リポジトリ配下>/_cache/codex_home` を使う（`Makefile` で指定）。

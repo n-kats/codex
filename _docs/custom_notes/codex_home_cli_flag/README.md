@@ -21,7 +21,7 @@
 
 ## 動作確認
 
-- `make verify-codex-home-cli-flag`（`CODEX_HOME=$PWD/_cache/codex_home` で実行される）
+- `make verify-codex-home-cli-flag`（`CODEX_HOME=<リポジトリ配下>/_cache/codex_home` で実行される）
   - Lint: `cd codex-rs && just fix -p codex-arg0 && just fix -p codex-cli`
   - Test: `cd codex-rs && cargo test -p codex-arg0 && cargo test -p codex-cli`
 

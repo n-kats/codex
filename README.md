@@ -1,10 +1,21 @@
+## カスタム（このリポジトリ固有）
+
+このリポジトリは `openai/codex` をフォークしてカスタマイズしています（詳細: `CUSTOM.md`）。
+
+現在のカスタム一覧:
+
+- TUI の入力: Enter で改行、Ctrl+Enter で送信
+- Codex home の上書き: `codex --codex-home PATH`（`CODEX_HOME` と同等）
+- 動作確認: `make` の検証ターゲットはデフォルトで `CODEX_HOME=<リポジトリ配下>/_cache/codex_home` を使用
+
+---
 <p align="center"><code>npm i -g @openai/codex</code><br />or <code>brew install --cask codex</code></p>
 <p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
 <p align="center">
   <img src="./.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
-</p>
+  </p>
 </br>
-If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE.</a>
+</br>If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE.</a>
 </br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a>.</p>
 
 ---
