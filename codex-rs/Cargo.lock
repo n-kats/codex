@@ -1081,6 +1081,7 @@ dependencies = [
  "codex-core",
  "codex-linux-sandbox",
  "dotenvy",
+ "pretty_assertions",
  "tempfile",
  "tokio",
 ]

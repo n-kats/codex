@@ -49,3 +49,4 @@
 ## カスタム一覧
 
 - TUI の入力: Enter で改行、Ctrl+Enter で送信。
+- Codex home の切り替え: `--codex-home PATH` で `CODEX_HOME`（デフォルト `~/.codex`）を上書きできるようにする（詳細: `_docs/custom_notes/codex_home_cli_flag/README.md`）。

@@ -62,6 +62,12 @@ use codex_utils_absolute_path::AbsolutePathBuf;
     override_usage = "codex [OPTIONS] [PROMPT]\n       codex [OPTIONS] <COMMAND> [ARGS]"
 )]
 struct MultitoolCli {
+    /// Override the Codex home directory (defaults to `~/.codex`).
+    ///
+    /// This is equivalent to setting `CODEX_HOME`, but can be easier to use in scripts.
+    #[arg(long, global = true, value_name = "PATH")]
+    codex_home: Option<PathBuf>,
+
     #[clap(flatten)]
     pub config_overrides: CliConfigOverrides,
 
@@ -435,6 +441,7 @@ fn main() -> anyhow::Result<()> {
 
 async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
     let MultitoolCli {
+        codex_home: _,
         config_overrides: mut root_config_overrides,
         feature_toggles,
         mut interactive,
@@ -795,6 +802,7 @@ mod tests {
             config_overrides: root_overrides,
             subcommand,
             feature_toggles: _,
+            codex_home: _,
         } = cli;
 
         let Subcommand::Resume(ResumeCommand {

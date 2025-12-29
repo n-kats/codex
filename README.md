@@ -5,6 +5,13 @@
 </br>If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE</a>
 </br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a></p>
 
+## カスタム（このリポジトリ固有）
+
+このリポジトリにはローカルカスタマイズが含まれます。現在の一覧は `CUSTOM.md` を参照してください。
+
+- Codex home の上書き: `codex --codex-home PATH`（`CODEX_HOME` を設定するのと同等）
+- `make` の検証ターゲットはデフォルトで `CODEX_HOME=$PWD/_cache/codex_home` を使用
+
 <p align="center">
   <img src="./.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
   </p>

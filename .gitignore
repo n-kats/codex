@@ -34,6 +34,7 @@ AGENTS.override.md
 
 # caches
 .cache/
+_cache/
 .turbo/
 .parcel-cache/
 .eslintcache
@@ -89,4 +90,3 @@ CHANGELOG.ignore.md
 # Python bytecode files
 __pycache__/
 *.pyc
-
