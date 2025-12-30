@@ -68,6 +68,13 @@ struct MultitoolCli {
     #[arg(long, global = true, value_name = "PATH")]
     codex_home: Option<PathBuf>,
 
+    /// Control whether the user's shell startup files are loaded when Codex runs shell commands.
+    ///
+    /// `clean` avoids loading user zsh dotfiles by setting `ZDOTDIR` to an empty directory.
+    /// This flag is applied very early in process startup (before the Tokio runtime is created).
+    #[arg(long, global = true, value_name = "MODE")]
+    shell_startup_files: Option<String>,
+
     #[clap(flatten)]
     pub config_overrides: CliConfigOverrides,
 
@@ -442,6 +449,7 @@ fn main() -> anyhow::Result<()> {
 async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
     let MultitoolCli {
         codex_home: _,
+        shell_startup_files: _,
         config_overrides: mut root_config_overrides,
         feature_toggles,
         mut interactive,
@@ -803,6 +811,7 @@ mod tests {
             subcommand,
             feature_toggles: _,
             codex_home: _,
+            shell_startup_files: _,
         } = cli;
 
         let Subcommand::Resume(ResumeCommand {

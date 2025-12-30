@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use tokio::sync::Notify;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
@@ -18,6 +20,7 @@ use crate::protocol::BackgroundEventEvent;
 use crate::protocol::EventMsg;
 use crate::sandboxing::ExecEnv;
 use crate::sandboxing::SandboxPermissions;
+use crate::shell::ShellType;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::runtimes::unified_exec::UnifiedExecRequest as UnifiedExecToolRequest;
 use crate::tools::runtimes::unified_exec::UnifiedExecRuntime;
@@ -37,6 +40,7 @@ use super::UnifiedExecResponse;
 use super::UnifiedExecSessionManager;
 use super::WARNING_UNIFIED_EXEC_SESSIONS;
 use super::WriteStdinRequest;
+use super::async_watcher::TRAILING_OUTPUT_GRACE;
 use super::async_watcher::emit_exec_end_for_unified_exec;
 use super::async_watcher::spawn_exit_watcher;
 use super::async_watcher::start_streaming_output;
@@ -286,6 +290,28 @@ impl UnifiedExecSessionManager {
             } => (Some(process_id), exit_code, call_id),
             SessionStatus::Exited { exit_code, entry } => {
                 let call_id = entry.call_id.clone();
+                let exit = exit_code.unwrap_or(-1);
+                let output_drained = entry.session.output_drained_notify();
+                let _ = tokio::time::timeout(TRAILING_OUTPUT_GRACE * 2, output_drained.notified())
+                    .await;
+
+                if !entry.end_emitted.swap(true, Ordering::SeqCst) {
+                    let duration = Instant::now().saturating_duration_since(entry.started_at);
+                    emit_exec_end_for_unified_exec(
+                        Arc::clone(&entry.session_ref),
+                        Arc::clone(&entry.turn_ref),
+                        entry.call_id.clone(),
+                        entry.command.clone(),
+                        entry.cwd.clone(),
+                        Some(entry.process_id.clone()),
+                        Arc::clone(&entry.transcript),
+                        output.clone(),
+                        exit,
+                        duration,
+                    )
+                    .await;
+                }
+
                 (None, exit_code, call_id)
             }
             SessionStatus::Unknown => {
@@ -392,6 +418,7 @@ impl UnifiedExecSessionManager {
         process_id: String,
         transcript: Arc<tokio::sync::Mutex<CommandTranscript>>,
     ) {
+        let end_emitted = Arc::new(AtomicBool::new(false));
         let entry = SessionEntry {
             session: Arc::clone(&session),
             session_ref: Arc::clone(&context.session),
@@ -399,6 +426,10 @@ impl UnifiedExecSessionManager {
             call_id: context.call_id.clone(),
             process_id: process_id.clone(),
             command: command.to_vec(),
+            cwd: cwd.clone(),
+            started_at,
+            transcript: Arc::clone(&transcript),
+            end_emitted: Arc::clone(&end_emitted),
             last_used: started_at,
         };
         let number_sessions = {
@@ -427,6 +458,7 @@ impl UnifiedExecSessionManager {
             cwd,
             process_id,
             transcript,
+            end_emitted,
             started_at,
         );
     }
@@ -479,7 +511,14 @@ impl UnifiedExecSessionManager {
         justification: Option<String>,
         context: &UnifiedExecContext,
     ) -> Result<UnifiedExecSession, UnifiedExecError> {
-        let env = apply_unified_exec_env(create_env(&context.turn.shell_environment_policy));
+        let shell_type = command
+            .first()
+            .map(|program| crate::shell::detect_shell_type(&PathBuf::from(program)))
+            .flatten()
+            .unwrap_or(ShellType::Sh);
+
+        let mut env = apply_unified_exec_env(create_env(&context.turn.shell_environment_policy));
+        crate::shell_startup_files::apply_shell_startup_files_env(&mut env, shell_type);
         let features = context.session.features();
         let mut orchestrator = ToolOrchestrator::new();
         let mut runtime = UnifiedExecRuntime::new(self);

@@ -51,6 +51,7 @@ pub fn arg0_dispatch() -> Option<TempDir> {
     // This modifies the environment, which is not thread-safe, so do this
     // before creating any threads/the Tokio runtime.
     apply_codex_home_override_from_args();
+    apply_shell_startup_files_override_from_args();
     load_dotenv();
 
     match prepend_path_entry_for_codex_aliases() {
@@ -111,6 +112,8 @@ where
 
 const ILLEGAL_ENV_VAR_PREFIX: &str = "CODEX_";
 const CODEX_HOME_CLI_FLAG: &str = "--codex-home";
+const SHELL_STARTUP_FILES_CLI_FLAG: &str = "--shell-startup-files";
+const CODEX_SHELL_STARTUP_FILES_ENV_VAR: &str = "CODEX_SHELL_STARTUP_FILES";
 
 /// Load env vars from ~/.codex/.env.
 ///
@@ -162,6 +165,43 @@ where
 
         if arg == CODEX_HOME_CLI_FLAG {
             return args.next().and_then(|s| s.to_str().map(PathBuf::from));
+        }
+    }
+
+    None
+}
+
+fn apply_shell_startup_files_override_from_args() {
+    let Some(mode) = parse_shell_startup_files_flag(std::env::args_os()) else {
+        return;
+    };
+
+    // It is safe to call set_var() because our process is single-threaded at this point in its
+    // execution (before the Tokio runtime is created).
+    unsafe { std::env::set_var(CODEX_SHELL_STARTUP_FILES_ENV_VAR, mode) };
+}
+
+fn parse_shell_startup_files_flag<I>(mut args: I) -> Option<String>
+where
+    I: Iterator<Item = OsString>,
+{
+    // Skip argv0.
+    let _ = args.next();
+
+    while let Some(arg) = args.next() {
+        let Some(arg) = arg.to_str() else {
+            continue;
+        };
+
+        if let Some((flag, value)) = arg.split_once('=') {
+            if flag == SHELL_STARTUP_FILES_CLI_FLAG && !value.is_empty() {
+                return Some(value.to_string());
+            }
+            continue;
+        }
+
+        if arg == SHELL_STARTUP_FILES_CLI_FLAG {
+            return args.next().and_then(|s| s.to_str().map(str::to_string));
         }
     }
 

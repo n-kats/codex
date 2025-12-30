@@ -1045,6 +1045,26 @@ async fn enqueueing_history_prompt_multiple_times_is_stable() {
 }
 
 #[tokio::test]
+async fn ctrl_j_submits_user_message() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(None).await;
+
+    chat.bottom_pane.set_composer_text("hello".to_string());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+
+    match op_rx.try_recv() {
+        Ok(Op::UserInput { items }) => {
+            assert_eq!(
+                items,
+                vec![codex_core::protocol::UserInput::Text {
+                    text: "hello".to_string()
+                }]
+            );
+        }
+        other => panic!("expected Op::UserInput, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn streaming_final_answer_keeps_task_running_state() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(None).await;
 
