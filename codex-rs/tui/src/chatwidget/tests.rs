@@ -56,6 +56,7 @@ use codex_protocol::plan_tool::PlanItemArg;
 use codex_protocol::plan_tool::StepStatus;
 use codex_protocol::plan_tool::UpdatePlanArgs;
 use codex_protocol::protocol::CodexErrorInfo;
+use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
@@ -1055,7 +1056,7 @@ async fn ctrl_j_submits_user_message() {
         Ok(Op::UserInput { items }) => {
             assert_eq!(
                 items,
-                vec![codex_core::protocol::UserInput::Text {
+                vec![UserInput::Text {
                     text: "hello".to_string()
                 }]
             );

@@ -8,6 +8,12 @@ pub struct Cli {
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 
+    #[clap(skip)]
+    pub config_toml_file: Option<std::path::PathBuf>,
+
+    #[clap(skip)]
+    pub no_config: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }

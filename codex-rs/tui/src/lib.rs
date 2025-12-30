@@ -17,8 +17,9 @@ use codex_core::auth::enforce_login_restrictions;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_overrides;
+use codex_core::config::load_config_as_toml_with_cli_overrides_and_loader_overrides;
 use codex_core::config::resolve_oss_provider;
+use codex_core::config_loader::LoaderOverrides;
 use codex_core::find_conversation_path_by_id_str;
 use codex_core::get_platform_sandbox;
 use codex_core::protocol::AskForApproval;
@@ -159,11 +160,25 @@ pub async fn run_main(
         None => AbsolutePathBuf::current_dir()?,
     };
 
+    let mut loader_overrides = LoaderOverrides::default();
+    if cli.no_config {
+        loader_overrides.disable_user_config = true;
+        loader_overrides.disable_project_config = true;
+    } else if let Some(path) = &cli.config_toml_file {
+        let resolved = if path.is_absolute() {
+            path.clone()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        loader_overrides.user_config_path = Some(resolved);
+    }
+
     #[allow(clippy::print_stderr)]
-    let config_toml = match load_config_as_toml_with_cli_overrides(
+    let config_toml = match load_config_as_toml_with_cli_overrides_and_loader_overrides(
         &codex_home,
         &config_cwd,
         cli_kv_overrides.clone(),
+        loader_overrides,
     )
     .await
     {
@@ -217,6 +232,8 @@ pub async fn run_main(
         approval_policy,
         sandbox_mode,
         cwd,
+        config_toml_file: cli.config_toml_file.clone(),
+        no_config: cli.no_config,
         model_provider: model_provider_override.clone(),
         config_profile: cli.config_profile.clone(),
         codex_linux_sandbox_exe,

@@ -301,7 +301,7 @@ impl ChatComposer {
         self.pending_pastes.clear();
         self.attached_images.clear();
         self.textarea.set_text(&text);
-        self.textarea.set_cursor(0);
+        self.textarea.set_cursor(text.len());
         self.sync_popups();
     }
 
@@ -1138,6 +1138,26 @@ impl ChatComposer {
         {
             self.textarea.set_text("");
             return (InputResult::Command(cmd), true);
+        }
+
+        // If the first line is a bare custom prompt invocation (no args), treat
+        // submit as "select prompt" only when the prompt expects arguments.
+        if let Some((name, rest)) = parse_slash_name(first_line)
+            && rest.is_empty()
+            && let Some(prompt_name) = name.strip_prefix(&format!("{PROMPTS_CMD_PREFIX}:"))
+            && let Some(prompt) = self
+                .custom_prompts
+                .iter()
+                .find(|prompt| prompt.name == prompt_name)
+        {
+            let expects_named_args = !prompt_argument_names(&prompt.content).is_empty();
+            let expects_positional_args = prompt_has_numeric_placeholders(&prompt.content);
+            if expects_named_args || expects_positional_args {
+                let text = format!("/{name} ");
+                self.textarea.set_text(&text);
+                self.textarea.set_cursor(text.len());
+                return (InputResult::None, true);
+            }
         }
 
         // If we're in a paste-like burst capture, treat Enter as part of the burst
@@ -2938,7 +2958,10 @@ mod tests {
         composer.set_text_content("/diff ".to_string());
         composer.textarea.set_cursor(composer.textarea.text().len());
         composer.sync_popups();
-        assert!(!composer.popup_active(), "expected slash popup to be hidden");
+        assert!(
+            !composer.popup_active(),
+            "expected slash popup to be hidden"
+        );
 
         let (result, _needs_redraw) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
@@ -2965,7 +2988,10 @@ mod tests {
         composer.set_text_content("/definitely_not_a_command ".to_string());
         composer.textarea.set_cursor(composer.textarea.text().len());
         composer.sync_popups();
-        assert!(!composer.popup_active(), "expected slash popup to be hidden");
+        assert!(
+            !composer.popup_active(),
+            "expected slash popup to be hidden"
+        );
 
         let (result, _needs_redraw) =
             composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));

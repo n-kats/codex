@@ -27,21 +27,25 @@ pub(super) struct LoadedConfigLayers {
 
 pub(super) async fn load_config_layers_internal(
     codex_home: &Path,
-    overrides: LoaderOverrides,
+    overrides: &LoaderOverrides,
 ) -> io::Result<LoadedConfigLayers> {
     #[cfg(target_os = "macos")]
     let LoaderOverrides {
         managed_config_path,
         managed_preferences_base64,
+        ..
     } = overrides;
 
     #[cfg(not(target_os = "macos"))]
     let LoaderOverrides {
         managed_config_path,
+        ..
     } = overrides;
 
     let managed_config_path = AbsolutePathBuf::from_absolute_path(
-        managed_config_path.unwrap_or_else(|| managed_config_default_path(codex_home)),
+        managed_config_path
+            .clone()
+            .unwrap_or_else(|| managed_config_default_path(codex_home)),
     )?;
 
     let managed_config = read_config_from_path(&managed_config_path, false)
