@@ -36,6 +36,30 @@
 - よく使うコマンド（手元での実行用）: `Makefile`
 - `AGENTS.md`: `CUSTOM.md` を参照する旨のみ（追加ルールは書かない）
 
+## `_docs/custom_notes` インデックス
+
+このリポジトリのカスタム関連の知見（背景・設計・注意点・検証手順）の置き場。新規カスタムを追加したら、ここにも追記する。
+
+参照の目安:
+
+- 実装や挙動を変更する前に、同じ領域の既存カスタムがないか確認したいとき
+- テストが落ちた / 差分が増えたときに、既知の制約・回避策・検証手順を探したいとき
+- 上流更新で衝突したときに、差分の意図（なぜ必要か）を素早く把握したいとき
+
+各ノート（どの機能に関係するか）:
+
+- `_docs/custom_notes/README.md`: custom_notes 全体の概要（追加時の方針）
+- `_docs/custom_notes/codex_home_cli_flag/README.md`: `--codex-home` / `CODEX_HOME` の上書き（ホーム切替・テスト用ホーム運用）
+- `_docs/custom_notes/additional_prompt_dirs/README.md`: `CODEX_ADDITIONAL_PROMPT_DIRS`（カスタムプロンプト探索パス）
+- `_docs/custom_notes/tui-enter-newline-ctrl-enter-send/README.md`: TUI（tui）入力キー（Enter=改行、Ctrl+Enter/Ctrl+J=送信）と関連テスト
+- `_docs/custom_notes/tui2_input_submit_behavior_tests/README.md`: TUI2（tui2）入力キーと送信挙動、`/prompts:` の引数なし挙動、関連テスト
+- `_docs/custom_notes/exec_command_default_login/README.md`: `!`/shell 実行の login 制御（`CODEX_USER_SHELL_LOGIN` 等）
+- `_docs/custom_notes/linux_default_shell_prefers_bash_over_zsh/README.md`: Linux のデフォルトシェル検出・bash 優先・関連テスト
+- `_docs/custom_notes/shell_snapshot_redacted_exports/README.md`: Shell snapshot の `exports` マスキング（秘匿情報混入回避）
+- `_docs/custom_notes/test_output_redacts_host_env/README.md`: テスト出力・ログからホスト環境変数の漏えい回避
+- `_docs/custom_notes/langfuse_logging/README.md`: Langfuse ロギング連携（計測・トレース）
+- `_docs/custom_notes/unified_exec_end_event_deterministic/README.md`: UnifiedExec の end event（取りこぼし/決定性）と関連テスト
+
 ## カスタム方針の所在（AGENTS.md への追記）
 
 - 本ファイル `CUSTOM.md` がカスタム方針の一次情報源。
@@ -55,7 +79,6 @@
 ## カスタム一覧
 
 - （機能追加）TUI の入力: Enter で改行、Ctrl+Enter（または Ctrl+J）で送信。
-- （メモ）TUI2 の送信キー変更に伴うテスト修正: `_docs/custom_notes/tui2_input_submit_behavior_tests/README.md`。
 - （機能追加）config.toml の読み込み制御: `--config-file <FILE>`（alias: `--config-path`）でユーザー `config.toml` の読み込みパスを任意に指定でき、`--no-config` でユーザー＋プロジェクトの config を無視できる（システム config や `-c key=value` は引き続き適用される）。
 - （機能追加）Codex home の切り替え: `--codex-home PATH` で `CODEX_HOME`（デフォルト `~/.codex`）を上書きできるようにする（詳細: `_docs/custom_notes/codex_home_cli_flag/README.md`）。
 - （機能追加）カスタムプロンプト探索パスの追加: `CODEX_ADDITIONAL_PROMPT_DIRS`（コンマ区切り、相対パスはカレントディレクトリ基準）でプロンプト探索ディレクトリを追加できるようにする（詳細: `_docs/custom_notes/additional_prompt_dirs/README.md`）。
