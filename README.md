@@ -14,7 +14,7 @@
 - （テスト）テスト/ログの安全性: 失敗時の差分表示でホスト環境変数が全量出力されないようにする（`env` は値を丸ごと比較しない）
 - （テスト）動作確認: `make` の検証ターゲットはデフォルトで `CODEX_HOME=<リポジトリ配下>/_cache/codex_home` を使用
 - （テスト）動作確認ログ: `make test-*` / `make verify-*` 実行時のログを `_tmp/*_test_result.txt` に保存（`tee`）
-- （開発運用）フォーマット（rustfmt）: 上流の `codex-rs/rustfmt.toml` が nightly 前提のため `make fmt`（=`cargo +nightly fmt`）で実行
+- （開発運用）フォーマット（rustfmt）: `make fmt`（=`cargo +nightly fmt`）で実行
 - （開発運用）NOTICE: フォークで加えた変更の著作権表記を `NOTICE` に追記
 - （テスト）既知の不安定テスト回避: `make almost`（=`make fmt` + `make test-almost`）を用意し、環境依存で揺れやすいテストを `--skip` して基本的な検証を回せるようにする
 

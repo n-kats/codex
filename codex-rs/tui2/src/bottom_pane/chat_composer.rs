@@ -102,7 +102,6 @@ pub(crate) struct ChatComposer {
     history: ChatComposerHistory,
     ctrl_c_quit_hint: bool,
     esc_backtrack_hint: bool,
-    use_shift_enter_hint: bool,
     dismissed_file_popup_token: Option<String>,
     current_file_query: Option<String>,
     pending_pastes: Vec<(String, String)>,
@@ -142,12 +141,10 @@ impl ChatComposer {
     pub fn new(
         has_input_focus: bool,
         app_event_tx: AppEventSender,
-        enhanced_keys_supported: bool,
+        _enhanced_keys_supported: bool,
         placeholder_text: String,
         disable_paste_burst: bool,
     ) -> Self {
-        let use_shift_enter_hint = enhanced_keys_supported;
-
         let mut this = Self {
             textarea: TextArea::new(),
             textarea_state: RefCell::new(TextAreaState::default()),
@@ -156,7 +153,6 @@ impl ChatComposer {
             history: ChatComposerHistory::new(),
             ctrl_c_quit_hint: false,
             esc_backtrack_hint: false,
-            use_shift_enter_hint,
             dismissed_file_popup_token: None,
             current_file_query: None,
             pending_pastes: Vec::new(),
@@ -401,6 +397,25 @@ impl ChatComposer {
 
     /// Handle a key event coming from the main UI.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        // Treat submit chords as global so they work even when popups are visible.
+        if matches!(
+            key_event,
+            KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } | KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }
+        ) {
+            self.footer_mode = reset_mode_after_activity(self.footer_mode);
+            let result = self.handle_submit_key();
+            self.sync_popups();
+            return result;
+        }
+
         let result = match &mut self.active_popup {
             ActivePopup::Command(_) => self.handle_key_event_with_slash_popup(key_event),
             ActivePopup::File(_) => self.handle_key_event_with_file_popup(key_event),
@@ -1082,137 +1097,145 @@ impl ChatComposer {
             }
             KeyEvent {
                 code: KeyCode::Enter,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => self.handle_submit_key(),
+            // Fallback for terminals that do not reliably report modifiers for Enter:
+            // Ctrl+J (LF) is a distinct key chord that crossterm can usually observe.
+            KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => self.handle_submit_key(),
+            KeyEvent {
+                code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                // If the first line is a bare built-in slash command (no args),
-                // dispatch it even when the slash popup isn't visible. This preserves
-                // the workflow: type a prefix ("/di"), press Tab to complete to
-                // "/diff ", then press Enter to run it. Tab moves the cursor beyond
-                // the '/name' token and our caret-based heuristic hides the popup,
-                // but Enter should still dispatch the command rather than submit
-                // literal text.
-                let first_line = self.textarea.text().lines().next().unwrap_or("");
-                if let Some((name, rest)) = parse_slash_name(first_line)
-                    && rest.is_empty()
-                    && let Some((_n, cmd)) = built_in_slash_commands()
-                        .into_iter()
-                        .find(|(n, _)| *n == name)
-                {
-                    self.textarea.set_text("");
-                    return (InputResult::Command(cmd), true);
+                if self.textarea.is_empty() && self.attached_images.is_empty() {
+                    return (InputResult::None, false);
                 }
-                // If we're in a paste-like burst capture, treat Enter as part of the burst
-                // and accumulate it rather than submitting or inserting immediately.
-                // Do not treat Enter as paste inside a slash-command context.
-                let in_slash_context = matches!(self.active_popup, ActivePopup::Command(_))
-                    || self
-                        .textarea
-                        .text()
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .starts_with('/');
-                if self.paste_burst.is_active() && !in_slash_context {
-                    let now = Instant::now();
-                    if self.paste_burst.append_newline_if_active(now) {
-                        return (InputResult::None, true);
-                    }
-                }
-                // If we have pending placeholder pastes, replace them in the textarea text
-                // and continue to the normal submission flow to handle slash commands.
-                if !self.pending_pastes.is_empty() {
-                    let mut text = self.textarea.text().to_string();
-                    for (placeholder, actual) in &self.pending_pastes {
-                        if text.contains(placeholder) {
-                            text = text.replace(placeholder, actual);
-                        }
-                    }
-                    self.textarea.set_text(&text);
-                    self.pending_pastes.clear();
-                }
-
-                // During a paste-like burst, treat Enter as a newline instead of submit.
-                let now = Instant::now();
-                if self
-                    .paste_burst
-                    .newline_should_insert_instead_of_submit(now)
-                    && !in_slash_context
-                {
-                    self.textarea.insert_str("\n");
-                    self.paste_burst.extend_window(now);
-                    return (InputResult::None, true);
-                }
-                let mut text = self.textarea.text().to_string();
-                let original_input = text.clone();
-                let input_starts_with_space = original_input.starts_with(' ');
-                self.textarea.set_text("");
-
-                // Replace all pending pastes in the text
-                for (placeholder, actual) in &self.pending_pastes {
-                    if text.contains(placeholder) {
-                        text = text.replace(placeholder, actual);
-                    }
-                }
-                self.pending_pastes.clear();
-
-                // If there is neither text nor attachments, suppress submission entirely.
-                let has_attachments = !self.attached_images.is_empty();
-                text = text.trim().to_string();
-                if let Some((name, _rest)) = parse_slash_name(&text) {
-                    let treat_as_plain_text = input_starts_with_space || name.contains('/');
-                    if !treat_as_plain_text {
-                        let is_builtin = built_in_slash_commands()
-                            .into_iter()
-                            .any(|(command_name, _)| command_name == name);
-                        let prompt_prefix = format!("{PROMPTS_CMD_PREFIX}:");
-                        let is_known_prompt = name
-                            .strip_prefix(&prompt_prefix)
-                            .map(|prompt_name| {
-                                self.custom_prompts
-                                    .iter()
-                                    .any(|prompt| prompt.name == prompt_name)
-                            })
-                            .unwrap_or(false);
-                        if !is_builtin && !is_known_prompt {
-                            let message = format!(
-                                r#"Unrecognized command '/{name}'. Type "/" for a list of supported commands."#
-                            );
-                            self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-                                history_cell::new_info_event(message, None),
-                            )));
-                            self.textarea.set_text(&original_input);
-                            self.textarea.set_cursor(original_input.len());
-                            return (InputResult::None, true);
-                        }
-                    }
-                }
-
-                let expanded_prompt = match expand_custom_prompt(&text, &self.custom_prompts) {
-                    Ok(expanded) => expanded,
-                    Err(err) => {
-                        self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-                            history_cell::new_error_event(err.user_message()),
-                        )));
-                        self.textarea.set_text(&original_input);
-                        self.textarea.set_cursor(original_input.len());
-                        return (InputResult::None, true);
-                    }
-                };
-                if let Some(expanded) = expanded_prompt {
-                    text = expanded;
-                }
-                if text.is_empty() && !has_attachments {
-                    return (InputResult::None, true);
-                }
-                if !text.is_empty() {
-                    self.history.record_local_submission(&text);
-                }
-                // Do not clear attached_images here; ChatWidget drains them via take_recent_submission_images().
-                (InputResult::Submitted(text), true)
+                self.handle_input_basic(key_event)
             }
             input => self.handle_input_basic(input),
         }
+    }
+
+    fn handle_submit_key(&mut self) -> (InputResult, bool) {
+        // If the first line is a bare built-in slash command (no args),
+        // dispatch it even when the slash popup isn't visible. This preserves
+        // the workflow: type a prefix ("/di"), press Tab to complete to
+        // "/diff ", then press Ctrl+Enter to run it. Tab moves the cursor beyond
+        // the '/name' token and our caret-based heuristic hides the popup,
+        // but submit should still dispatch the command rather than submit
+        // literal text.
+        let first_line = self.textarea.text().lines().next().unwrap_or("");
+        if let Some((name, rest)) = parse_slash_name(first_line)
+            && rest.is_empty()
+            && let Some((_n, cmd)) = built_in_slash_commands()
+                .into_iter()
+                .find(|(n, _)| *n == name)
+        {
+            self.textarea.set_text("");
+            return (InputResult::Command(cmd), true);
+        }
+
+        // If we're in a paste-like burst capture, treat Enter as part of the burst
+        // and accumulate it rather than submitting or inserting immediately.
+        // Do not treat Enter as paste inside a slash-command context.
+        let in_slash_context = matches!(self.active_popup, ActivePopup::Command(_))
+            || self
+                .textarea
+                .text()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .starts_with('/');
+        if self.paste_burst.is_active() && !in_slash_context {
+            let now = Instant::now();
+            if self.paste_burst.append_newline_if_active(now) {
+                return (InputResult::None, true);
+            }
+        }
+
+        // During a paste-like burst, treat Enter as a newline instead of submit.
+        let now = Instant::now();
+        if self
+            .paste_burst
+            .newline_should_insert_instead_of_submit(now)
+            && !in_slash_context
+        {
+            self.textarea.insert_str("\n");
+            self.paste_burst.extend_window(now);
+            return (InputResult::None, true);
+        }
+
+        let mut text = self.textarea.text().to_string();
+        let original_input = text.clone();
+        let input_starts_with_space = original_input.starts_with(' ');
+        self.textarea.set_text("");
+
+        for (placeholder, actual) in &self.pending_pastes {
+            if text.contains(placeholder) {
+                text = text.replace(placeholder, actual);
+            }
+        }
+        self.pending_pastes.clear();
+
+        // If there is neither text nor attachments, suppress submission entirely.
+        let has_attachments = !self.attached_images.is_empty();
+        text = text.trim().to_string();
+        if let Some((name, _rest)) = parse_slash_name(&text) {
+            let treat_as_plain_text = input_starts_with_space || name.contains('/');
+            if !treat_as_plain_text {
+                let is_builtin = built_in_slash_commands()
+                    .into_iter()
+                    .any(|(command_name, _)| command_name == name);
+                let prompt_prefix = format!("{PROMPTS_CMD_PREFIX}:");
+                let is_known_prompt = name
+                    .strip_prefix(&prompt_prefix)
+                    .map(|prompt_name| {
+                        self.custom_prompts
+                            .iter()
+                            .any(|prompt| prompt.name == prompt_name)
+                    })
+                    .unwrap_or(false);
+                if !is_builtin && !is_known_prompt {
+                    let message = format!(
+                        r#"Unrecognized command '/{name}'. Type "/" for a list of supported commands."#
+                    );
+                    self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                        history_cell::new_info_event(message, None),
+                    )));
+                    self.textarea.set_text(&original_input);
+                    self.textarea.set_cursor(original_input.len());
+                    return (InputResult::None, true);
+                }
+            }
+        }
+
+        let expanded_prompt = match expand_custom_prompt(&text, &self.custom_prompts) {
+            Ok(expanded) => expanded,
+            Err(err) => {
+                self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                    history_cell::new_error_event(err.user_message()),
+                )));
+                self.textarea.set_text(&original_input);
+                self.textarea.set_cursor(original_input.len());
+                return (InputResult::None, true);
+            }
+        };
+        if let Some(expanded) = expanded_prompt {
+            text = expanded;
+        }
+        if text.is_empty() && !has_attachments {
+            return (InputResult::None, true);
+        }
+        if !text.is_empty() {
+            self.history.record_local_submission(&text);
+        }
+        // Do not clear attached_images here; ChatWidget drains them via take_recent_submission_images().
+        (InputResult::Submitted(text), true)
     }
 
     fn handle_paste_burst_flush(&mut self, now: Instant) -> bool {
@@ -1537,7 +1560,6 @@ impl ChatComposer {
         FooterProps {
             mode: self.footer_mode(),
             esc_backtrack_hint: self.esc_backtrack_hint,
-            use_shift_enter_hint: self.use_shift_enter_hint,
             is_task_running: self.is_task_running,
             context_window_percent: self.context_window_percent,
             context_window_used_tokens: self.context_window_used_tokens,
@@ -2400,7 +2422,7 @@ mod tests {
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('あ'), KeyModifiers::NONE));
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted(text) => assert_eq!(text, "1あ"),
             _ => panic!("expected Submitted"),
@@ -2429,7 +2451,7 @@ mod tests {
         assert!(composer.pending_pastes.is_empty());
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted(text) => assert_eq!(text, "hello"),
             _ => panic!("expected Submitted"),
@@ -2489,7 +2511,7 @@ mod tests {
         assert_eq!(composer.pending_pastes[0].1, large);
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted(text) => assert_eq!(text, large),
             _ => panic!("expected Submitted"),
@@ -2788,7 +2810,7 @@ mod tests {
     }
 
     #[test]
-    fn slash_tab_then_enter_dispatches_builtin_command() {
+    fn slash_tab_then_ctrl_enter_dispatches_builtin_command() {
         let (tx, _rx) = unbounded_channel::<AppEvent>();
         let sender = AppEventSender::new(tx);
         let mut composer = ChatComposer::new(
@@ -2806,9 +2828,9 @@ mod tests {
             composer.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(composer.textarea.text(), "/diff ");
 
-        // Press Enter: should dispatch the command, not submit literal text.
+        // Press Ctrl+Enter: should dispatch the command, not submit literal text.
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Command(cmd) => assert_eq!(cmd.command(), "diff"),
             InputResult::Submitted(text) => {
@@ -2817,6 +2839,132 @@ mod tests {
             InputResult::None => panic!("expected Command result for '/diff'"),
         }
         assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn ctrl_j_submits_message_as_fallback() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        composer.set_text_content("hello".to_string());
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+        assert_eq!(result, InputResult::Submitted("hello".to_string()));
+        assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn enter_inserts_newline_instead_of_submitting() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        composer.set_text_content("hello".to_string());
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(result, InputResult::None);
+        assert_eq!(composer.textarea.text(), "hello\n");
+    }
+
+    #[test]
+    fn ctrl_enter_submits_single_line_text() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        composer.set_text_content("hello".to_string());
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        assert_eq!(result, InputResult::Submitted("hello".to_string()));
+        assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn ctrl_enter_executes_slash_command_when_popup_hidden() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        composer.set_text_content("/diff ".to_string());
+        composer.textarea.set_cursor(composer.textarea.text().len());
+        composer.sync_popups();
+        assert!(!composer.popup_active(), "expected slash popup to be hidden");
+
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        assert_eq!(result, InputResult::Command(SlashCommand::Diff));
+        assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn enter_inserts_newline_for_unknown_slash_command_text() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            true,
+            sender,
+            false,
+            "Ask Codex to do anything".to_string(),
+            false,
+        );
+
+        composer.set_text_content("/definitely_not_a_command ".to_string());
+        composer.textarea.set_cursor(composer.textarea.text().len());
+        composer.sync_popups();
+        assert!(!composer.popup_active(), "expected slash popup to be hidden");
+
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(result, InputResult::None);
+        assert!(
+            composer.textarea.text().contains('\n'),
+            "expected Enter to insert newline",
+        );
     }
 
     #[test]
@@ -2838,7 +2986,7 @@ mod tests {
         type_chars_humanlike(&mut composer, &['/', 'm', 'e', 'n', 't', 'i', 'o', 'n']);
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         match result {
             InputResult::Command(cmd) => {
@@ -2925,7 +3073,7 @@ mod tests {
 
         // Submit and verify final expansion
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         if let InputResult::Submitted(text) = result {
             assert_eq!(text, format!("{} and {}", test_cases[0].0, test_cases[2].0));
         } else {
@@ -3149,7 +3297,7 @@ mod tests {
         composer.attach_image(path.clone(), 32, 16, "PNG");
         composer.handle_paste(" hi".into());
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted(text) => assert_eq!(text, "[image1.png 32x16] hi"),
             _ => panic!("expected Submitted"),
@@ -3172,7 +3320,7 @@ mod tests {
         let path = PathBuf::from("/tmp/image2.png");
         composer.attach_image(path.clone(), 10, 5, "PNG");
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted(text) => assert_eq!(text, "[image2.png 10x5]"),
             _ => panic!("expected Submitted"),
@@ -3369,7 +3517,7 @@ mod tests {
         );
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(InputResult::Submitted(prompt_text.to_string()), result);
         assert!(composer.textarea.is_empty());
@@ -3400,7 +3548,7 @@ mod tests {
             .set_text("/prompts:my-prompt USER=Alice BRANCH=main");
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(
             InputResult::Submitted("Review Alice changes on main".to_string()),
@@ -3434,7 +3582,7 @@ mod tests {
             .set_text("/prompts:my-prompt USER=\"Alice Smith\" BRANCH=dev-main");
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(
             InputResult::Submitted("Pair Alice Smith with dev-main".to_string()),
@@ -3487,9 +3635,9 @@ mod tests {
         assert_eq!(composer.pending_pastes[0].0, placeholder);
         assert_eq!(composer.pending_pastes[0].1, large_content);
 
-        // Submit by pressing Enter
+        // Submit by pressing Ctrl+Enter
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         // Verify the custom prompt was expanded with the large content as positional arg
         match result {
@@ -3528,7 +3676,7 @@ mod tests {
             .set_text("/Users/example/project/src/main.rs");
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         if let InputResult::Submitted(text) = result {
             assert_eq!(text, "/Users/example/project/src/main.rs");
@@ -3562,7 +3710,7 @@ mod tests {
         composer.textarea.set_text(" /this-looks-like-a-command");
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         if let InputResult::Submitted(text) = result {
             assert_eq!(text, "/this-looks-like-a-command");
@@ -3602,7 +3750,7 @@ mod tests {
             .set_text("/prompts:my-prompt USER=Alice stray");
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(InputResult::None, result);
         assert_eq!(
@@ -3651,7 +3799,7 @@ mod tests {
         composer.textarea.set_text("/prompts:my-prompt USER=Alice");
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(InputResult::None, result);
         assert_eq!("/prompts:my-prompt USER=Alice", composer.textarea.text());
@@ -3700,7 +3848,7 @@ mod tests {
             argument_hint: None,
         }]);
 
-        // Type the slash command with two args and hit Enter to submit.
+        // Type the slash command with two args and hit Ctrl+Enter to submit.
         type_chars_humanlike(
             &mut composer,
             &[
@@ -3709,7 +3857,7 @@ mod tests {
             ],
         );
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         let expected = "Header: foo\nArgs: foo bar\nNinth: \n".to_string();
         assert_eq!(InputResult::Submitted(expected), result);
@@ -3740,7 +3888,7 @@ mod tests {
         // Type positional args; should submit with numeric expansion, no errors.
         composer.textarea.set_text("/prompts:elegant hi");
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(InputResult::Submitted("Echo: hi".to_string()), result);
         assert!(composer.textarea.is_empty());
@@ -3773,7 +3921,7 @@ mod tests {
             &['/', 'p', 'r', 'o', 'm', 'p', 't', 's', ':', 'p'],
         );
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         // With no args typed, selecting the prompt inserts the command template
         // and does not submit immediately.
@@ -3811,7 +3959,7 @@ mod tests {
             ],
         );
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(
             InputResult::Submitted("Cost: $$ and first: x".to_string()),
@@ -3849,7 +3997,7 @@ mod tests {
             ],
         );
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         let expected = "First: one two\nSecond: one two".to_string();
         assert_eq!(InputResult::Submitted(expected), result);

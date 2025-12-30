@@ -18,7 +18,6 @@ use ratatui::widgets::Widget;
 pub(crate) struct FooterProps {
     pub(crate) mode: FooterMode,
     pub(crate) esc_backtrack_hint: bool,
-    pub(crate) use_shift_enter_hint: bool,
     pub(crate) is_task_running: bool,
     pub(crate) context_window_percent: Option<i64>,
     pub(crate) context_window_used_tokens: Option<i64>,
@@ -128,7 +127,6 @@ fn footer_lines(props: FooterProps) -> Vec<Line<'static>> {
             let is_wsl = false;
 
             let state = ShortcutsState {
-                use_shift_enter_hint: props.use_shift_enter_hint,
                 esc_backtrack_hint: props.esc_backtrack_hint,
                 is_wsl,
             };
@@ -149,7 +147,6 @@ struct CtrlCReminderState {
 
 #[derive(Clone, Copy, Debug)]
 struct ShortcutsState {
-    use_shift_enter_hint: bool,
     esc_backtrack_hint: bool,
     is_wsl: bool,
 }
@@ -185,6 +182,7 @@ fn esc_hint_line(esc_backtrack_hint: bool) -> Line<'static> {
 fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
     let mut commands = Line::from("");
     let mut newline = Line::from("");
+    let mut send_message = Line::from("");
     let mut file_paths = Line::from("");
     let mut paste_image = Line::from("");
     let mut edit_previous = Line::from("");
@@ -196,6 +194,7 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
             match descriptor.id {
                 ShortcutId::Commands => commands = text,
                 ShortcutId::InsertNewline => newline = text,
+                ShortcutId::SendMessage => send_message = text,
                 ShortcutId::FilePaths => file_paths = text,
                 ShortcutId::PasteImage => paste_image = text,
                 ShortcutId::EditPrevious => edit_previous = text,
@@ -208,11 +207,11 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
     let ordered = vec![
         commands,
         newline,
+        send_message,
         file_paths,
         paste_image,
         edit_previous,
         quit,
-        Line::from(""),
         show_transcript,
     ];
 
@@ -284,6 +283,7 @@ fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>) -> Line<'
 enum ShortcutId {
     Commands,
     InsertNewline,
+    SendMessage,
     FilePaths,
     PasteImage,
     EditPrevious,
@@ -306,8 +306,6 @@ impl ShortcutBinding {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DisplayCondition {
     Always,
-    WhenShiftEnterHint,
-    WhenNotShiftEnterHint,
     WhenUnderWSL,
 }
 
@@ -315,8 +313,6 @@ impl DisplayCondition {
     fn matches(self, state: ShortcutsState) -> bool {
         match self {
             DisplayCondition::Always => true,
-            DisplayCondition::WhenShiftEnterHint => state.use_shift_enter_hint,
-            DisplayCondition::WhenNotShiftEnterHint => !state.use_shift_enter_hint,
             DisplayCondition::WhenUnderWSL => state.is_wsl,
         }
     }
@@ -367,18 +363,21 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
     },
     ShortcutDescriptor {
         id: ShortcutId::InsertNewline,
-        bindings: &[
-            ShortcutBinding {
-                key: key_hint::shift(KeyCode::Enter),
-                condition: DisplayCondition::WhenShiftEnterHint,
-            },
-            ShortcutBinding {
-                key: key_hint::ctrl(KeyCode::Char('j')),
-                condition: DisplayCondition::WhenNotShiftEnterHint,
-            },
-        ],
+        bindings: &[ShortcutBinding {
+            key: key_hint::plain(KeyCode::Enter),
+            condition: DisplayCondition::Always,
+        }],
         prefix: "",
         label: " for newline",
+    },
+    ShortcutDescriptor {
+        id: ShortcutId::SendMessage,
+        bindings: &[ShortcutBinding {
+            key: key_hint::ctrl(KeyCode::Enter),
+            condition: DisplayCondition::Always,
+        }],
+        prefix: "",
+        label: " to send (or ctrl + j)",
     },
     ShortcutDescriptor {
         id: ShortcutId::FilePaths,
@@ -461,7 +460,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ShortcutSummary,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -477,7 +475,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ShortcutSummary,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -493,7 +490,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ShortcutOverlay,
                 esc_backtrack_hint: true,
-                use_shift_enter_hint: true,
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -509,7 +505,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::CtrlCReminder,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -525,7 +520,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::CtrlCReminder,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: true,
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -541,7 +535,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::EscHint,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -557,7 +550,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::EscHint,
                 esc_backtrack_hint: true,
-                use_shift_enter_hint: false,
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: None,
@@ -573,7 +565,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ShortcutSummary,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: true,
                 context_window_percent: Some(72),
                 context_window_used_tokens: None,
@@ -589,7 +580,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ShortcutSummary,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: false,
                 context_window_percent: None,
                 context_window_used_tokens: Some(123_456),

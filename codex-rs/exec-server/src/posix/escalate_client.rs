@@ -14,6 +14,7 @@ use crate::posix::escalate_protocol::SuperExecMessage;
 use crate::posix::escalate_protocol::SuperExecResult;
 use crate::posix::socket::AsyncDatagramSocket;
 use crate::posix::socket::AsyncSocket;
+use path_absolutize::Absolutize as _;
 
 fn get_escalate_client() -> anyhow::Result<AsyncDatagramSocket> {
     // TODO: we should defensively require only calling this once, since AsyncSocket will take ownership of the fd.
@@ -42,11 +43,14 @@ pub(crate) async fn run(file: String, argv: Vec<String>) -> anyhow::Result<i32> 
             )
         })
         .collect();
+    let workdir = std::env::current_dir()?;
+    let resolved_file = resolve_executable_for_escalation(&file, &env, &workdir)
+        .with_context(|| format!("failed to resolve executable `{file}`"))?;
     client
         .send(EscalateRequest {
-            file: file.clone().into(),
+            file: resolved_file,
             argv: argv.clone(),
-            workdir: std::env::current_dir()?,
+            workdir,
             env,
         })
         .await
@@ -109,4 +113,34 @@ pub(crate) async fn run(file: String, argv: Vec<String>) -> anyhow::Result<i32> 
             Ok(1)
         }
     }
+}
+
+fn resolve_executable_for_escalation(
+    file: &str,
+    env: &std::collections::HashMap<String, String>,
+    workdir: &std::path::Path,
+) -> anyhow::Result<std::path::PathBuf> {
+    let candidate = std::path::Path::new(file);
+    if candidate.is_absolute() {
+        return Ok(candidate.absolutize()?.into_owned());
+    }
+
+    // If the program contains a path separator, execve treats it as a path (relative to CWD).
+    if file.contains(std::path::MAIN_SEPARATOR) || file.contains('/') {
+        return Ok(workdir.join(candidate).absolutize()?.into_owned());
+    }
+
+    let Some(path) = env.get("PATH") else {
+        return Ok(candidate.absolutize()?.into_owned());
+    };
+
+    for entry in std::env::split_paths(path) {
+        let p = entry.join(file);
+        if std::fs::metadata(&p).is_ok_and(|m| m.is_file()) {
+            // Prefer canonicalize when possible, but fall back to absolute paths for robustness.
+            return Ok(std::fs::canonicalize(&p).unwrap_or_else(|_| p));
+        }
+    }
+
+    Ok(candidate.absolutize()?.into_owned())
 }

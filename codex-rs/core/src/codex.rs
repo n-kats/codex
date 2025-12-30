@@ -1931,12 +1931,19 @@ mod handlers {
     }
 
     pub async fn list_custom_prompts(sess: &Session, sub_id: String) {
+        let cwd = {
+            let state = sess.state.lock().await;
+            state.session_configuration.cwd.clone()
+        };
+
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        if let Some(dir) = crate::custom_prompts::default_prompts_dir() {
+            dirs.push(dir);
+        }
+        dirs.extend(crate::custom_prompts::additional_prompts_dirs(&cwd));
+
         let custom_prompts: Vec<CustomPrompt> =
-            if let Some(dir) = crate::custom_prompts::default_prompts_dir() {
-                crate::custom_prompts::discover_prompts_in(&dir).await
-            } else {
-                Vec::new()
-            };
+            crate::custom_prompts::discover_prompts_in_dirs(&dirs).await;
 
         let event = Event {
             id: sub_id,

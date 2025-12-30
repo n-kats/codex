@@ -357,7 +357,7 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
             condition: DisplayCondition::Always,
         }],
         prefix: "",
-        label: " to send",
+        label: " to send (or ctrl + j)",
     },
     ShortcutDescriptor {
         id: ShortcutId::FilePaths,

@@ -503,6 +503,10 @@ impl ChatComposer {
 
     /// Handle key event when the slash-command popup is visible.
     fn handle_key_event_with_slash_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        if Self::is_submit_key(&key_event) {
+            self.active_popup = ActivePopup::None;
+            return self.handle_submit_key();
+        }
         if self.handle_shortcut_overlay_key(&key_event) {
             return (InputResult::None, true);
         }
@@ -692,6 +696,10 @@ impl ChatComposer {
 
     /// Handle key events when file search popup is visible.
     fn handle_key_event_with_file_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        if Self::is_submit_key(&key_event) {
+            self.active_popup = ActivePopup::None;
+            return self.handle_submit_key();
+        }
         if self.handle_shortcut_overlay_key(&key_event) {
             return (InputResult::None, true);
         }
@@ -816,6 +824,10 @@ impl ChatComposer {
     }
 
     fn handle_key_event_with_skill_popup(&mut self, key_event: KeyEvent) -> (InputResult, bool) {
+        if Self::is_submit_key(&key_event) {
+            self.active_popup = ActivePopup::None;
+            return self.handle_submit_key();
+        }
         if self.handle_shortcut_overlay_key(&key_event) {
             return (InputResult::None, true);
         }
@@ -1167,8 +1179,28 @@ impl ChatComposer {
                 modifiers: KeyModifiers::CONTROL,
                 ..
             } => self.handle_submit_key(),
+            KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } => self.handle_submit_key(),
             input => self.handle_input_basic(input),
         }
+    }
+
+    fn is_submit_key(key_event: &KeyEvent) -> bool {
+        matches!(
+            key_event,
+            KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            } | KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }
+        )
     }
 
     fn handle_submit_key(&mut self) -> (InputResult, bool) {
