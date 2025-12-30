@@ -349,7 +349,14 @@ impl UnifiedExecSessionManager {
         let exit_code = entry.session.exit_code();
         let process_id = entry.process_id.clone();
 
-        if entry.session.has_exited() {
+        let has_exited = entry.session.has_exited() || exit_code.is_some();
+        if has_exited {
+            // If we only observe an exit code (but `has_exited()` hasn't flipped yet),
+            // proactively signal the background watchers so we don't miss the
+            // ExecCommandEnd event.
+            if exit_code.is_some() {
+                entry.session.cancellation_token().cancel();
+            }
             let Some(entry) = store.remove(&process_id) else {
                 return SessionStatus::Unknown;
             };

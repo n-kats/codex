@@ -32,6 +32,12 @@ pub struct Cli {
     #[clap(skip)]
     pub resume_show_all: bool,
 
+    #[clap(skip)]
+    pub config_toml_file: Option<PathBuf>,
+
+    #[clap(skip)]
+    pub no_config: bool,
+
     /// Model the agent should use.
     #[arg(long, short = 'm')]
     pub model: Option<String>,
@@ -98,6 +104,8 @@ impl From<codex_tui::Cli> for Cli {
             resume_last: cli.resume_last,
             resume_session_id: cli.resume_session_id,
             resume_show_all: cli.resume_show_all,
+            config_toml_file: cli.config_toml_file,
+            no_config: cli.no_config,
             model: cli.model,
             oss: cli.oss,
             oss_provider: cli.oss_provider,

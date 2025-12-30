@@ -396,11 +396,24 @@ impl ConfigBuilder {
         let codex_home = codex_home.map_or_else(find_codex_home, std::io::Result::Ok)?;
         let cli_overrides = cli_overrides.unwrap_or_default();
         let harness_overrides = harness_overrides.unwrap_or_default();
-        let loader_overrides = loader_overrides.unwrap_or_default();
+        let mut loader_overrides = loader_overrides.unwrap_or_default();
         let cwd = match harness_overrides.cwd.as_deref() {
             Some(path) => AbsolutePathBuf::try_from(path)?,
             None => AbsolutePathBuf::current_dir()?,
         };
+        if harness_overrides.no_config {
+            loader_overrides.user_config_path = None;
+            loader_overrides.disable_user_config = true;
+            loader_overrides.disable_project_config = true;
+        } else if let Some(config_toml_file) = &harness_overrides.config_toml_file {
+            let resolved = if config_toml_file.is_absolute() {
+                config_toml_file.clone()
+            } else {
+                std::env::current_dir()?.join(config_toml_file)
+            };
+            loader_overrides.user_config_path = Some(resolved);
+            loader_overrides.disable_user_config = false;
+        }
         let config_layer_stack =
             load_config_layers_state(&codex_home, Some(cwd), &cli_overrides, loader_overrides)
                 .await?;
@@ -423,6 +436,14 @@ impl ConfigBuilder {
 }
 
 impl Config {
+    pub fn user_config_toml_path(&self) -> Option<&AbsolutePathBuf> {
+        let layer = self.config_layer_stack.get_user_layer()?;
+        match &layer.name {
+            codex_app_server_protocol::ConfigLayerSource::User { file } => Some(file),
+            _ => None,
+        }
+    }
+
     /// This is the preferred way to create an instance of [Config].
     pub async fn load_with_cli_overrides(
         cli_overrides: Vec<(String, TomlValue)>,
@@ -460,11 +481,28 @@ pub async fn load_config_as_toml_with_cli_overrides(
     cwd: &AbsolutePathBuf,
     cli_overrides: Vec<(String, TomlValue)>,
 ) -> std::io::Result<ConfigToml> {
+    load_config_as_toml_with_cli_overrides_and_loader_overrides(
+        codex_home,
+        cwd,
+        cli_overrides,
+        LoaderOverrides::default(),
+    )
+    .await
+}
+
+/// DEPRECATED: Prefer [Config::load_with_cli_overrides()] and inspect the
+/// derived [Config] instead of working with [ConfigToml] directly.
+pub async fn load_config_as_toml_with_cli_overrides_and_loader_overrides(
+    codex_home: &Path,
+    cwd: &AbsolutePathBuf,
+    cli_overrides: Vec<(String, TomlValue)>,
+    loader_overrides: LoaderOverrides,
+) -> std::io::Result<ConfigToml> {
     let config_layer_stack = load_config_layers_state(
         codex_home,
         Some(cwd.clone()),
         &cli_overrides,
-        LoaderOverrides::default(),
+        loader_overrides,
     )
     .await?;
 
@@ -492,6 +530,13 @@ fn deserialize_config_toml_with_base(
 pub async fn load_global_mcp_servers(
     codex_home: &Path,
 ) -> std::io::Result<BTreeMap<String, McpServerConfig>> {
+    load_global_mcp_servers_with_loader_overrides(codex_home, LoaderOverrides::default()).await
+}
+
+pub async fn load_global_mcp_servers_with_loader_overrides(
+    codex_home: &Path,
+    loader_overrides: LoaderOverrides,
+) -> std::io::Result<BTreeMap<String, McpServerConfig>> {
     // In general, Config::load_with_cli_overrides() should be used to load the
     // full config with requirements.toml applied, but in this case, we need
     // access to the raw TOML in order to warn the user about deprecated fields.
@@ -504,8 +549,7 @@ pub async fn load_global_mcp_servers(
     // MCP servers defined in in-repo .codex/ folders.
     let cwd: Option<AbsolutePathBuf> = None;
     let config_layer_stack =
-        load_config_layers_state(codex_home, cwd, &cli_overrides, LoaderOverrides::default())
-            .await?;
+        load_config_layers_state(codex_home, cwd, &cli_overrides, loader_overrides).await?;
     let merged_toml = config_layer_stack.effective_config();
     let Some(servers_value) = merged_toml.get("mcp_servers") else {
         return Ok(BTreeMap::new());
@@ -1015,6 +1059,11 @@ pub struct ConfigOverrides {
     pub model: Option<String>,
     pub review_model: Option<String>,
     pub cwd: Option<PathBuf>,
+    /// Override which file is treated as the "user config.toml" layer.
+    /// Normally this is `$CODEX_HOME/config.toml`.
+    pub config_toml_file: Option<PathBuf>,
+    /// When true, disables loading user + project config files entirely.
+    pub no_config: bool,
     pub approval_policy: Option<AskForApproval>,
     pub sandbox_mode: Option<SandboxMode>,
     pub model_provider: Option<String>,
@@ -1084,6 +1133,8 @@ impl Config {
             model,
             review_model: override_review_model,
             cwd,
+            config_toml_file: _config_toml_file,
+            no_config: _no_config,
             approval_policy: approval_policy_override,
             sandbox_mode,
             model_provider,
@@ -2048,8 +2099,7 @@ trust_level = "trusted"
 
         let overrides = LoaderOverrides {
             managed_config_path: Some(managed_path.clone()),
-            #[cfg(target_os = "macos")]
-            managed_preferences_base64: None,
+            ..Default::default()
         };
 
         let cwd = AbsolutePathBuf::try_from(codex_home.path())?;
@@ -2168,8 +2218,7 @@ trust_level = "trusted"
 
         let overrides = LoaderOverrides {
             managed_config_path: Some(managed_path),
-            #[cfg(target_os = "macos")]
-            managed_preferences_base64: None,
+            ..Default::default()
         };
 
         let cwd = AbsolutePathBuf::try_from(codex_home.path())?;

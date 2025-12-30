@@ -500,12 +500,20 @@ pub fn apply_blocking(
     profile: Option<&str>,
     edits: &[ConfigEdit],
 ) -> anyhow::Result<()> {
+    apply_blocking_to_path(&codex_home.join(CONFIG_TOML_FILE), profile, edits)
+}
+
+/// Persist edits to an explicit config.toml file path using a blocking strategy.
+pub fn apply_blocking_to_path(
+    config_path: &Path,
+    profile: Option<&str>,
+    edits: &[ConfigEdit],
+) -> anyhow::Result<()> {
     if edits.is_empty() {
         return Ok(());
     }
 
-    let config_path = codex_home.join(CONFIG_TOML_FILE);
-    let serialized = match std::fs::read_to_string(&config_path) {
+    let serialized = match std::fs::read_to_string(config_path) {
         Ok(contents) => contents,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(err) => return Err(err.into()),
@@ -534,14 +542,13 @@ pub fn apply_blocking(
         return Ok(());
     }
 
-    std::fs::create_dir_all(codex_home).with_context(|| {
-        format!(
-            "failed to create Codex home directory at {}",
-            codex_home.display()
-        )
-    })?;
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create config folder at {}", parent.display()))?;
+    }
 
-    let tmp = NamedTempFile::new_in(codex_home)?;
+    let tmp_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp = NamedTempFile::new_in(tmp_dir)?;
     std::fs::write(tmp.path(), document.doc.to_string()).with_context(|| {
         format!(
             "failed to write temporary config file at {}",
@@ -566,10 +573,24 @@ pub async fn apply(
         .context("config persistence task panicked")?
 }
 
+/// Persist edits asynchronously to an explicit config.toml file path.
+pub async fn apply_to_path(
+    config_path: &Path,
+    profile: Option<&str>,
+    edits: Vec<ConfigEdit>,
+) -> anyhow::Result<()> {
+    let config_path = config_path.to_path_buf();
+    let profile = profile.map(ToOwned::to_owned);
+    task::spawn_blocking(move || apply_blocking_to_path(&config_path, profile.as_deref(), &edits))
+        .await
+        .context("config persistence task panicked")?
+}
+
 /// Fluent builder to batch config edits and apply them atomically.
 #[derive(Default)]
 pub struct ConfigEditsBuilder {
     codex_home: PathBuf,
+    config_path: Option<PathBuf>,
     profile: Option<String>,
     edits: Vec<ConfigEdit>,
 }
@@ -578,9 +599,15 @@ impl ConfigEditsBuilder {
     pub fn new(codex_home: &Path) -> Self {
         Self {
             codex_home: codex_home.to_path_buf(),
+            config_path: None,
             profile: None,
             edits: Vec::new(),
         }
+    }
+
+    pub fn with_config_path<P: Into<PathBuf>>(mut self, config_path: P) -> Self {
+        self.config_path = Some(config_path.into());
+        self
     }
 
     pub fn with_profile(mut self, profile: Option<&str>) -> Self {
@@ -674,16 +701,18 @@ impl ConfigEditsBuilder {
 
     /// Apply edits on a blocking thread.
     pub fn apply_blocking(self) -> anyhow::Result<()> {
-        apply_blocking(&self.codex_home, self.profile.as_deref(), &self.edits)
+        let config_path = self
+            .config_path
+            .unwrap_or_else(|| self.codex_home.join(CONFIG_TOML_FILE));
+        apply_blocking_to_path(&config_path, self.profile.as_deref(), &self.edits)
     }
 
     /// Apply edits asynchronously via a blocking offload.
     pub async fn apply(self) -> anyhow::Result<()> {
-        task::spawn_blocking(move || {
-            apply_blocking(&self.codex_home, self.profile.as_deref(), &self.edits)
-        })
-        .await
-        .context("config persistence task panicked")?
+        let config_path = self
+            .config_path
+            .unwrap_or_else(|| self.codex_home.join(CONFIG_TOML_FILE));
+        apply_to_path(&config_path, self.profile.as_deref(), self.edits).await
     }
 }
 
