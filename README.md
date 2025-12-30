@@ -4,9 +4,19 @@
 
 現在のカスタム一覧:
 
-- TUI の入力: Enter で改行、Ctrl+Enter で送信
-- Codex home の上書き: `codex --codex-home PATH`（`CODEX_HOME` と同等）
-- 動作確認: `make` の検証ターゲットはデフォルトで `CODEX_HOME=<リポジトリ配下>/_cache/codex_home` を使用
+- （機能追加）TUI の入力: Enter で改行、Ctrl+Enter で送信
+- （機能追加）Codex home の上書き: `codex --codex-home PATH`（`CODEX_HOME` と同等）
+- （機能追加）カスタムプロンプト: `CODEX_ADDITIONAL_PROMPT_DIRS`（コンマ区切り、相対パスはカレントディレクトリ基準）で探索ディレクトリを追加
+- （テスト）シェル初期化ファイル: `CODEX_SHELL_STARTUP_FILES=clean`（または `codex --shell-startup-files=clean`）でユーザー dotfiles を可能な範囲で無視して実行（現状は zsh を `ZDOTDIR` で隔離）
+- （テスト）`!` のユーザーコマンド login 制御: `CODEX_USER_SHELL_LOGIN=0` で非 login（`-c`）、未指定なら login（`-lc`）
+- （上流不具合修正・追従）exec-server（elicitation）: execve-wrapper が `git` のような素のコマンド名を送っても `PATH` で実行ファイルを解決し、`EscalateRequest.file` を絶対パス化して扱う（公式が直ったら差分を寄せて削除予定）
+- （テスト）Shell snapshot: `exports` セクションは許可リストに限定し、ホスト環境変数の大量出力を避ける
+- （テスト）テスト/ログの安全性: 失敗時の差分表示でホスト環境変数が全量出力されないようにする（`env` は値を丸ごと比較しない）
+- （テスト）動作確認: `make` の検証ターゲットはデフォルトで `CODEX_HOME=<リポジトリ配下>/_cache/codex_home` を使用
+- （テスト）動作確認ログ: `make test-*` / `make verify-*` 実行時のログを `_tmp/*_test_result.txt` に保存（`tee`）
+- （開発運用）フォーマット（rustfmt）: 上流の `codex-rs/rustfmt.toml` が nightly 前提のため `make fmt`（=`cargo +nightly fmt`）で実行
+- （開発運用）NOTICE: フォークで加えた変更の著作権表記を `NOTICE` に追記
+- （テスト）既知の不安定テスト回避: `make almost`（=`make fmt` + `make test-almost`）を用意し、環境依存で揺れやすいテストを `--skip` して基本的な検証を回せるようにする
 
 ---
 

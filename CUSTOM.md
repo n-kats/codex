@@ -21,6 +21,12 @@
 - カスタムの追加は「追記」を基本にし、既存の規約・指示文の改変は最小化する。
 - 明示的な指示がない限り、上流由来の領域（例: 既存の `docs/` や `README.md` 等）は編集しない。
 
+## コマンド実行の方針（この環境の制約）
+
+- ここでいう「この環境」は、Codex が動作している実行環境（エージェント側の環境）を指す。
+- 動作確認（ビルド/テスト/フォーマット）は **エージェント側では実行しない**。実行は利用者の手元環境（この環境外）で行う。
+- そのため、動作確認コマンドは `Makefile` にターゲットとして追加して記録する（手元で `make ...` を実行できる形にする）。
+
 ## 置き場（カスタムを入れる場所）
 
 - カスタム方針（恒久ルール）: `CUSTOM.md`
@@ -48,5 +54,30 @@
 
 ## カスタム一覧
 
-- TUI の入力: Enter で改行、Ctrl+Enter で送信。
-- Codex home の切り替え: `--codex-home PATH` で `CODEX_HOME`（デフォルト `~/.codex`）を上書きできるようにする（詳細: `_docs/custom_notes/codex_home_cli_flag/README.md`）。
+- （機能追加）TUI の入力: Enter で改行、Ctrl+Enter で送信。
+- （機能追加）Codex home の切り替え: `--codex-home PATH` で `CODEX_HOME`（デフォルト `~/.codex`）を上書きできるようにする（詳細: `_docs/custom_notes/codex_home_cli_flag/README.md`）。
+- （機能追加）カスタムプロンプト探索パスの追加: `CODEX_ADDITIONAL_PROMPT_DIRS`（コンマ区切り、相対パスはカレントディレクトリ基準）でプロンプト探索ディレクトリを追加できるようにする（詳細: `_docs/custom_notes/additional_prompt_dirs/README.md`）。
+- （テスト）シェル初期化ファイルの制御: `CODEX_SHELL_STARTUP_FILES=clean`（または `codex --shell-startup-files=clean`）で、可能な範囲でユーザー dotfiles を読まずにシェルを起動できるようにする（現状は zsh を `ZDOTDIR` で隔離）（検証・再現性のための制御、詳細: `_docs/custom_notes/linux_default_shell_prefers_bash_over_zsh/README.md` / `_docs/custom_notes/exec_command_default_login/README.md`）。
+- （テスト）`!` のユーザーコマンドの login 制御: `CODEX_USER_SHELL_LOGIN=0` で `-c`（非 login）、未指定なら `-lc`（login）で実行する（検証・再現性のための制御）。
+- （上流不具合修正・追従）exec-server（elicitation）: execve-wrapper が `git` のような素のコマンド名を送っても `PATH` で実行ファイルを解決し、`EscalateRequest.file` を絶対パス化して扱う（elicitation の文言一致と `execv()` の確実な実行のため）。公式（openai/codex の main）側で同様の修正が入ったら差分を寄せて削除する。
+  - （テスト観点）`codex-exec-server` の `suite::accept_elicitation::accept_elicitation_for_prompt_rule` が、elicitation 文言の不一致により auto-accept されず（結果として deny 扱いになり）失敗するため、この修正で通ることを確認する。
+    - 検証例: `cd codex-rs && cargo test -p codex-exec-server --test all suite::accept_elicitation::accept_elicitation_for_prompt_rule`
+- （テスト）Shell snapshot: `exports` セクションは許可リストに限定し、ホスト環境変数の大量出力（秘匿情報混入）を避ける（詳細: `_docs/custom_notes/shell_snapshot_redacted_exports/README.md`）。
+- （テスト）テスト/ログの安全性: 失敗時の差分表示でホスト環境変数が全量出力されないようにする（例: `env` は値を丸ごと比較せず、キー集合＋必要最小限のキーのみ値比較にする）（詳細: `_docs/custom_notes/test_output_redacts_host_env/README.md`）。
+- （テスト）動作確認: `make verify-*` 系ターゲットはデフォルトで `CODEX_HOME=<リポジトリ配下>/_cache/codex_home` を使って実行する。
+- （テスト）動作確認ログ: `make test-*` / `make verify-*` 実行時のログを `_tmp/*_test_result.txt` に保存する。
+- （開発運用）フォーマット（rustfmt）: 上流の `codex-rs/rustfmt.toml` は `imports_granularity = "Item"` を含むため、フォーマットは `make fmt`（=`cargo +nightly fmt`）で実行する（安定版 rustfmt だと警告が出る）。
+- （開発運用）NOTICE: フォークで加えた変更の著作権表記として `Modifications Copyright (c) 2025 Katsunori Nakanishi` を `NOTICE` に追記する。
+- （テスト）既知の不安定テスト回避: `make almost`（=`make fmt` + `make test-almost`）を用意し、環境依存で揺れやすいテストを `--skip` して基本的な検証を回せるようにする（`SKIP_ALMOST_TESTS` でスキップ対象を変更できる）。
+  - デフォルトのスキップ対象（`Makefile` の `SKIP_ALMOST_TESTS`）:
+    - `view_image_tool_attaches_local_image`: GUI 必須ではないが、`ViewImageToolCall` 等のイベント待ちが固定タイムアウト（5秒）に依存しており、実行環境の負荷・ファイルIO・スケジューリングの揺れで間欠的にタイムアウトしやすい。
+    - `approval_matrix_covers_all_modes`: サンドボックス拒否時の OS/ロケール依存エラーメッセージ（例: `Permission denied` / `許可がありません`）に依存した期待が含まれ、言語設定やシェル差で間欠的に失敗しやすい。
+  - `make almost` は `fmt` が失敗しても `test-almost` を続行し、どちらかが失敗したら最後に失敗として終了する。
+    - `make almost` 実行ログは `_tmp/almost_test_result.txt` に集約して保存する（途中で止まってもログが残ることを優先）。
+    - ログ集約のため、内部的に `LOG_FILE` と `LOG_APPEND=1` を使って、配下ターゲットの `tee` 先を統一する。
+  - 同様に、集約ターゲット（例: `make all` / `make verify-all-custom` / `make verify-codex-home-cli-flag`）も、途中で失敗しても残りの検証を続行し、最後に失敗として終了する（途中経過のログを残すことを優先する）。
+    - 集約ログの出力先:
+      - `make all`: `_tmp/all_test_result.txt`
+      - `make verify-all-custom`: `_tmp/verify_all_custom_test_result.txt`
+      - `make verify-codex-home-cli-flag`: `_tmp/verify_codex_home_cli_flag_test_result.txt`
+  - `make almost` は「開発中の高速な安全確認」用で、最終確認は `make all`（= フォーマット + 全テスト）を優先する。
