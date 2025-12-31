@@ -29,6 +29,126 @@ use tracing::Span;
 use tracing::trace_span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+#[derive(Debug)]
+pub struct LlmGenerationRecorder {
+    span: Span,
+    wire_api: String,
+    model: String,
+    output_text: String,
+    reasoning_content: String,
+    reasoning_summary: String,
+    output_items: Vec<ResponseItem>,
+    response_id: Option<String>,
+    token_usage: Option<serde_json::Value>,
+}
+
+impl LlmGenerationRecorder {
+    fn new(otel: &OtelManager, wire_api: &str, model: &str, prompt: &ApiPrompt) -> Self {
+        let prompt_json = serde_json::json!({
+            "wire_api": wire_api,
+            "model": model,
+            "instructions": &prompt.instructions,
+            "input": &prompt.input,
+            "tools": &prompt.tools,
+            "parallel_tool_calls": prompt.parallel_tool_calls,
+            "output_schema": &prompt.output_schema,
+        });
+
+        let span = trace_span!("llm_generation", wire_api = wire_api, model = model);
+        otel.attach_session_parent(&span);
+
+        span.set_attribute("langfuse.observation.type", "generation".to_string());
+        span.set_attribute("langfuse.observation.model.name", model.to_string());
+        span.set_attribute(
+            "langfuse.observation.input",
+            serde_json::to_string(&prompt_json)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize prompt\"}".to_string()),
+        );
+
+        Self {
+            span,
+            wire_api: wire_api.to_string(),
+            model: model.to_string(),
+            output_text: String::new(),
+            reasoning_content: String::new(),
+            reasoning_summary: String::new(),
+            output_items: Vec::new(),
+            response_id: None,
+            token_usage: None,
+        }
+    }
+
+    pub fn on_event(&mut self, event: &ResponseEvent) {
+        match event {
+            ResponseEvent::OutputTextDelta(delta) => {
+                self.output_text.push_str(delta);
+            }
+            ResponseEvent::ReasoningContentDelta { delta, .. } => {
+                self.reasoning_content.push_str(delta);
+            }
+            ResponseEvent::ReasoningSummaryDelta { delta, .. } => {
+                self.reasoning_summary.push_str(delta);
+            }
+            ResponseEvent::ReasoningSummaryPartAdded { .. } => {}
+            ResponseEvent::OutputItemAdded(item) | ResponseEvent::OutputItemDone(item) => {
+                self.output_items.push(item.clone());
+            }
+            _ => {}
+        }
+    }
+
+    pub fn on_completed(
+        &mut self,
+        response_id: &str,
+        token_usage: Option<&codex_protocol::protocol::TokenUsage>,
+    ) {
+        self.response_id = Some(response_id.to_string());
+        self.token_usage = token_usage.and_then(|usage| serde_json::to_value(usage).ok());
+
+        let output_json = serde_json::json!({
+            "wire_api": &self.wire_api,
+            "model": &self.model,
+            "response_id": self.response_id,
+            "output_text": &self.output_text,
+            "reasoning_content": &self.reasoning_content,
+            "reasoning_summary": &self.reasoning_summary,
+            "output_items": &self.output_items,
+            "token_usage": self.token_usage,
+        });
+
+        self.span.set_attribute(
+            "langfuse.observation.output",
+            serde_json::to_string(&output_json)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize output\"}".to_string()),
+        );
+
+        // Ensure the span is ended immediately (so it materializes in Langfuse even during long-lived TUI sessions).
+        self.span.in_scope(|| {});
+    }
+
+    pub fn on_error(&mut self, error: &str) {
+        let output_json = serde_json::json!({
+            "wire_api": &self.wire_api,
+            "model": &self.model,
+            "response_id": self.response_id,
+            "output_text": &self.output_text,
+            "reasoning_content": &self.reasoning_content,
+            "reasoning_summary": &self.reasoning_summary,
+            "output_items": &self.output_items,
+            "token_usage": self.token_usage,
+            "error": error,
+        });
+
+        self.span.set_attribute(
+            "langfuse.observation.output",
+            serde_json::to_string(&output_json)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize output\"}".to_string()),
+        );
+
+        self.span.in_scope(|| {});
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Display)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolDecisionSource {
@@ -136,36 +256,16 @@ impl OtelManager {
         }
     }
 
-    /// Records the *full* model prompt payload (instructions + input + tool definitions).
+    /// Starts a Langfuse generation observation for a model call, capturing full input and output.
     ///
     /// This is intentionally unredacted because it's meant for debugging how Codex calls the LLM.
-    pub fn record_model_prompt(&self, wire_api: &str, model: &str, prompt: &ApiPrompt) {
-        let prompt_json = serde_json::json!({
-            "wire_api": wire_api,
-            "model": model,
-            "instructions": &prompt.instructions,
-            "input": &prompt.input,
-            "tools": &prompt.tools,
-            "parallel_tool_calls": prompt.parallel_tool_calls,
-            "output_schema": &prompt.output_schema,
-        });
-
-        let prompt_str = serde_json::to_string(&prompt_json)
-            .unwrap_or_else(|_| "{\"error\":\"failed to serialize prompt\"}".to_string());
-
-        let span = trace_span!("llm_prompt", wire_api = wire_api, model = model);
-        self.attach_session_parent(&span);
-
-        // Langfuse OTEL mapping (see LangfuseOtelSpanAttributes):
-        // - langfuse.observation.type => generation-create
-        // - langfuse.observation.input => shown as prompt/input
-        // - langfuse.observation.model.name => shown as model
-        span.set_attribute("langfuse.observation.type", "generation".to_string());
-        span.set_attribute("langfuse.observation.model.name", model.to_string());
-        span.set_attribute("langfuse.observation.input", prompt_str.clone());
-
-        // Ensure the span is ended immediately (so it materializes in Langfuse even during long-lived TUI sessions).
-        span.in_scope(|| {});
+    pub fn start_llm_generation(
+        &self,
+        wire_api: &str,
+        model: &str,
+        prompt: &ApiPrompt,
+    ) -> LlmGenerationRecorder {
+        LlmGenerationRecorder::new(self, wire_api, model, prompt)
     }
 
     pub fn record_responses(&self, handle_responses_span: &Span, event: &ResponseEvent) {

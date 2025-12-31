@@ -11,7 +11,7 @@
 [otel]
 environment = "dev"
 
-# Also logs the user prompt as OTEL log events. (Separate from the `llm_prompt` span customization.)
+# Also logs the user prompt as OTEL log events. (Separate from the `llm_generation` span customization.)
 log_user_prompt = true
 
 # Option A: send OTLP to a local OpenTelemetry Collector (recommended).

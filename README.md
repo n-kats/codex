@@ -18,6 +18,8 @@
 - （開発運用）フォーマット（rustfmt）: `make fmt`（=`cargo +nightly fmt`）で実行
 - （開発運用）NOTICE: フォークで加えた変更の著作権表記を `NOTICE` に追記
 - （テスト）既知の不安定テスト回避: `make almost`（=`make fmt` + `make test-almost`）を用意し、環境依存で揺れやすいテストを `--skip` して基本的な検証を回せるようにする
+- （修正）Langfuse OTEL 連携: 長寿命セッションで trace が生成できない（trace row 不在/parent 404）問題の修正（詳細: `_docs/custom_notes/langfuse_logging/README.md`）
+- （機能追加）Langfuse OTEL 連携: trace 名の付与、LLM の入出力（プロンプト/レスポンス）全量の可視化（詳細: `_docs/custom_notes/langfuse_logging/README.md`）
 
 ---
 <p align="center"><code>npm i -g @openai/codex</code><br />or <code>brew install --cask codex</code></p>

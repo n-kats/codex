@@ -117,17 +117,33 @@ impl ModelClient {
         match self.provider.wire_api {
             WireApi::Responses => self.stream_responses_api(prompt).await,
             WireApi::Chat => {
-                let api_stream = self.stream_chat_completions(prompt).await?;
+                if prompt.output_schema.is_some() {
+                    return Err(CodexErr::UnsupportedOperation(
+                        "output_schema is not supported for Chat Completions API".to_string(),
+                    ));
+                }
+
+                let model_family = self.get_model_family();
+                let instructions = prompt.get_full_instructions(&model_family).into_owned();
+                let tools_json = create_tools_json_for_chat_completions_api(&prompt.tools)?;
+                let api_prompt = build_api_prompt(prompt, instructions, tools_json);
+                let llm_recorder = self
+                    .otel_manager
+                    .start_llm_generation("chat_completions", &self.get_model(), &api_prompt);
+
+                let api_stream = self.stream_chat_completions(&api_prompt).await?;
 
                 if self.config.show_raw_agent_reasoning {
                     Ok(map_response_stream(
                         api_stream.streaming_mode(),
                         self.otel_manager.clone(),
+                        Some(llm_recorder),
                     ))
                 } else {
                     Ok(map_response_stream(
                         api_stream.aggregate(),
                         self.otel_manager.clone(),
+                        Some(llm_recorder),
                     ))
                 }
             }
@@ -138,20 +154,8 @@ impl ModelClient {
     ///
     /// This path is only used when the provider is configured with
     /// `WireApi::Chat`; it does not support `output_schema` today.
-    async fn stream_chat_completions(&self, prompt: &Prompt) -> Result<ApiResponseStream> {
-        if prompt.output_schema.is_some() {
-            return Err(CodexErr::UnsupportedOperation(
-                "output_schema is not supported for Chat Completions API".to_string(),
-            ));
-        }
-
+    async fn stream_chat_completions(&self, api_prompt: &ApiPrompt) -> Result<ApiResponseStream> {
         let auth_manager = self.auth_manager.clone();
-        let model_family = self.get_model_family();
-        let instructions = prompt.get_full_instructions(&model_family).into_owned();
-        let tools_json = create_tools_json_for_chat_completions_api(&prompt.tools)?;
-        let api_prompt = build_api_prompt(prompt, instructions, tools_json);
-        self.otel_manager
-            .record_model_prompt("chat_completions", &self.get_model(), &api_prompt);
         let conversation_id = self.conversation_id.to_string();
         let session_source = self.session_source.clone();
 
@@ -170,7 +174,7 @@ impl ModelClient {
             let stream_result = client
                 .stream_prompt(
                     &self.get_model(),
-                    &api_prompt,
+                    api_prompt,
                     Some(conversation_id.clone()),
                     Some(session_source.clone()),
                 )
@@ -198,7 +202,7 @@ impl ModelClient {
             warn!(path, "Streaming from fixture");
             let stream = codex_api::stream_from_fixture(path, self.provider.stream_idle_timeout())
                 .map_err(map_api_error)?;
-            return Ok(map_response_stream(stream, self.otel_manager.clone()));
+            return Ok(map_response_stream(stream, self.otel_manager.clone(), None));
         }
 
         let auth_manager = self.auth_manager.clone();
@@ -241,8 +245,9 @@ impl ModelClient {
 
         let text = create_text_param_for_request(verbosity, &prompt.output_schema);
         let api_prompt = build_api_prompt(prompt, instructions.clone(), tools_json);
-        self.otel_manager
-            .record_model_prompt("responses", &self.get_model(), &api_prompt);
+        let llm_recorder = self
+            .otel_manager
+            .start_llm_generation("responses", &self.get_model(), &api_prompt);
         let conversation_id = self.conversation_id.to_string();
         let session_source = self.session_source.clone();
 
@@ -275,7 +280,11 @@ impl ModelClient {
 
             match stream_result {
                 Ok(stream) => {
-                    return Ok(map_response_stream(stream, self.otel_manager.clone()));
+                    return Ok(map_response_stream(
+                        stream,
+                        self.otel_manager.clone(),
+                        Some(llm_recorder),
+                    ));
                 }
                 Err(ApiError::Transport(TransportError::Http { status, .. }))
                     if status == StatusCode::UNAUTHORIZED =>
@@ -423,7 +432,11 @@ fn beta_feature_headers(config: &Config) -> ApiHeaderMap {
     headers
 }
 
-fn map_response_stream<S>(api_stream: S, otel_manager: OtelManager) -> ResponseStream
+fn map_response_stream<S>(
+    api_stream: S,
+    otel_manager: OtelManager,
+    mut llm_recorder: Option<codex_otel::otel_manager::LlmGenerationRecorder>,
+) -> ResponseStream
 where
     S: futures::Stream<Item = std::result::Result<ResponseEvent, ApiError>>
         + Unpin
@@ -441,6 +454,9 @@ where
                     response_id,
                     token_usage,
                 }) => {
+                    if let Some(recorder) = llm_recorder.as_mut() {
+                        recorder.on_completed(response_id.as_str(), token_usage.as_ref());
+                    }
                     if let Some(usage) = &token_usage {
                         otel_manager.sse_event_completed(
                             usage.input_tokens,
@@ -458,11 +474,20 @@ where
                         .await
                         .is_err()
                     {
+                        if let Some(recorder) = llm_recorder.as_mut() {
+                            recorder.on_error("receiver dropped before completion event delivered");
+                        }
                         return;
                     }
                 }
                 Ok(event) => {
+                    if let Some(recorder) = llm_recorder.as_mut() {
+                        recorder.on_event(&event);
+                    }
                     if tx_event.send(Ok(event)).await.is_err() {
+                        if let Some(recorder) = llm_recorder.as_mut() {
+                            recorder.on_error("receiver dropped before event delivered");
+                        }
                         return;
                     }
                 }
@@ -472,11 +497,19 @@ where
                         otel_manager.see_event_completed_failed(&mapped);
                         logged_error = true;
                     }
+                    if let Some(recorder) = llm_recorder.as_mut() {
+                        let error = mapped.to_string();
+                        recorder.on_error(error.as_str());
+                    }
                     if tx_event.send(Err(mapped)).await.is_err() {
                         return;
                     }
                 }
             }
+        }
+
+        if let Some(recorder) = llm_recorder.as_mut() {
+            recorder.on_error("stream ended without response.completed");
         }
     });
 
