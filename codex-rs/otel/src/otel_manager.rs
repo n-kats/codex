@@ -1,6 +1,7 @@
 use crate::otel_provider::traceparent_context_from_env;
 use chrono::SecondsFormat;
 use chrono::Utc;
+use codex_api::Prompt as ApiPrompt;
 use codex_api::ResponseEvent;
 use codex_app_server_protocol::AuthMode;
 use codex_protocol::ConversationId;
@@ -51,7 +52,7 @@ pub struct OtelEventMetadata {
 #[derive(Debug, Clone)]
 pub struct OtelManager {
     metadata: OtelEventMetadata,
-    session_span: Span,
+    session_parent_context: Option<opentelemetry::Context>,
 }
 
 impl OtelManager {
@@ -67,11 +68,35 @@ impl OtelManager {
         terminal_type: String,
         session_source: SessionSource,
     ) -> OtelManager {
-        let session_span = trace_span!("new_session", conversation_id = %conversation_id, session_source = %session_source);
+        // `new_session` is a trace root for the lifetime of the Codex session.
+        //
+        // Langfuse materializes OTEL spans/observations only once they have an end time. If we
+        // keep the root span open for the entire interactive TUI session, child spans that
+        // reference it can show up with a missing parent, and the trace row can be missing until
+        // the session exits.
+        //
+        // To avoid this, we create a short-lived root span, capture its OTel context, and
+        // immediately drop it. It is valid for a parent span to end before its children.
+        let session_span = trace_span!(
+            "new_session",
+            conversation_id = %conversation_id,
+            session_source = %session_source
+        );
+
+        // Make the Langfuse trace name match the resume session id for easier correlation.
+        //
+        // Langfuse OTEL mapping: `langfuse.trace.name` (preferred) falls back to span name.
+        let trace_name = format!("codex_{conversation_id}");
+        session_span.set_attribute("langfuse.trace.name", trace_name);
+        session_span.set_attribute("session.id", conversation_id.to_string());
+        session_span.set_attribute("langfuse.session.id", conversation_id.to_string());
 
         if let Some(context) = traceparent_context_from_env() {
             let _ = session_span.set_parent(context);
         }
+
+        let session_parent_context = Some(session_span.context());
+        session_span.in_scope(|| {});
 
         Self {
             metadata: OtelEventMetadata {
@@ -85,7 +110,7 @@ impl OtelManager {
                 app_version: env!("CARGO_PKG_VERSION"),
                 terminal_type,
             },
-            session_span,
+            session_parent_context,
         }
     }
 
@@ -96,8 +121,47 @@ impl OtelManager {
         manager
     }
 
-    pub fn current_span(&self) -> &Span {
-        &self.session_span
+    pub fn session_parent_context(&self) -> Option<opentelemetry::Context> {
+        self.session_parent_context.clone()
+    }
+
+    pub fn attach_session_parent(&self, span: &Span) {
+        if let Some(parent_context) = self.session_parent_context() {
+            span.set_parent(parent_context);
+        }
+    }
+
+    /// Records the *full* model prompt payload (instructions + input + tool definitions).
+    ///
+    /// This is intentionally unredacted because it's meant for debugging how Codex calls the LLM.
+    pub fn record_model_prompt(&self, wire_api: &str, model: &str, prompt: &ApiPrompt) {
+        let prompt_json = serde_json::json!({
+            "wire_api": wire_api,
+            "model": model,
+            "instructions": &prompt.instructions,
+            "input": &prompt.input,
+            "tools": &prompt.tools,
+            "parallel_tool_calls": prompt.parallel_tool_calls,
+            "output_schema": &prompt.output_schema,
+        });
+
+        let prompt_str = serde_json::to_string(&prompt_json).unwrap_or_else(|_| {
+            "{\"error\":\"failed to serialize prompt\"}".to_string()
+        });
+
+        let span = trace_span!("llm_prompt", wire_api = wire_api, model = model);
+        self.attach_session_parent(&span);
+
+        // Langfuse OTEL mapping (see LangfuseOtelSpanAttributes):
+        // - langfuse.observation.type => generation-create
+        // - langfuse.observation.input => shown as prompt/input
+        // - langfuse.observation.model.name => shown as model
+        span.set_attribute("langfuse.observation.type", "generation".to_string());
+        span.set_attribute("langfuse.observation.model.name", model.to_string());
+        span.set_attribute("langfuse.observation.input", prompt_str);
+
+        // Ensure the span is ended immediately (so it materializes in Langfuse even during long-lived TUI sessions).
+        span.in_scope(|| {});
     }
 
     pub fn record_responses(&self, handle_responses_span: &Span, event: &ResponseEvent) {
@@ -114,6 +178,28 @@ impl OtelManager {
                 handle_responses_span.record("from", "output_item_added");
                 if let ResponseItem::FunctionCall { name, .. } = &item {
                     handle_responses_span.record("tool_name", name.as_str());
+                }
+            }
+            ResponseEvent::Completed {
+                response_id,
+                token_usage,
+            } => {
+                handle_responses_span.set_attribute("response_id", response_id.clone());
+                if let Some(usage) = token_usage {
+                    handle_responses_span
+                        .set_attribute("input_token_count", usage.input_tokens as i64);
+                    handle_responses_span
+                        .set_attribute("output_token_count", usage.output_tokens as i64);
+                    handle_responses_span.set_attribute(
+                        "cached_token_count",
+                        usage.cached_input_tokens as i64,
+                    );
+                    handle_responses_span.set_attribute(
+                        "reasoning_token_count",
+                        usage.reasoning_output_tokens as i64,
+                    );
+                    handle_responses_span
+                        .set_attribute("tool_token_count", usage.total_tokens as i64);
                 }
             }
             _ => {}
@@ -182,6 +268,16 @@ impl OtelManager {
         error: Option<&str>,
         duration: Duration,
     ) {
+        let api_request_span = trace_span!(
+            "api_request",
+            attempt = attempt,
+            status = status,
+            duration_ms = %duration.as_millis(),
+            error.message = error,
+        );
+        self.attach_session_parent(&api_request_span);
+        api_request_span.in_scope(|| {});
+
         tracing::event!(
             tracing::Level::INFO,
             event.name = "codex.api_request",
