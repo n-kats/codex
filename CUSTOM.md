@@ -57,7 +57,7 @@
 - `_docs/custom_notes/linux_default_shell_prefers_bash_over_zsh/README.md`: Linux のデフォルトシェル検出・bash 優先・関連テスト
 - `_docs/custom_notes/shell_snapshot_redacted_exports/README.md`: Shell snapshot の `exports` マスキング（秘匿情報混入回避）
 - `_docs/custom_notes/test_output_redacts_host_env/README.md`: テスト出力・ログからホスト環境変数の漏えい回避
-- `_docs/custom_notes/langfuse_logging/README.md`: Langfuse ロギング連携（計測・トレース）
+- `_docs/custom_notes/langfuse_logging/README.md`: Langfuse ロギング連携（OTEL trace 名/LLM prompt 可視化など）
 - `_docs/custom_notes/unified_exec_end_event_deterministic/README.md`: UnifiedExec の end event（取りこぼし/決定性）と関連テスト
 
 ## カスタム方針の所在（AGENTS.md への追記）

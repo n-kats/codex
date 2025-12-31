@@ -1,5 +1,34 @@
 # Langfuse へログを記録する改造（検討メモ）
 
+## 2025-12-31 実装したカスタム（このフォーク固有）
+
+Langfuse の OTEL 取り込み（`langfuse.*` attribute mapping）で **「LLM をどう呼んだか」** を見える化するため、
+Codex 側に以下を追加しました。
+
+- **trace 名を `codex_{session_id}` にする**
+  - `new_session` span に `langfuse.trace.name` を付与
+  - `/resume` で使う session id と揃える目的
+- **LLM へ渡す prompt 全量を Langfuse に載せる**
+  - `llm_prompt` span を短命で作り、`langfuse.observation.input` に JSON 文字列で格納
+  - 形式: `instructions` / `input`（`ResponseItem[]`） / `tools` / `parallel_tool_calls` / `output_schema`
+  - `langfuse.observation.type=generation` / `langfuse.observation.model.name=<model>`
+- **API 呼び出しごとに `api_request` span を作る**
+  - retry/latency/status を trace ツリーで追う目的（events だけだと UI で辿りづらい）
+- **TUI セッションでも trace が欠けにくいようにする**
+  - `new_session` span を「短命 root span」に変更し、親コンテキストのみ保持して子 span をぶら下げる
+  - 長寿命セッションで “parent 404 / trace row 不在” が起きやすい問題の緩和
+
+重要な注意:
+
+- **prompt は未マスクで入ります**（デバッグ用途）。秘匿情報を含む環境では有効化しないでください。
+- この実装は `langfuse.*` の attribute mapping に依存しており、Codex 本家へ upstream しづらい（Langfuse 固有）です。
+
+関連ファイル:
+
+- `codex-rs/otel/src/otel_manager.rs`
+- `codex-rs/core/src/client.rs`
+- `codex-rs/core/src/tasks/regular.rs`
+
 ## 目的
 
 - Codex の会話/ツール実行/モデル呼び出しのログを Langfuse に集約し、デバッグや品質分析をしやすくする。
