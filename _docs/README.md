@@ -8,3 +8,4 @@
 - `customization.md`: カスタム手順・運用ルール（日本語）
 - `_docs/docs/`: 上流ドキュメントの日本語メモ（原本は編集しない）
 - `_docs/worklists/`: 一時的なタスクリスト
+- `_docs/trace_name/`: Langfuse OTEL の trace name 切り分け計画

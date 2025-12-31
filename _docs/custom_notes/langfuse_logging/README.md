@@ -5,18 +5,21 @@
 Langfuse の OTEL 取り込み（`langfuse.*` attribute mapping）で **「LLM をどう呼んだか」** を見える化するため、
 Codex 側に以下を追加しました。
 
-- **trace 名を `codex_{session_id}` にする**
+- **修正: TUI セッションでも trace が欠けにくいようにする**
+  - `new_session` span を「短命 root span」に変更し、親コンテキストのみ保持して子 span をぶら下げる
+  - 長寿命セッションで “parent 404 / trace row 不在（trace が生成できないように見える）” が起きやすい問題の修正
+
+- **機能追加: trace 名を `codex_{session_id}` にする**
   - `new_session` span に `langfuse.trace.name` を付与
   - `/resume` で使う session id と揃える目的
-- **LLM へ渡す prompt 全量を Langfuse に載せる**
-  - `llm_prompt` span を短命で作り、`langfuse.observation.input` に JSON 文字列で格納
+
+- **機能追加: LLM の入出力（prompt/response）全量を Langfuse に載せる**
+  - `llm_generation` span を作り、`langfuse.observation.input` / `langfuse.observation.output` に JSON 文字列で格納
   - 形式: `instructions` / `input`（`ResponseItem[]`） / `tools` / `parallel_tool_calls` / `output_schema`
   - `langfuse.observation.type=generation` / `langfuse.observation.model.name=<model>`
-- **API 呼び出しごとに `api_request` span を作る**
+
+- **機能追加: API 呼び出しごとに `api_request` span を作る**
   - retry/latency/status を trace ツリーで追う目的（events だけだと UI で辿りづらい）
-- **TUI セッションでも trace が欠けにくいようにする**
-  - `new_session` span を「短命 root span」に変更し、親コンテキストのみ保持して子 span をぶら下げる
-  - 長寿命セッションで “parent 404 / trace row 不在” が起きやすい問題の緩和
 
 重要な注意:
 
