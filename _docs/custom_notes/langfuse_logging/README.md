@@ -28,6 +28,7 @@ Codex 側に以下を追加しました。
 - `codex-rs/otel/src/otel_manager.rs`
 - `codex-rs/core/src/client.rs`
 - `codex-rs/core/src/tasks/regular.rs`
+- `/_docs/custom_notes/langfuse_logging/codex_config_langfuse_local.toml.example`（設定サンプル・秘匿なし）
 
 ## 目的
 

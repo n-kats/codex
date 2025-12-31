@@ -87,7 +87,7 @@ impl OtelManager {
         //
         // Langfuse OTEL mapping: `langfuse.trace.name` (preferred) falls back to span name.
         let trace_name = format!("codex_{conversation_id}");
-        session_span.set_attribute("langfuse.trace.name", trace_name);
+        session_span.set_attribute("langfuse.trace.name", trace_name.clone());
         session_span.set_attribute("session.id", conversation_id.to_string());
         session_span.set_attribute("langfuse.session.id", conversation_id.to_string());
 
@@ -126,6 +126,11 @@ impl OtelManager {
     }
 
     pub fn attach_session_parent(&self, span: &Span) {
+        let conversation_id = self.metadata.conversation_id.to_string();
+        span.set_attribute("session.id", conversation_id.clone());
+        span.set_attribute("langfuse.session.id", conversation_id.clone());
+        span.set_attribute("langfuse.trace.name", format!("codex_{conversation_id}"));
+
         if let Some(parent_context) = self.session_parent_context() {
             span.set_parent(parent_context);
         }
@@ -145,9 +150,8 @@ impl OtelManager {
             "output_schema": &prompt.output_schema,
         });
 
-        let prompt_str = serde_json::to_string(&prompt_json).unwrap_or_else(|_| {
-            "{\"error\":\"failed to serialize prompt\"}".to_string()
-        });
+        let prompt_str = serde_json::to_string(&prompt_json)
+            .unwrap_or_else(|_| "{\"error\":\"failed to serialize prompt\"}".to_string());
 
         let span = trace_span!("llm_prompt", wire_api = wire_api, model = model);
         self.attach_session_parent(&span);
@@ -158,7 +162,7 @@ impl OtelManager {
         // - langfuse.observation.model.name => shown as model
         span.set_attribute("langfuse.observation.type", "generation".to_string());
         span.set_attribute("langfuse.observation.model.name", model.to_string());
-        span.set_attribute("langfuse.observation.input", prompt_str);
+        span.set_attribute("langfuse.observation.input", prompt_str.clone());
 
         // Ensure the span is ended immediately (so it materializes in Langfuse even during long-lived TUI sessions).
         span.in_scope(|| {});
@@ -190,10 +194,8 @@ impl OtelManager {
                         .set_attribute("input_token_count", usage.input_tokens as i64);
                     handle_responses_span
                         .set_attribute("output_token_count", usage.output_tokens as i64);
-                    handle_responses_span.set_attribute(
-                        "cached_token_count",
-                        usage.cached_input_tokens as i64,
-                    );
+                    handle_responses_span
+                        .set_attribute("cached_token_count", usage.cached_input_tokens as i64);
                     handle_responses_span.set_attribute(
                         "reasoning_token_count",
                         usage.reasoning_output_tokens as i64,
