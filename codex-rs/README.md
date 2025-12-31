@@ -73,7 +73,7 @@ codex debug landlock [--full-auto] [COMMAND]...
 
 ### Selecting a sandbox policy via `--sandbox`
 
-The Rust CLI exposes a dedicated `--sandbox` (`-s`) flag that lets you pick the sandbox policy **without** having to reach for the generic `-c/--config` option:
+The Rust CLI exposes a dedicated `--sandbox` (`-s`) flag that lets you pick the sandbox policy **without** having to reach for the generic `-c` option:
 
 ```shell
 # Run Codex with the default, read-only sandbox

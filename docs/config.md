@@ -8,7 +8,7 @@ For a full configuration reference, see [this documentation](https://developers.
 
 ## Connecting to MCP servers
 
-Codex can connect to MCP servers configured in `$CODEX_HOME/config.toml` (defaults to `~/.codex`; override with `CODEX_HOME` or `codex --codex-home PATH`). You can also load the user layer from an arbitrary path via `--config-file <FILE>` (alias: `--config-path`) or ignore user + project config files entirely via `--no-config`. See the configuration reference for the latest MCP server options:
+Codex can connect to MCP servers configured in `$CODEX_HOME/config.toml` (defaults to `~/.codex`; override with `CODEX_HOME` or `codex --codex-home PATH`). You can also load the user layer from an arbitrary path via `--config <FILE>` or ignore user + project config files entirely via `--no-config`. See the configuration reference for the latest MCP server options:
 
 - https://developers.openai.com/codex/config-reference
 

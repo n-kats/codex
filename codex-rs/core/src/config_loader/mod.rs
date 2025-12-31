@@ -60,7 +60,7 @@ const DEFAULT_PROJECT_ROOT_MARKERS: &[&str] = &[".git"];
 /// - cwd       `${PWD}/config.toml`
 /// - tree      parent directories up to root looking for `./.codex/config.toml`
 /// - repo      `$(git rev-parse --show-toplevel)/.codex/config.toml`
-/// - runtime   e.g., --config flags, model selector in UI
+/// - runtime   e.g., `-c` overrides, model selector in UI
 ///
 /// (*) Only available on macOS via managed device profiles.
 ///

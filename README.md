@@ -5,7 +5,7 @@
 現在のカスタム一覧:
 
 - （機能追加）TUI の入力: Enter で改行、Ctrl+Enter（または Ctrl+J）で送信
-- （機能追加）config.toml の読み込み制御: `codex --config-file <FILE>`（alias: `--config-path`）/ `codex --no-config`
+- （機能追加）config.toml の読み込み制御: `codex --config <FILE>` / `codex --no-config`
 - （機能追加）Codex home の上書き: `codex --codex-home PATH`（`CODEX_HOME` と同等）
 - （機能追加）カスタムプロンプト: `CODEX_ADDITIONAL_PROMPT_DIRS`（コンマ区切り、相対パスはカレントディレクトリ基準）で探索ディレクトリを追加
 - （テスト）シェル初期化ファイル: `CODEX_SHELL_STARTUP_FILES=clean`（または `codex --shell-startup-files=clean`）でユーザー dotfiles を可能な範囲で無視して実行（現状は zsh を `ZDOTDIR` で隔離）

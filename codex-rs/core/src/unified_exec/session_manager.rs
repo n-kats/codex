@@ -171,7 +171,9 @@ impl UnifiedExecSessionManager {
         let text = String::from_utf8_lossy(&collected).to_string();
         let output = formatted_truncate_text(&text, TruncationPolicy::Tokens(max_tokens));
         let exit_code = session.exit_code();
-        let has_exited = session.has_exited() || exit_code.is_some();
+        let has_exited = session.has_exited()
+            || exit_code.is_some()
+            || session.cancellation_token().is_cancelled();
         let chunk_id = generate_chunk_id();
         let process_id = request.process_id.clone();
         if has_exited {
@@ -349,7 +351,9 @@ impl UnifiedExecSessionManager {
         let exit_code = entry.session.exit_code();
         let process_id = entry.process_id.clone();
 
-        let has_exited = entry.session.has_exited() || exit_code.is_some();
+        let has_exited = entry.session.has_exited()
+            || exit_code.is_some()
+            || entry.session.cancellation_token().is_cancelled();
         if has_exited {
             // If we only observe an exit code (but `has_exited()` hasn't flipped yet),
             // proactively signal the background watchers so we don't miss the
