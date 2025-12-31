@@ -79,7 +79,7 @@
 ## カスタム一覧
 
 - （機能追加）TUI の入力: Enter で改行、Ctrl+Enter（または Ctrl+J）で送信。
-- （機能追加）config.toml の読み込み制御: `--config-file <FILE>`（alias: `--config-path`）でユーザー `config.toml` の読み込みパスを任意に指定でき、`--no-config` でユーザー＋プロジェクトの config を無視できる（システム config や `-c key=value` は引き続き適用される）。
+- （機能追加）config.toml の読み込み制御: `--config <FILE>` でユーザー `config.toml` の読み込みパスを任意に指定でき、`--no-config` でユーザー＋プロジェクトの config を無視できる（システム config や `-c key=value` は引き続き適用される）。
 - （機能追加）Codex home の切り替え: `--codex-home PATH` で `CODEX_HOME`（デフォルト `~/.codex`）を上書きできるようにする（詳細: `_docs/custom_notes/codex_home_cli_flag/README.md`）。
 - （機能追加）カスタムプロンプト探索パスの追加: `CODEX_ADDITIONAL_PROMPT_DIRS`（コンマ区切り、相対パスはカレントディレクトリ基準）でプロンプト探索ディレクトリを追加できるようにする（詳細: `_docs/custom_notes/additional_prompt_dirs/README.md`）。
 - （テスト）シェル初期化ファイルの制御: `CODEX_SHELL_STARTUP_FILES=clean`（または `codex --shell-startup-files=clean`）で、可能な範囲でユーザー dotfiles を読まずにシェルを起動できるようにする（現状は zsh を `ZDOTDIR` で隔離）（検証・再現性のための制御、詳細: `_docs/custom_notes/linux_default_shell_prefers_bash_over_zsh/README.md` / `_docs/custom_notes/exec_command_default_login/README.md`）。

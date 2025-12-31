@@ -69,8 +69,7 @@ struct MultitoolCli {
 
     /// Override the `config.toml` file path (defaults to `$CODEX_HOME/config.toml`).
     #[arg(
-        long = "config-file",
-        alias = "config-path",
+        long = "config",
         global = true,
         value_name = "FILE",
         value_hint = clap::ValueHint::FilePath,
