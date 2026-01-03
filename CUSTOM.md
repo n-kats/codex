@@ -54,6 +54,7 @@
 - `_docs/custom_notes/tui-enter-newline-ctrl-enter-send/README.md`: TUI（tui）入力キー（Enter=改行、Ctrl+Enter/Ctrl+J=送信）と関連テスト
 - `_docs/custom_notes/tui2_input_submit_behavior_tests/README.md`: TUI2（tui2）入力キーと送信挙動、`/prompts:` の引数なし挙動、関連テスト
 - `_docs/custom_notes/exec_command_default_login/README.md`: `!`/shell 実行の login 制御（`CODEX_USER_SHELL_LOGIN` 等）
+- `_docs/custom_notes/command_exec_worker_user/README.md`: コマンド実行を worker ユーザー（assistant 等）に固定する方針（未実装）
 - `_docs/custom_notes/linux_default_shell_prefers_bash_over_zsh/README.md`: Linux のデフォルトシェル検出・bash 優先・関連テスト
 - `_docs/custom_notes/shell_snapshot_redacted_exports/README.md`: Shell snapshot の `exports` マスキング（秘匿情報混入回避）
 - `_docs/custom_notes/test_output_redacts_host_env/README.md`: テスト出力・ログからホスト環境変数の漏えい回避
