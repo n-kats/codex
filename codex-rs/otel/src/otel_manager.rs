@@ -25,9 +25,12 @@ use std::time::Duration;
 use std::time::Instant;
 use strum_macros::Display;
 use tokio::time::error::Elapsed;
+use tracing::Instrument;
 use tracing::Span;
 use tracing::trace_span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+const MAX_LANGFUSE_OBSERVATION_JSON_CHARS: usize = 32_000;
 
 #[derive(Debug)]
 pub struct LlmGenerationRecorder {
@@ -57,10 +60,10 @@ impl LlmGenerationRecorder {
         let span = trace_span!("llm_generation", wire_api = wire_api, model = model);
         otel.attach_session_parent(&span);
 
-        span.set_attribute("langfuse.observation.type", "generation".to_string());
-        span.set_attribute("langfuse.observation.model.name", model.to_string());
+        span.set_attribute("codex.observation.type", "generation".to_string());
+        span.set_attribute("codex.observation.model.name", model.to_string());
         span.set_attribute(
-            "langfuse.observation.input",
+            "codex.observation.input",
             serde_json::to_string(&prompt_json)
                 .unwrap_or_else(|_| "{\"error\":\"failed to serialize prompt\"}".to_string()),
         );
@@ -117,7 +120,7 @@ impl LlmGenerationRecorder {
         });
 
         self.span.set_attribute(
-            "langfuse.observation.output",
+            "codex.observation.output",
             serde_json::to_string(&output_json)
                 .unwrap_or_else(|_| "{\"error\":\"failed to serialize output\"}".to_string()),
         );
@@ -140,7 +143,7 @@ impl LlmGenerationRecorder {
         });
 
         self.span.set_attribute(
-            "langfuse.observation.output",
+            "codex.observation.output",
             serde_json::to_string(&output_json)
                 .unwrap_or_else(|_| "{\"error\":\"failed to serialize output\"}".to_string()),
         );
@@ -205,11 +208,10 @@ impl OtelManager {
 
         // Make the Langfuse trace name match the resume session id for easier correlation.
         //
-        // Langfuse OTEL mapping: `langfuse.trace.name` (preferred) falls back to span name.
+        // Collector remaps this to `langfuse.trace.name` for Langfuse ingest.
         let trace_name = format!("codex_{conversation_id}");
-        session_span.set_attribute("langfuse.trace.name", trace_name.clone());
+        session_span.set_attribute("codex.trace.name", trace_name.clone());
         session_span.set_attribute("session.id", conversation_id.to_string());
-        session_span.set_attribute("langfuse.session.id", conversation_id.to_string());
 
         if let Some(context) = traceparent_context_from_env() {
             session_span.set_parent(context);
@@ -248,8 +250,7 @@ impl OtelManager {
     pub fn attach_session_parent(&self, span: &Span) {
         let conversation_id = self.metadata.conversation_id.to_string();
         span.set_attribute("session.id", conversation_id.clone());
-        span.set_attribute("langfuse.session.id", conversation_id.clone());
-        span.set_attribute("langfuse.trace.name", format!("codex_{conversation_id}"));
+        span.set_attribute("codex.trace.name", format!("codex_{conversation_id}"));
 
         if let Some(parent_context) = self.session_parent_context() {
             span.set_parent(parent_context);
@@ -611,6 +612,37 @@ impl OtelManager {
         );
     }
 
+    pub fn tool_call(&self, tool_name: &str, call_id: &str, item: &ResponseItem, payload: &str) {
+        let (payload_truncated, payload_was_truncated, payload_original_len) =
+            truncate_for_langfuse_observation_json(payload);
+
+        let item_json = serde_json::to_string(item).unwrap_or_else(|_| "{}".to_string());
+        let (item_truncated, item_was_truncated, item_original_len) =
+            truncate_for_langfuse_observation_json(&item_json);
+
+        let input_json = serde_json::json!({
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "payload": payload_truncated,
+            "payload_truncated": payload_was_truncated,
+            "payload_original_len": payload_original_len,
+            "response_item_json": item_truncated,
+            "response_item_truncated": item_was_truncated,
+            "response_item_original_len": item_original_len,
+        });
+
+        let tool_call_span = trace_span!("tool_call", tool_name = tool_name, call_id = call_id);
+        self.attach_session_parent(&tool_call_span);
+        tool_call_span.set_attribute("codex.observation.type", "span".to_string());
+        tool_call_span.set_attribute(
+            "codex.observation.input",
+            serde_json::to_string(&input_json)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize tool call\"}".to_string()),
+        );
+
+        tool_call_span.in_scope(|| {});
+    }
+
     pub async fn log_tool_result<F, Fut, E>(
         &self,
         tool_name: &str,
@@ -623,14 +655,54 @@ impl OtelManager {
         Fut: Future<Output = Result<(String, bool), E>>,
         E: Display,
     {
+        let (arguments_truncated, arguments_was_truncated, arguments_original_len) =
+            truncate_for_langfuse_observation_json(arguments);
+
+        let input_json = serde_json::json!({
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "arguments": arguments_truncated,
+            "arguments_truncated": arguments_was_truncated,
+            "arguments_original_len": arguments_original_len,
+        });
+
+        let tool_exec_span = trace_span!("tool_exec", tool_name = tool_name, call_id = call_id);
+        self.attach_session_parent(&tool_exec_span);
+        tool_exec_span.set_attribute("codex.observation.type", "span".to_string());
+        tool_exec_span.set_attribute(
+            "codex.observation.input",
+            serde_json::to_string(&input_json)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize tool input\"}".to_string()),
+        );
+
         let start = Instant::now();
-        let result = f().await;
+        let result = f().instrument(tool_exec_span.clone()).await;
         let duration = start.elapsed();
 
         let (output, success) = match &result {
             Ok((preview, success)) => (Cow::Borrowed(preview.as_str()), *success),
             Err(error) => (Cow::Owned(error.to_string()), false),
         };
+
+        let (output_truncated, output_was_truncated, output_original_len) =
+            truncate_for_langfuse_observation_json(output.as_ref());
+
+        let output_json = serde_json::json!({
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "success": success,
+            "duration_ms": duration.as_millis(),
+            "output": output_truncated,
+            "output_truncated": output_was_truncated,
+            "output_original_len": output_original_len,
+        });
+
+        tool_exec_span.set_attribute(
+            "codex.observation.output",
+            serde_json::to_string(&output_json).unwrap_or_else(|_| {
+                "{\"error\":\"failed to serialize tool output\"}".to_string()
+            }),
+        );
 
         self.tool_result(
             tool_name,
@@ -731,4 +803,17 @@ impl OtelManager {
 
 fn timestamp() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+fn truncate_for_langfuse_observation_json(value: &str) -> (String, bool, usize) {
+    let original_len = value.chars().count();
+    if original_len <= MAX_LANGFUSE_OBSERVATION_JSON_CHARS {
+        return (value.to_string(), false, original_len);
+    }
+
+    let truncated = value
+        .chars()
+        .take(MAX_LANGFUSE_OBSERVATION_JSON_CHARS)
+        .collect::<String>();
+    (truncated, true, original_len)
 }

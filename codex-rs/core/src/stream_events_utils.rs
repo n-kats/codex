@@ -47,10 +47,14 @@ pub(crate) async fn handle_output_item_done(
 ) -> Result<OutputItemResult> {
     let mut output = OutputItemResult::default();
 
-    match ToolRouter::build_tool_call(ctx.sess.as_ref(), item.clone()).await {
+        match ToolRouter::build_tool_call(ctx.sess.as_ref(), item.clone()).await {
         // The model emitted a tool call; log it, persist the item immediately, and queue the tool execution.
         Ok(Some(call)) => {
             let payload_preview = call.payload.log_payload().into_owned();
+            ctx.turn_context
+                .client
+                .get_otel_manager()
+                .tool_call(&call.tool_name, &call.call_id, &item, &payload_preview);
             tracing::info!("ToolCall: {} {}", call.tool_name, payload_preview);
 
             ctx.sess
