@@ -59,6 +59,7 @@
 - `_docs/custom_notes/test_output_redacts_host_env/README.md`: テスト出力・ログからホスト環境変数の漏えい回避
 - `_docs/custom_notes/langfuse_logging/README.md`: Langfuse ロギング連携（修正: 長寿命セッションで trace が生成できない問題、機能追加: OTEL trace 名/LLM 入出力可視化）
 - `_docs/custom_notes/unified_exec_end_event_deterministic/README.md`: UnifiedExec の end event（取りこぼし/決定性）と関連テスト
+- `_docs/custom_notes/hooks/README.md`: 外部コマンド hooks 構想（未実装、notify 拡張案含む）
 
 ## カスタム方針の所在（AGENTS.md への追記）
 
