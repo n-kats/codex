@@ -7,7 +7,11 @@ Langfuse の trace 一覧で trace name が `new_session` のまま更新され�
 Langfuse 側は OTLP span attribute の `langfuse.trace.name` があればそれを trace.name として採用し、無ければ span 名にフォールバックする
 （結果として `new_session` が表示される）。
 
-このため、まず **OTLP に `langfuse.trace.name` が乗っているか** を証拠で確定する。
+このフォークでは Codex 側は `codex.trace.name` を出し、Collector が `langfuse.trace.name` に remap する。
+このため、まず以下を証拠で確定する:
+
+- Codex → Collector の段階で `codex.trace.name` が出ているか
+- Collector → Langfuse に送る段階で `langfuse.trace.name` に remap されているか
 
 ## 証拠取り（Collector で受信 span を確認）
 
@@ -44,8 +48,9 @@ docker run --rm --name otel-debug \
 
 collector の debug exporter 出力から、少なくとも以下を確認する:
 
-- span attributes に `langfuse.trace.name` が存在するか
-- `session.id` / `langfuse.session.id` が存在するか
+- span attributes に `codex.trace.name` が存在するか
+- span attributes に `langfuse.trace.name` が存在するか（Collector remap 後）
+- `session.id` が存在するか
 
 （秘密値は貼らず、attribute key と値の一部だけ確認する）
 
@@ -53,7 +58,8 @@ collector の debug exporter 出力から、少なくとも以下を確認する
 
 ### A) collector stdout に `langfuse.trace.name` が “無い”
 
-Codex 側で attribute が OTLP へ流れていない（tracing-opentelemetry/export のどこかで落ちている）。
+Collector remap が効いていない（Collector config に `attributes/langfuse_remap` が入っていない）。
+もしくは Codex 側で `codex.trace.name` が OTLP へ流れていない（tracing-opentelemetry/export のどこかで落ちている）。
 
 次の調査:
 

@@ -29,12 +29,12 @@ impl SessionTask for RegularTask {
         cancellation_token: CancellationToken,
     ) -> Option<String> {
         let sess = session.clone_session();
-        let run_task_span = trace_span!("run_task");
+        let turn_span = trace_span!("turn", turn_id = %ctx.sub_id);
         sess.services
             .otel_manager
-            .attach_session_parent(&run_task_span);
+            .attach_session_parent(&turn_span);
         run_task(sess, ctx, input, cancellation_token)
-            .instrument(run_task_span)
+            .instrument(turn_span)
             .await
     }
 }

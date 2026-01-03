@@ -5,21 +5,36 @@
 Langfuse の OTEL 取り込み（`langfuse.*` attribute mapping）で **「LLM をどう呼んだか」** を見える化するため、
 Codex 側に以下を追加しました。
 
+重要:
+
+- Codex 側の span attribute は `codex.*` として出し、Collector 側で `langfuse.*` へ remap します（Langfuse 固有キーを Codex から排除するため）。
+
 - **修正: TUI セッションでも trace が欠けにくいようにする**
   - `new_session` span を「短命 root span」に変更し、親コンテキストのみ保持して子 span をぶら下げる
   - 長寿命セッションで “parent 404 / trace row 不在（trace が生成できないように見える）” が起きやすい問題の修正
 
 - **機能追加: trace 名を `codex_{session_id}` にする**
-  - `new_session` span に `langfuse.trace.name` を付与
+  - `new_session` span に `codex.trace.name` を付与（Collector が `langfuse.trace.name` に remap）
   - `/resume` で使う session id と揃える目的
 
 - **機能追加: LLM の入出力（prompt/response）全量を Langfuse に載せる**
-  - `llm_generation` span を作り、`langfuse.observation.input` / `langfuse.observation.output` に JSON 文字列で格納
+  - `llm_generation` span を作り、`codex.observation.input` / `codex.observation.output` に JSON 文字列で格納（Collector が `langfuse.observation.*` に remap）
   - 形式: `instructions` / `input`（`ResponseItem[]`） / `tools` / `parallel_tool_calls` / `output_schema`
-  - `langfuse.observation.type=generation` / `langfuse.observation.model.name=<model>`
+  - `codex.observation.type=generation` / `codex.observation.model.name=<model>`
+
+- **機能追加: ツール実行の入出力を Langfuse に載せる**
+  - `tool_exec` span を作り、`codex.observation.input` / `codex.observation.output` に JSON 文字列で格納（Collector が `langfuse.observation.*` に remap）
+  - `arguments` / `output` はサイズ肥大を避けるため上限で truncate する（truncate 有無と元の長さも記録する）
+
+- **機能追加: ツール呼び出し（モデルの意図）を Langfuse に載せる**
+  - `tool_call` span を作り、モデルが出した tool call を `codex.observation.input` に JSON 文字列で格納（Collector が `langfuse.observation.input` に remap）
+  - `tool_exec` との差分:
+    - `tool_call`: モデルが「この tool をこの引数で呼べ」と出した時点のログ（実行前）
+    - `tool_exec`: 実際の実行結果（duration / success / output）まで含むログ（実行後）
 
 - **機能追加: API 呼び出しごとに `api_request` span を作る**
   - retry/latency/status を trace ツリーで追う目的（events だけだと UI で辿りづらい）
+  - Langfuse の表示はノイズになりやすいので、Collector 側のフィルタで普段は落とす運用が想定
 
 重要な注意:
 
@@ -32,6 +47,8 @@ Codex 側に以下を追加しました。
 - `codex-rs/core/src/client.rs`
 - `codex-rs/core/src/tasks/regular.rs`
 - `/_docs/custom_notes/langfuse_logging/codex_config_langfuse_local.toml.example`（設定サンプル・秘匿なし）
+- `/_tmp/otel/launch.sh`（Collector 起動スクリプト。`codex.*` → `langfuse.*` remap とフィルタを実施）
+- `/_docs/custom_notes/langfuse_logging/current_status.md`（進行中の状況メモ）
 
 ## 目的
 
