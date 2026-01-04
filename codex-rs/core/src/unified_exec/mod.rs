@@ -35,6 +35,7 @@ use tokio::sync::Mutex;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::sandboxing::SandboxPermissions;
+use crate::spawn::RunAsUser;
 
 mod async_watcher;
 mod errors;
@@ -136,14 +137,26 @@ impl SessionStore {
 
 pub(crate) struct UnifiedExecSessionManager {
     session_store: Mutex<SessionStore>,
+    #[cfg(unix)]
+    sudo_preflight: Mutex<Option<SudoPreflightState>>,
 }
 
 impl Default for UnifiedExecSessionManager {
     fn default() -> Self {
         Self {
             session_store: Mutex::new(SessionStore::default()),
+            #[cfg(unix)]
+            sudo_preflight: Mutex::new(None),
         }
     }
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+struct SudoPreflightState {
+    run_as: RunAsUser,
+    result: Result<(), String>,
+    warned: bool,
 }
 
 struct SessionEntry {

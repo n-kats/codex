@@ -89,6 +89,7 @@ impl EscalateServer {
                 sandbox_permissions: SandboxPermissions::UseDefault,
                 justification: None,
                 arg0: None,
+                run_as: None,
             },
             &sandbox_state.sandbox_policy,
             &sandbox_state.sandbox_cwd,

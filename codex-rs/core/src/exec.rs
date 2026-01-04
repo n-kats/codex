@@ -29,6 +29,7 @@ use crate::sandboxing::CommandSpec;
 use crate::sandboxing::ExecEnv;
 use crate::sandboxing::SandboxManager;
 use crate::sandboxing::SandboxPermissions;
+use crate::spawn::RunAsUser;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
 use crate::text_encoding::bytes_to_string_smart;
@@ -59,6 +60,7 @@ pub struct ExecParams {
     pub sandbox_permissions: SandboxPermissions,
     pub justification: Option<String>,
     pub arg0: Option<String>,
+    pub run_as: Option<RunAsUser>,
 }
 
 /// Mechanism to terminate an exec invocation before it finishes naturally.
@@ -150,6 +152,7 @@ pub async fn process_exec_tool_call(
         sandbox_permissions,
         justification,
         arg0: _,
+        run_as,
     } = params;
 
     let (program, args) = command.split_first().ok_or_else(|| {
@@ -165,6 +168,7 @@ pub async fn process_exec_tool_call(
         cwd,
         env,
         expiration,
+        run_as,
         sandbox_permissions,
         justification,
     };
@@ -198,6 +202,7 @@ pub(crate) async fn execute_exec_env(
         sandbox_permissions,
         justification,
         arg0,
+        run_as,
     } = env;
 
     let params = ExecParams {
@@ -208,6 +213,7 @@ pub(crate) async fn execute_exec_env(
         sandbox_permissions,
         justification,
         arg0,
+        run_as,
     };
 
     let start = Instant::now();
@@ -537,6 +543,7 @@ async fn exec(
         cwd,
         env,
         arg0,
+        run_as,
         expiration,
         ..
     } = params;
@@ -553,6 +560,7 @@ async fn exec(
         args.into(),
         arg0_ref,
         cwd,
+        run_as,
         sandbox_policy,
         StdioPolicy::RedirectForShellTool,
         env,
@@ -881,6 +889,7 @@ mod tests {
             sandbox_permissions: SandboxPermissions::UseDefault,
             justification: None,
             arg0: None,
+            run_as: None,
         };
 
         let output = exec(params, SandboxType::None, &SandboxPolicy::ReadOnly, None).await?;
@@ -926,6 +935,7 @@ mod tests {
             sandbox_permissions: SandboxPermissions::UseDefault,
             justification: None,
             arg0: None,
+            run_as: None,
         };
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(1_000)).await;

@@ -7,6 +7,12 @@ use tracing::trace;
 
 use crate::protocol::SandboxPolicy;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RunAsUser {
+    pub uid: u32,
+    pub gid: u32,
+}
+
 /// Experimental environment variable that will be set to some non-empty value
 /// if both of the following are true:
 ///
@@ -40,6 +46,7 @@ pub(crate) async fn spawn_child_async(
     args: Vec<String>,
     #[cfg_attr(not(unix), allow(unused_variables))] arg0: Option<&str>,
     cwd: PathBuf,
+    #[cfg_attr(not(unix), allow(unused_variables))] run_as: Option<RunAsUser>,
     sandbox_policy: &SandboxPolicy,
     stdio_policy: StdioPolicy,
     env: HashMap<String, String>,
@@ -55,6 +62,12 @@ pub(crate) async fn spawn_child_async(
     cmd.current_dir(cwd);
     cmd.env_clear();
     cmd.envs(env);
+
+    #[cfg(unix)]
+    if let Some(run_as) = run_as {
+        cmd.uid(run_as.uid);
+        cmd.gid(run_as.gid);
+    }
 
     if !sandbox_policy.has_full_network_access() {
         cmd.env(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR, "1");

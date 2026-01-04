@@ -699,9 +699,8 @@ impl OtelManager {
 
         tool_exec_span.set_attribute(
             "codex.observation.output",
-            serde_json::to_string(&output_json).unwrap_or_else(|_| {
-                "{\"error\":\"failed to serialize tool output\"}".to_string()
-            }),
+            serde_json::to_string(&output_json)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize tool output\"}".to_string()),
         );
 
         self.tool_result(

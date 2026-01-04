@@ -51,7 +51,8 @@
 
 ## 対象範囲 / 非対象
 
-- 対象: コマンド実行を伴うツール経路（shell / unified exec / MCP shell 等の「子プロセス spawn」）
+- 対象: モデルが起動するコマンド実行系ツール経路（shell / shell_command 等の「子プロセス spawn」）
+- 非対象: ユーザーが明示的に実行する `!`（user_shell）などの “ユーザー起点” のコマンド実行
 - 非対象: Codex 本体の API 呼び出し、ログイン状態の保持、モデル通信（invoker 側に残す）
 
 ## 注意点（Docker / ホスト）
@@ -63,8 +64,13 @@
 
 ## 動作確認手順（実装後に追記）
 
-- （実装後）`make test-core` で既存のコマンド実行系テストが通ること
-- （実装後）Docker bind mount あり/なしで worker 実行が機能すること
+- `make verify-command-exec-worker-user` で設定解決（`custom.exec.*`）のテストが通ること
+- `make test-core` で既存のコマンド実行系テストが通ること
+- `custom.exec.worker_uid/gid` を設定して、`shell` / `shell_command` / `exec_command`（unified exec）で spawn が worker UID/GID になること
+  - 例: `id -u` / `id -g` を実行して期待値になること
+- `exec_command`（PTY ベース）は `sudo -n -u "#UID" -g "#GID"` で worker に切り替えるため、invoker がパスワードなしでその `sudo` を実行できる必要がある（満たせない場合は `exec_command` が失敗してよい）
+  - 起動直後（turn 作成時）に `sudo -n ... id -u` の事前確認を行い、満たせない場合は早めに Warning を出す（後から `exec_command` で落ちるのを避ける）
+- Docker bind mount あり/なしで worker 実行が機能すること（必要なら UID/GID をホスト側に合わせる）
 
 ## つまずきと対処（メモ）
 
@@ -74,4 +80,12 @@
 ## 関連ファイル（実装時に追記）
 
 - `CUSTOM.md`
-- （実装予定）`codex-rs/core/...` のコマンド spawn 経路
+- `Makefile`
+- `docs/config.md`
+- `codex-rs/core/src/config/mod.rs`
+- `codex-rs/core/src/spawn.rs`
+- `codex-rs/core/src/sandboxing/mod.rs`
+- `codex-rs/core/src/tools/runtimes/mod.rs`
+- `codex-rs/core/src/tools/runtimes/shell.rs`
+- `codex-rs/core/src/tools/runtimes/unified_exec.rs`
+- `codex-rs/core/src/unified_exec/session_manager.rs`

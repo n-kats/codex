@@ -20,6 +20,7 @@ use crate::models_manager::manager::ModelsManager;
 use crate::models_manager::model_family::ModelFamily;
 use crate::parse_command::parse_command;
 use crate::parse_turn_item;
+use crate::spawn::RunAsUser;
 use crate::stream_events_utils::HandleOutputCtx;
 use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
@@ -363,6 +364,7 @@ pub(crate) struct TurnContext {
     pub(crate) user_instructions: Option<String>,
     pub(crate) approval_policy: AskForApproval,
     pub(crate) sandbox_policy: SandboxPolicy,
+    pub(crate) exec_run_as: Option<RunAsUser>,
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
     pub(crate) tools_config: ToolsConfig,
     pub(crate) ghost_snapshot: GhostSnapshotConfig,
@@ -521,6 +523,7 @@ impl Session {
             user_instructions: session_configuration.user_instructions.clone(),
             approval_policy: session_configuration.approval_policy.value(),
             sandbox_policy: session_configuration.sandbox_policy.get().clone(),
+            exec_run_as: per_turn_config.exec_run_as,
             shell_environment_policy: per_turn_config.shell_environment_policy.clone(),
             tools_config,
             ghost_snapshot: per_turn_config.ghost_snapshot.clone(),
@@ -920,6 +923,35 @@ impl Session {
         if let Some(final_schema) = final_output_json_schema {
             turn_context.final_output_json_schema = final_schema;
         }
+
+        if self.enabled(Feature::UnifiedExec) {
+            if let Some(run_as) = turn_context.exec_run_as {
+                if let Some(err) = self
+                    .services
+                    .unified_exec_manager
+                    .exec_command_sudo_worker_user_startup_warning(run_as)
+                    .await
+                {
+                    self.send_event(
+                        &turn_context,
+                        EventMsg::BackgroundEvent(BackgroundEventEvent {
+                            message: format!(
+                                "Warning: custom.exec.worker_* is set; exec_command requires passwordless sudo to switch users. {err}"
+                            ),
+                        }),
+                    )
+                    .await;
+                    self.record_model_warning(
+                        format!(
+                            "custom.exec.worker_* is set; exec_command requires passwordless sudo to switch users. {err}"
+                        ),
+                        &turn_context,
+                    )
+                    .await;
+                }
+            }
+        }
+
         Arc::new(turn_context)
     }
 
@@ -2148,6 +2180,7 @@ async fn spawn_review_thread(
         compact_prompt: parent_turn_context.compact_prompt.clone(),
         approval_policy: parent_turn_context.approval_policy,
         sandbox_policy: parent_turn_context.sandbox_policy.clone(),
+        exec_run_as: parent_turn_context.exec_run_as,
         shell_environment_policy: parent_turn_context.shell_environment_policy.clone(),
         cwd: parent_turn_context.cwd.clone(),
         final_output_json_schema: None,
@@ -3618,6 +3651,7 @@ mod tests {
             sandbox_permissions,
             justification: Some("test".to_string()),
             arg0: None,
+            run_as: None,
         };
 
         let params2 = ExecParams {
@@ -3628,6 +3662,7 @@ mod tests {
             env: HashMap::new(),
             justification: params.justification.clone(),
             arg0: None,
+            run_as: None,
         };
 
         let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
