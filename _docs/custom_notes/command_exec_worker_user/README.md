@@ -59,6 +59,13 @@
 
 - Docker の bind mount では、ホスト側ファイルの所有 UID/GID がコンテナ内でも見えるため、worker の uid/gid が合わないと `/workspace` に書けないことがある。
   - 対策は運用で決める（ホスト側の所有/グループ調整、共有グループ、もしくは作業ツリーをコンテナ内に閉じる等）。
+- `custom.exec.worker_user` を使う場合、実行時には worker ユーザーの supplementary groups（補助グループ）も child process に設定する（`sudo -u` 相当の期待に寄せる）。
+  - そのため「worker を共有グループに追加して `chmod 710` で“通過だけ”許可する」といった運用が成立する。
+  - 一方、`custom.exec.worker_uid/gid` だけでユーザー名が分からない場合は supplementary groups を解決できない（= 設定しない）ため、必要なら primary GID を共有グループに合わせる（`worker_gid`）か、パス側の権限を運用で調整する。
+- ホスト（非 root）で `custom.exec.worker_user` を使う場合、Codex が child process 側で `setgroups/setgid/setuid` を行う必要があるため、運用上は以下のいずれかが必要になる。
+  - `codex` 実体バイナリに file capability を付与（例: `setcap cap_setuid,cap_setgid=ep $(which codex)`）
+  - systemd の `AmbientCapabilities=` 等で起動時に capabilities を付与（ファイルに `setcap` したくない場合）
+  - root で起動する（推奨しない）
 - `.env` 等の secrets は作業ツリー（AI が触るディレクトリ）に置かないことが最も確実。
   - シンボリックリンクで secrets を指す運用は、`chmod -R` 等の誤操作や参照境界が複雑化しやすい点に注意する。
 - `custom.exec.*` を有効にしても、コマンド実行時に渡される環境変数自体が多いと `env` / `printenv` 等で情報が出る。

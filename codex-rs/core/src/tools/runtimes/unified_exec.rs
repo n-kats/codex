@@ -181,7 +181,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecSession> for UnifiedExecRunt
             &req.cwd,
             &req.env,
             ExecExpiration::DefaultTimeout,
-            ctx.turn.exec_run_as,
+            ctx.turn.exec_run_as.clone(),
             req.sandbox_permissions,
             req.justification.clone(),
         )

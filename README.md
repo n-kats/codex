@@ -22,6 +22,63 @@
 - （修正）Langfuse OTEL 連携: 長寿命セッションで trace が生成できない（trace row 不在/parent 404）問題の修正（詳細: `_docs/custom_notes/langfuse_logging/README.md`）
 - （機能追加）Langfuse OTEL 連携: trace 名の付与、LLM の入出力（プロンプト/レスポンス）全量の可視化（詳細: `_docs/custom_notes/langfuse_logging/README.md`）
 
+## セットアップ（ホストで worker ユーザー運用）
+
+モデルが実行するコマンド（`shell` / `shell_command` / `exec_command`）を、専用 OS ユーザー（例: `assistant`）で実行したい場合の導入メモです（`custom.exec.worker_user` を使う前提）。
+
+### 1) Releases からバイナリを入れる
+
+- GitHub Releases から該当プラットフォームのアーカイブをダウンロードして展開し、`codex` を `PATH` の通った場所に配置します（例: `/usr/local/bin/codex`）。
+
+### 2) worker ユーザーを作る
+
+```bash
+sudo useradd --create-home --shell /bin/bash assistant
+```
+
+### 3) `exec_command` 用に sudo を通す（必要な場合のみ）
+
+`exec_command` は内部で `sudo -n -u ... -g ...` を使ってユーザー切替するため、パスワード無し sudo が必要です（`shell` / `shell_command` には不要）。
+
+- 例（要調整）: `visudo` で sudoers に `youruser ALL=(assistant:assistant) NOPASSWD: ALL` を追加
+
+### 4) `shell` / `shell_command` 用に `setcap` を付ける
+
+`custom.exec.worker_user` を使う場合、Codex は child process 側で `setgroups/setgid/setuid` を行う必要があるため、ホストで非 root 運用するなら `codex` 実体に capability を付与します。
+
+```bash
+sudo setcap cap_setuid,cap_setgid=ep "$(command -v codex)"
+```
+
+注意:
+- capability は「ファイル」に付くため、バイナリを入れ替える（アップグレード/再インストール）と消えます。更新後は `setcap` をやり直してください。
+
+### 5) 設定例（config.toml）
+
+`custom.exec.worker_user` と、`!` とツール実行で環境変数ポリシーを分離する例です。
+
+```toml
+[custom.exec]
+worker_user = "assistant"
+
+# 互換のため残しておく（未指定時の既定）
+[shell_environment_policy]
+inherit = "core"
+ignore_default_excludes = false
+
+# モデルが起動するツール（shell/shell_command/exec_command/...）側
+[custom.assistant_shell_environment_policy]
+inherit = "core"
+ignore_default_excludes = false
+set = { HOME = "/home/assistant" }
+
+# ユーザー起点の `!` 側（invoker のまま）
+[custom.user_shell_environment_policy]
+inherit = "core"
+ignore_default_excludes = false
+set = { HOME = "/home/youruser" }
+```
+
 ---
 <p align="center"><code>npm i -g @openai/codex</code><br />or <code>brew install --cask codex</code></p>
 <p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.

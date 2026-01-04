@@ -7,10 +7,11 @@ use tracing::trace;
 
 use crate::protocol::SandboxPolicy;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunAsUser {
     pub uid: u32,
     pub gid: u32,
+    pub supplementary_gids: Option<Vec<u32>>,
 }
 
 /// Experimental environment variable that will be set to some non-empty value
@@ -63,12 +64,6 @@ pub(crate) async fn spawn_child_async(
     cmd.env_clear();
     cmd.envs(env);
 
-    #[cfg(unix)]
-    if let Some(run_as) = run_as {
-        cmd.uid(run_as.uid);
-        cmd.gid(run_as.gid);
-    }
-
     if !sandbox_policy.has_full_network_access() {
         cmd.env(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR, "1");
     }
@@ -81,7 +76,38 @@ pub(crate) async fn spawn_child_async(
     unsafe {
         #[cfg(target_os = "linux")]
         let parent_pid = libc::getpid();
+        let run_as = run_as.map(|run_as| {
+            (
+                run_as.uid as libc::uid_t,
+                run_as.gid as libc::gid_t,
+                run_as.supplementary_gids.map(|gids| {
+                    gids.into_iter()
+                        .map(|gid| gid as libc::gid_t)
+                        .collect::<Vec<_>>()
+                }),
+            )
+        });
         cmd.pre_exec(move || {
+            if let Some((uid, gid, groups)) = run_as.as_ref() {
+                if let Some(groups) = groups.as_ref() {
+                    let groups_ptr = groups.as_ptr();
+                    let groups_ptr = if groups.is_empty() {
+                        std::ptr::null()
+                    } else {
+                        groups_ptr
+                    };
+                    if libc::setgroups(groups.len(), groups_ptr) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                if libc::setgid(*gid) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setuid(*uid) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+
             if libc::setpgid(0, 0) == -1 {
                 return Err(std::io::Error::last_os_error());
             }

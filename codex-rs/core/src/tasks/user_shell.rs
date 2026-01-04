@@ -258,7 +258,7 @@ fn create_exec_env(
     session: &crate::codex::Session,
     turn_context: &TurnContext,
 ) -> std::collections::HashMap<String, String> {
-    let mut env = create_env(&turn_context.shell_environment_policy);
+    let mut env = create_env(&turn_context.user_shell_environment_policy);
     crate::shell_startup_files::apply_shell_startup_files_env(
         &mut env,
         session.user_shell().shell_type.clone(),

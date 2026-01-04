@@ -90,7 +90,7 @@ fn unix_preferred_executable_path(candidates: &[&str], fallback: &str) -> String
 }
 
 #[cfg(unix)]
-async fn sudo_preflight_check(run_as: RunAsUser) -> Result<(), String> {
+async fn sudo_preflight_check(run_as: &RunAsUser) -> Result<(), String> {
     use tokio::process::Command;
 
     let sudo_program = unix_preferred_executable_path(
@@ -150,7 +150,7 @@ fn prepare_pty_command(exec_env: &ExecEnv) -> Result<PreparedPtyCommand, Unified
         .split_first()
         .ok_or(UnifiedExecError::MissingCommandLine)?;
 
-    let Some(run_as) = exec_env.run_as else {
+    let Some(run_as) = exec_env.run_as.as_ref() else {
         return Ok(PreparedPtyCommand {
             program: program.to_string(),
             args: args.to_vec(),
@@ -228,16 +228,24 @@ impl UnifiedExecSessionManager {
     async fn cached_exec_command_sudo_preflight(&self, run_as: RunAsUser) -> Result<(), String> {
         {
             let guard = self.sudo_preflight.lock().await;
-            if let Some(state) = guard.as_ref().filter(|state| state.run_as == run_as) {
+            if let Some(state) = guard.as_ref().filter(|state| {
+                state.run_as.uid == run_as.uid
+                    && state.run_as.gid == run_as.gid
+                    && state.run_as.supplementary_gids == run_as.supplementary_gids
+            }) {
                 return state.result.clone();
             }
         }
 
-        let result = sudo_preflight_check(run_as).await;
+        let result = sudo_preflight_check(&run_as).await;
         let mut guard = self.sudo_preflight.lock().await;
         let warned = guard
             .as_ref()
-            .filter(|state| state.run_as == run_as)
+            .filter(|state| {
+                state.run_as.uid == run_as.uid
+                    && state.run_as.gid == run_as.gid
+                    && state.run_as.supplementary_gids == run_as.supplementary_gids
+            })
             .is_some_and(|state| state.warned);
         guard.replace(super::SudoPreflightState {
             run_as,
@@ -272,7 +280,11 @@ impl UnifiedExecSessionManager {
     ) -> Option<String> {
         {
             let mut guard = self.sudo_preflight.lock().await;
-            if let Some(state) = guard.as_mut().filter(|state| state.run_as == run_as) {
+            if let Some(state) = guard.as_mut().filter(|state| {
+                state.run_as.uid == run_as.uid
+                    && state.run_as.gid == run_as.gid
+                    && state.run_as.supplementary_gids == run_as.supplementary_gids
+            }) {
                 if state.warned {
                     return None;
                 }
@@ -284,7 +296,7 @@ impl UnifiedExecSessionManager {
             }
         }
 
-        match sudo_preflight_check(run_as).await {
+        match sudo_preflight_check(&run_as).await {
             Ok(()) => {
                 let mut guard = self.sudo_preflight.lock().await;
                 guard.replace(super::SudoPreflightState {
@@ -730,7 +742,7 @@ impl UnifiedExecSessionManager {
         &self,
         env: &ExecEnv,
     ) -> Result<UnifiedExecSession, UnifiedExecError> {
-        if let Some(run_as) = env.run_as {
+        if let Some(run_as) = env.run_as.clone() {
             self.preflight_exec_command_sudo_worker_user(run_as).await?;
         }
         let prepared = prepare_pty_command(env)?;
@@ -1089,6 +1101,7 @@ mod tests {
             run_as: Some(crate::spawn::RunAsUser {
                 uid: 1001,
                 gid: 1002,
+                supplementary_gids: None,
             }),
             sandbox_permissions: SandboxPermissions::UseDefault,
             justification: None,

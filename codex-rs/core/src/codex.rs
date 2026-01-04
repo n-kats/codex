@@ -369,6 +369,7 @@ pub(crate) struct TurnContext {
     pub(crate) sandbox_policy: SandboxPolicy,
     pub(crate) exec_run_as: Option<RunAsUser>,
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
+    pub(crate) user_shell_environment_policy: ShellEnvironmentPolicy,
     pub(crate) tools_config: ToolsConfig,
     pub(crate) ghost_snapshot: GhostSnapshotConfig,
     pub(crate) final_output_json_schema: Option<Value>,
@@ -526,8 +527,9 @@ impl Session {
             user_instructions: session_configuration.user_instructions.clone(),
             approval_policy: session_configuration.approval_policy.value(),
             sandbox_policy: session_configuration.sandbox_policy.get().clone(),
-            exec_run_as: per_turn_config.exec_run_as,
+            exec_run_as: per_turn_config.exec_run_as.clone(),
             shell_environment_policy: per_turn_config.shell_environment_policy.clone(),
+            user_shell_environment_policy: per_turn_config.user_shell_environment_policy.clone(),
             tools_config,
             ghost_snapshot: per_turn_config.ghost_snapshot.clone(),
             final_output_json_schema: None,
@@ -942,7 +944,7 @@ impl Session {
         }
 
         if self.enabled(Feature::UnifiedExec) {
-            if let Some(run_as) = turn_context.exec_run_as {
+            if let Some(run_as) = turn_context.exec_run_as.clone() {
                 if let Some(err) = self
                     .services
                     .unified_exec_manager
@@ -2197,8 +2199,9 @@ async fn spawn_review_thread(
         compact_prompt: parent_turn_context.compact_prompt.clone(),
         approval_policy: parent_turn_context.approval_policy,
         sandbox_policy: parent_turn_context.sandbox_policy.clone(),
-        exec_run_as: parent_turn_context.exec_run_as,
+        exec_run_as: parent_turn_context.exec_run_as.clone(),
         shell_environment_policy: parent_turn_context.shell_environment_policy.clone(),
+        user_shell_environment_policy: parent_turn_context.user_shell_environment_policy.clone(),
         cwd: parent_turn_context.cwd.clone(),
         final_output_json_schema: None,
         codex_linux_sandbox_exe: parent_turn_context.codex_linux_sandbox_exe.clone(),

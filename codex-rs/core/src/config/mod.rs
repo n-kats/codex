@@ -135,6 +135,7 @@ pub struct Config {
     pub forced_auto_mode_downgraded_on_windows: bool,
 
     pub shell_environment_policy: ShellEnvironmentPolicy,
+    pub user_shell_environment_policy: ShellEnvironmentPolicy,
 
     /// When `true`, `AgentReasoning` events emitted by the backend will be
     /// suppressed from the frontend output. This can reduce visual noise when
@@ -889,6 +890,18 @@ pub struct ConfigToml {
 pub struct CustomConfigToml {
     #[serde(default)]
     pub exec: CustomExecToml,
+
+    /// Optional override of the environment policy used for user-initiated
+    /// shell commands (`!`).
+    ///
+    /// When unset, this defaults to the assistant/tool policy.
+    pub user_shell_environment_policy: Option<ShellEnvironmentPolicyToml>,
+
+    /// Optional override of the environment policy used for model-triggered
+    /// command execution (`shell`, `shell_command`, `exec_command`, ...).
+    ///
+    /// When unset, this defaults to the top-level `shell_environment_policy`.
+    pub assistant_shell_environment_policy: Option<ShellEnvironmentPolicyToml>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
@@ -922,7 +935,11 @@ impl CustomExecToml {
         {
             let ids = match (self.worker_uid, self.worker_gid) {
                 (None, None) => None,
-                (Some(uid), Some(gid)) => Some(RunAsUser { uid, gid }),
+                (Some(uid), Some(gid)) => Some(RunAsUser {
+                    uid,
+                    gid,
+                    supplementary_gids: None,
+                }),
                 _ => {
                     return Err(std::io::Error::new(
                         ErrorKind::InvalidInput,
@@ -942,8 +959,8 @@ impl CustomExecToml {
                 (Some(user_ids), None) => Ok(Some(user_ids)),
                 (None, Some(ids)) => Ok(Some(ids)),
                 (Some(user_ids), Some(ids)) => {
-                    if user_ids == ids {
-                        Ok(Some(ids))
+                    if user_ids.uid == ids.uid && user_ids.gid == ids.gid {
+                        Ok(Some(user_ids))
                     } else {
                         Err(std::io::Error::new(
                             ErrorKind::InvalidInput,
@@ -999,15 +1016,67 @@ fn resolve_user_to_ids(user: &str) -> std::io::Result<RunAsUser> {
             ));
         }
 
+        let uid = pwd.pw_uid;
+        let gid = pwd.pw_gid;
+        let supplementary_gids = resolve_user_supplementary_gids(&user, gid)?;
         return Ok(RunAsUser {
-            uid: pwd.pw_uid,
-            gid: pwd.pw_gid,
+            uid,
+            gid,
+            supplementary_gids: Some(supplementary_gids),
         });
     }
 
     Err(std::io::Error::new(
         ErrorKind::Other,
         "failed to resolve custom.exec.worker_user (buffer exhausted)",
+    ))
+}
+
+#[cfg(unix)]
+fn resolve_user_supplementary_gids(
+    user: &std::ffi::CString,
+    primary_gid: u32,
+) -> std::io::Result<Vec<u32>> {
+    let primary_gid_u32 = primary_gid;
+    let primary_gid: libc::gid_t = primary_gid;
+
+    let mut capacity: usize = 16;
+    for _ in 0..6 {
+        let mut groups: Vec<libc::gid_t> = vec![0; capacity];
+        let mut ngroups: libc::c_int = groups.len().try_into().unwrap_or(libc::c_int::MAX);
+
+        let rc = unsafe {
+            libc::getgrouplist(
+                user.as_ptr(),
+                primary_gid,
+                groups.as_mut_ptr(),
+                &mut ngroups,
+            )
+        };
+        if rc == -1 {
+            let needed: usize = ngroups
+                .try_into()
+                .unwrap_or_else(|_| groups.len().saturating_mul(2));
+            capacity = needed.clamp(capacity.saturating_add(1), 1024);
+            continue;
+        }
+
+        let len: usize = ngroups.try_into().unwrap_or_default();
+        groups.truncate(len);
+
+        let mut resolved: Vec<u32> = groups
+            .into_iter()
+            .filter_map(|gid| u32::try_from(gid).ok())
+            .filter(|gid| *gid != primary_gid_u32)
+            .collect();
+        resolved.sort_unstable();
+        resolved.dedup();
+        return Ok(resolved);
+    }
+
+    Err(std::io::Error::new(
+        ErrorKind::Other,
+        "failed to resolve custom.exec.worker_user supplementary groups",
     ))
 }
 
@@ -1038,7 +1107,8 @@ mod custom_exec_tests {
             cfg.resolve_run_as().expect("resolve ok"),
             Some(RunAsUser {
                 uid: 1000,
-                gid: 1001
+                gid: 1001,
+                supplementary_gids: None,
             })
         );
     }
@@ -1091,10 +1161,54 @@ mod custom_exec_tests {
             worker_uid: Some(uid),
             worker_gid: Some(gid),
         };
-        assert_eq!(
-            cfg.resolve_run_as().expect("resolve ok"),
-            Some(RunAsUser { uid, gid })
-        );
+        let expected = resolve_user_to_ids(cfg.worker_user.as_ref().expect("user"))
+            .expect("resolve_user_to_ids");
+        assert_eq!(cfg.resolve_run_as().expect("resolve ok"), Some(expected));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_user_to_ids_includes_current_process_groups() {
+        use std::ffi::CStr;
+
+        let (user, primary_gid) = unsafe {
+            let uid = libc::getuid();
+            let pwd = libc::getpwuid(uid);
+            if pwd.is_null() {
+                return;
+            }
+            let user = CStr::from_ptr((*pwd).pw_name)
+                .to_string_lossy()
+                .into_owned();
+            (user, (*pwd).pw_gid)
+        };
+
+        let resolved = resolve_user_to_ids(&user).expect("resolve user");
+        let resolved_supplementary = resolved.supplementary_gids.unwrap_or_default();
+
+        let mut ngroups = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+        if ngroups < 0 {
+            return;
+        }
+        let mut groups: Vec<libc::gid_t> = vec![0; ngroups as usize];
+        ngroups = unsafe { libc::getgroups(ngroups, groups.as_mut_ptr()) };
+        if ngroups < 0 {
+            return;
+        }
+
+        let current: Vec<u32> = groups
+            .into_iter()
+            .take(ngroups as usize)
+            .filter_map(|gid| u32::try_from(gid).ok())
+            .filter(|gid| *gid != primary_gid)
+            .collect();
+
+        for gid in current {
+            assert!(
+                resolved_supplementary.contains(&gid),
+                "missing supplementary gid {gid}"
+            );
+        }
     }
 }
 
@@ -1486,7 +1600,12 @@ impl Config {
             })?
             .clone();
 
-        let shell_environment_policy = ShellEnvironmentPolicy::from(cfg.shell_environment_policy);
+        let shell_environment_policy = cfg
+            .custom
+            .assistant_shell_environment_policy
+            .clone()
+            .map(ShellEnvironmentPolicy::from)
+            .unwrap_or_else(|| ShellEnvironmentPolicy::from(cfg.shell_environment_policy));
         if exec_run_as.is_some()
             && matches!(
                 shell_environment_policy.inherit,
@@ -1498,6 +1617,13 @@ impl Config {
                 "custom.exec is configured, but shell_environment_policy.inherit is 'all'; refusing because a model-run `env`/`printenv` would leak the invoker environment (set inherit = 'core' or 'none', or use include_only).",
             ));
         }
+
+        let user_shell_environment_policy = cfg
+            .custom
+            .user_shell_environment_policy
+            .clone()
+            .map(ShellEnvironmentPolicy::from)
+            .unwrap_or_else(|| shell_environment_policy.clone());
 
         let history = cfg.history.unwrap_or_default();
 
@@ -1612,6 +1738,7 @@ impl Config {
             did_user_set_custom_approval_policy_or_sandbox_mode,
             forced_auto_mode_downgraded_on_windows,
             shell_environment_policy,
+            user_shell_environment_policy,
             notify: cfg.notify,
             user_instructions,
             base_instructions,
@@ -2125,6 +2252,7 @@ trust_level = "trusted"
                     worker_uid: Some(1000),
                     worker_gid: Some(1000),
                 },
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -2156,6 +2284,7 @@ trust_level = "trusted"
                     worker_uid: Some(1000),
                     worker_gid: Some(1000),
                 },
+                ..Default::default()
             },
             ..Default::default()
         };
@@ -2165,6 +2294,48 @@ trust_level = "trusted"
             ConfigOverrides::default(),
             codex_home.path().to_path_buf(),
         )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn custom_user_shell_environment_policy_overrides_user_shell_env() -> std::io::Result<()> {
+        let cfg: ConfigToml = toml::from_str(
+            r#"
+            [shell_environment_policy]
+            inherit = "none"
+            set = { HOME = "/home/assistant" }
+
+            [custom.user_shell_environment_policy]
+            inherit = "none"
+            set = { HOME = "/home/ubuntu" }
+        "#,
+        )
+        .expect("parse config toml");
+
+        let codex_home = TempDir::new()?;
+        let config = Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )?;
+
+        assert_eq!(
+            config
+                .shell_environment_policy
+                .r#set
+                .get("HOME")
+                .map(String::as_str),
+            Some("/home/assistant")
+        );
+        assert_eq!(
+            config
+                .user_shell_environment_policy
+                .r#set
+                .get("HOME")
+                .map(String::as_str),
+            Some("/home/ubuntu")
+        );
 
         Ok(())
     }
@@ -3508,6 +3679,7 @@ model_verbosity = "high"
                 did_user_set_custom_approval_policy_or_sandbox_mode: true,
                 forced_auto_mode_downgraded_on_windows: false,
                 shell_environment_policy: ShellEnvironmentPolicy::default(),
+                user_shell_environment_policy: ShellEnvironmentPolicy::default(),
                 user_instructions: None,
                 notify: None,
                 cwd: fixture.cwd(),
@@ -3592,6 +3764,7 @@ model_verbosity = "high"
             did_user_set_custom_approval_policy_or_sandbox_mode: true,
             forced_auto_mode_downgraded_on_windows: false,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
+            user_shell_environment_policy: ShellEnvironmentPolicy::default(),
             user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
@@ -3691,6 +3864,7 @@ model_verbosity = "high"
             did_user_set_custom_approval_policy_or_sandbox_mode: true,
             forced_auto_mode_downgraded_on_windows: false,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
+            user_shell_environment_policy: ShellEnvironmentPolicy::default(),
             user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
@@ -3776,6 +3950,7 @@ model_verbosity = "high"
             did_user_set_custom_approval_policy_or_sandbox_mode: true,
             forced_auto_mode_downgraded_on_windows: false,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
+            user_shell_environment_policy: ShellEnvironmentPolicy::default(),
             user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
