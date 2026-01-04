@@ -31,11 +31,14 @@ fi
 
 cp "$bin_path" "$stage_dir/codex"
 
+tar_entries=("codex")
 if [[ -f "${root_dir}/LICENSE" ]]; then
   cp "${root_dir}/LICENSE" "$stage_dir/LICENSE"
+  tar_entries+=("LICENSE")
 fi
 if [[ -f "${root_dir}/NOTICE" ]]; then
   cp "${root_dir}/NOTICE" "$stage_dir/NOTICE"
+  tar_entries+=("NOTICE")
 fi
 
 strip_used="no"
@@ -53,7 +56,7 @@ sha_file="${release_dir}/${name}.tar.gz.sha256"
 note_file="${release_dir}/${name}_RELEASE.md"
 
 echo "==> Packaging ${tarball}"
-tar -C "$stage_dir" -czf "$tarball" codex LICENSE NOTICE
+tar -C "$stage_dir" -czf "$tarball" "${tar_entries[@]}"
 
 echo "==> Writing sha256"
 (
@@ -67,58 +70,51 @@ git_rev="$(cd "$root_dir" && git rev-parse --short HEAD 2>/dev/null || echo unkn
 echo "==> Writing ${note_file}"
 {
   printf '%s\n' \
-    '# custom_codex release' \
+    '# custom_codex リリース（Linux）' \
     '' \
-    "- Artifact: ${name}.tar.gz" \
-    "- Date (JST): ${date_jst}" \
-    "- Git commit: ${git_rev}" \
-    "- Stripped: ${strip_used}" \
+    "- ファイル: ${name}.tar.gz" \
+    "- 日付（JST）: ${date_jst}" \
+    "- コミット: ${git_rev}" \
+    "- strip 済み: ${strip_used}" \
     '' \
-    '## License and notices' \
+    '## 使い方' \
     '' \
-    '- This release tarball includes `LICENSE` and `NOTICE`.' \
-    '- This binary is built from a Rust workspace and includes third-party crates; ensure your distribution process satisfies their license terms.' \
+    '1) ダウンロードした `tar.gz` と `sha256` を同じフォルダに置く' \
     '' \
-    '## Files to upload to GitHub Releases' \
-    '' \
-    "- ${name}.tar.gz" \
-    "- ${name}.tar.gz.sha256" \
-    "- (optional) ${name}.tar.gz.asc  (GPG detached signature)" \
-    '' \
-    '## Verify checksum' \
+    '2) ハッシュ検証:' \
     '' \
     '```bash' \
     "sha256sum -c ${name}.tar.gz.sha256" \
     '```' \
     '' \
-    'Expected sha256 line:' \
+    '期待される sha256:' \
     '' \
     '```' \
     "${sha_line}" \
     '```' \
     '' \
-    '## (Optional) Create and verify a GPG signature' \
-    '' \
-    'Create:' \
-    '' \
-    '```bash' \
-    "gpg --armor --detach-sign ${name}.tar.gz" \
-    '```' \
-    '' \
-    'Verify (after publishing your public key):' \
-    '' \
-    '```bash' \
-    "gpg --verify ${name}.tar.gz.asc ${name}.tar.gz" \
-    '```' \
-    '' \
-    '## Extract and run' \
+    '3) 展開して実行:' \
     '' \
     '```bash' \
     "tar -xzf ${name}.tar.gz" \
     './codex --help' \
-    '```'
+    '```' \
+    '' \
+    '## 付属ファイルについて' \
+    '' \
+    '- この tarball には `LICENSE` と `NOTICE` を同梱しています。' \
+    '- 署名ファイル（`.asc`）は **付属しません**（sha256 のみ）。' \
+    '' \
+    '## GitHub Releases に置くファイル' \
+    '' \
+    "- ${name}.tar.gz" \
+    "- ${name}.tar.gz.sha256"
 } >"$note_file"
 
 echo "==> Done"
 echo "Artifacts:"
 ls -lah "$tarball" "$sha_file" "$note_file"
+
+echo ""
+echo "==> GitHub Releases 本文（コピペ用）"
+cat "$note_file"
