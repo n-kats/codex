@@ -10,7 +10,7 @@
 - （機能追加）カスタムプロンプト: `CODEX_ADDITIONAL_PROMPT_DIRS`（コンマ区切り、相対パスはカレントディレクトリ基準）で探索ディレクトリを追加
 - （テスト）シェル初期化ファイル: `CODEX_SHELL_STARTUP_FILES=clean`（または `codex --shell-startup-files=clean`）でユーザー dotfiles を可能な範囲で無視して実行（現状は zsh を `ZDOTDIR` で隔離）
 - （テスト）`!` のユーザーコマンド login 制御: `CODEX_USER_SHELL_LOGIN=0` で非 login（`-c`）、未指定なら login（`-lc`）
-- （機能追加）コマンド実行の権限分離: モデルが実行する `shell` / `shell_command` / `exec_command` を worker ユーザー（例: `assistant`）に固定できる（設定は `custom.exec.*`。詳細: `_docs/custom_notes/command_exec_worker_user/README.md`）
+- （機能追加）コマンド実行の権限分離: モデルが実行する `shell` / `shell_command` / `exec_command` を worker ユーザー（例: `assistant`）に固定できる（設定は `custom.exec.*`。安全のため `shell_environment_policy.inherit = "all"` との併用はエラー。詳細: `_docs/custom_notes/command_exec_worker_user/README.md`）
 - （上流不具合修正・追従）exec-server（elicitation）: execve-wrapper が `git` のような素のコマンド名を送っても `PATH` で実行ファイルを解決し、`EscalateRequest.file` を絶対パス化して扱う（公式が直ったら差分を寄せて削除予定）
 - （テスト）Shell snapshot: `exports` セクションは許可リストに限定し、ホスト環境変数の大量出力を避ける
 - （テスト）テスト/ログの安全性: 失敗時の差分表示でホスト環境変数が全量出力されないようにする（`env` は値を丸ごと比較しない）

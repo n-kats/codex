@@ -1486,7 +1486,18 @@ impl Config {
             })?
             .clone();
 
-        let shell_environment_policy = cfg.shell_environment_policy.into();
+        let shell_environment_policy = ShellEnvironmentPolicy::from(cfg.shell_environment_policy);
+        if exec_run_as.is_some()
+            && matches!(
+                shell_environment_policy.inherit,
+                crate::config::types::ShellEnvironmentPolicyInherit::All
+            )
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "custom.exec is configured, but shell_environment_policy.inherit is 'all'; refusing because a model-run `env`/`printenv` would leak the invoker environment (set inherit = 'core' or 'none', or use include_only).",
+            ));
+        }
 
         let history = cfg.history.unwrap_or_default();
 
@@ -2093,6 +2104,67 @@ trust_level = "trusted"
             config.cli_auth_credentials_store_mode,
             AuthCredentialsStoreMode::File,
         );
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_exec_rejects_inherit_all_shell_environment_policy() {
+        use crate::config::types::ShellEnvironmentPolicyInherit;
+
+        let codex_home = TempDir::new().expect("tempdir");
+        let cfg = ConfigToml {
+            shell_environment_policy: ShellEnvironmentPolicyToml {
+                inherit: Some(ShellEnvironmentPolicyInherit::All),
+                ..Default::default()
+            },
+            custom: CustomConfigToml {
+                exec: CustomExecToml {
+                    worker_user: None,
+                    worker_uid: Some(1000),
+                    worker_gid: Some(1000),
+                },
+            },
+            ..Default::default()
+        };
+
+        let err = Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )
+        .expect_err("expected error");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_exec_allows_inherit_core_shell_environment_policy() -> std::io::Result<()> {
+        use crate::config::types::ShellEnvironmentPolicyInherit;
+
+        let codex_home = TempDir::new()?;
+        let cfg = ConfigToml {
+            shell_environment_policy: ShellEnvironmentPolicyToml {
+                inherit: Some(ShellEnvironmentPolicyInherit::Core),
+                ..Default::default()
+            },
+            custom: CustomConfigToml {
+                exec: CustomExecToml {
+                    worker_user: None,
+                    worker_uid: Some(1000),
+                    worker_gid: Some(1000),
+                },
+            },
+            ..Default::default()
+        };
+
+        Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )?;
 
         Ok(())
     }

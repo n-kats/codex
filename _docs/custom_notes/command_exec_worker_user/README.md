@@ -61,6 +61,9 @@
   - 対策は運用で決める（ホスト側の所有/グループ調整、共有グループ、もしくは作業ツリーをコンテナ内に閉じる等）。
 - `.env` 等の secrets は作業ツリー（AI が触るディレクトリ）に置かないことが最も確実。
   - シンボリックリンクで secrets を指す運用は、`chmod -R` 等の誤操作や参照境界が複雑化しやすい点に注意する。
+- `custom.exec.*` を有効にしても、コマンド実行時に渡される環境変数自体が多いと `env` / `printenv` 等で情報が出る。
+  - そのため本 fork では、`custom.exec.*` が設定されている場合に `shell_environment_policy.inherit = "all"` をエラーにする（安全のため）。
+  - 推奨: `shell_environment_policy.inherit = "core"`（または `"none"`）にして、必要なら `include_only` で許可リスト運用にする。
 
 ## 動作確認手順（実装後に追記）
 
@@ -71,6 +74,25 @@
 - `exec_command`（PTY ベース）は `sudo -n -u "#UID" -g "#GID"` で worker に切り替えるため、invoker がパスワードなしでその `sudo` を実行できる必要がある（満たせない場合は `exec_command` が失敗してよい）
   - 起動直後（turn 作成時）に `sudo -n ... id -u` の事前確認を行い、満たせない場合は早めに Warning を出す（後から `exec_command` で落ちるのを避ける）
 - Docker bind mount あり/なしで worker 実行が機能すること（必要なら UID/GID をホスト側に合わせる）
+
+## 設定例（推奨）
+
+```toml
+[custom.exec]
+worker_user = "assistant"
+
+[shell_environment_policy]
+inherit = "core"
+ignore_default_excludes = false
+experimental_use_profile = false
+include_only = [
+  "HOME", "LOGNAME", "USER", "USERNAME",
+  "PATH", "SHELL",
+  "TMPDIR", "TEMP", "TMP",
+  "LANG", "LC_*",
+  "TERM", "COLORTERM",
+]
+```
 
 ## つまずきと対処（メモ）
 

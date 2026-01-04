@@ -253,7 +253,7 @@ impl OtelManager {
         span.set_attribute("codex.trace.name", format!("codex_{conversation_id}"));
 
         if let Some(parent_context) = self.session_parent_context() {
-            span.set_parent(parent_context);
+            let _ = span.set_parent(parent_context);
         }
     }
 
