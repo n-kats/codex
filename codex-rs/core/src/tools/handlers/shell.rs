@@ -37,6 +37,7 @@ impl ShellHandler {
             sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
             justification: params.justification,
             arg0: None,
+            run_as: turn_context.exec_run_as,
         }
     }
 }
@@ -68,6 +69,7 @@ impl ShellCommandHandler {
             sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
             justification: params.justification,
             arg0: None,
+            run_as: turn_context.exec_run_as,
         }
     }
 }

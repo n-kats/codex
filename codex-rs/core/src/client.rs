@@ -127,9 +127,11 @@ impl ModelClient {
                 let instructions = prompt.get_full_instructions(&model_family).into_owned();
                 let tools_json = create_tools_json_for_chat_completions_api(&prompt.tools)?;
                 let api_prompt = build_api_prompt(prompt, instructions, tools_json);
-                let llm_recorder = self
-                    .otel_manager
-                    .start_llm_generation("chat_completions", &self.get_model(), &api_prompt);
+                let llm_recorder = self.otel_manager.start_llm_generation(
+                    "chat_completions",
+                    &self.get_model(),
+                    &api_prompt,
+                );
 
                 let api_stream = self.stream_chat_completions(&api_prompt).await?;
 
@@ -245,9 +247,9 @@ impl ModelClient {
 
         let text = create_text_param_for_request(verbosity, &prompt.output_schema);
         let api_prompt = build_api_prompt(prompt, instructions.clone(), tools_json);
-        let llm_recorder = self
-            .otel_manager
-            .start_llm_generation("responses", &self.get_model(), &api_prompt);
+        let llm_recorder =
+            self.otel_manager
+                .start_llm_generation("responses", &self.get_model(), &api_prompt);
         let conversation_id = self.conversation_id.to_string();
         let session_source = self.session_source.clone();
 

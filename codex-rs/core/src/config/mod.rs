@@ -30,6 +30,7 @@ use crate::project_doc::DEFAULT_PROJECT_DOC_FILENAME;
 use crate::project_doc::LOCAL_PROJECT_DOC_FILENAME;
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPolicy;
+use crate::spawn::RunAsUser;
 use codex_app_server_protocol::Tools;
 use codex_app_server_protocol::UserSavedConfig;
 use codex_protocol::config_types::ForcedLoginMethod;
@@ -120,6 +121,10 @@ pub struct Config {
     pub approval_policy: Constrained<AskForApproval>,
 
     pub sandbox_policy: Constrained<SandboxPolicy>,
+
+    /// When set, command-executing tool calls will be spawned as this UID/GID
+    /// instead of the invoker user (worker_only).
+    pub exec_run_as: Option<RunAsUser>,
 
     /// True if the user passed in an override or set a value in config.toml
     /// for either of approval_policy or sandbox_mode.
@@ -738,6 +743,10 @@ pub struct ConfigToml {
     /// Sandbox configuration to apply if `sandbox` is `WorkspaceWrite`.
     pub sandbox_workspace_write: Option<SandboxWorkspaceWrite>,
 
+    /// Custom configuration namespace for downstream forks.
+    #[serde(default)]
+    pub custom: CustomConfigToml,
+
     /// Optional external command to spawn for end-user notifications.
     #[serde(default)]
     pub notify: Option<Vec<String>>,
@@ -874,6 +883,219 @@ pub struct ConfigToml {
     pub experimental_use_freeform_apply_patch: Option<bool>,
     /// Preferred OSS provider for local models, e.g. "lmstudio" or "ollama".
     pub oss_provider: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct CustomConfigToml {
+    #[serde(default)]
+    pub exec: CustomExecToml,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+pub struct CustomExecToml {
+    pub worker_user: Option<String>,
+    pub worker_uid: Option<u32>,
+    pub worker_gid: Option<u32>,
+}
+
+impl CustomExecToml {
+    fn resolve_run_as(&self) -> std::io::Result<Option<RunAsUser>> {
+        let worker_user = self
+            .worker_user
+            .as_ref()
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+
+        #[cfg(not(unix))]
+        {
+            if worker_user.is_some() || self.worker_uid.is_some() || self.worker_gid.is_some() {
+                return Err(std::io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "custom.exec is only supported on unix targets",
+                ));
+            }
+            return Ok(None);
+        }
+
+        #[cfg(unix)]
+        {
+            let ids = match (self.worker_uid, self.worker_gid) {
+                (None, None) => None,
+                (Some(uid), Some(gid)) => Some(RunAsUser { uid, gid }),
+                _ => {
+                    return Err(std::io::Error::new(
+                        ErrorKind::InvalidInput,
+                        "custom.exec.worker_uid and custom.exec.worker_gid must be set together",
+                    ));
+                }
+            };
+
+            let user_ids = if let Some(user) = worker_user {
+                Some(resolve_user_to_ids(user)?)
+            } else {
+                None
+            };
+
+            match (user_ids, ids) {
+                (None, None) => Ok(None),
+                (Some(user_ids), None) => Ok(Some(user_ids)),
+                (None, Some(ids)) => Ok(Some(ids)),
+                (Some(user_ids), Some(ids)) => {
+                    if user_ids == ids {
+                        Ok(Some(ids))
+                    } else {
+                        Err(std::io::Error::new(
+                            ErrorKind::InvalidInput,
+                            format!(
+                                "custom.exec.worker_user resolved to uid/gid {}/{} but custom.exec.worker_uid/gid is {}/{}",
+                                user_ids.uid, user_ids.gid, ids.uid, ids.gid
+                            ),
+                        ))
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn resolve_user_to_ids(user: &str) -> std::io::Result<RunAsUser> {
+    use std::ffi::CString;
+    use std::ptr;
+
+    let user = CString::new(user).map_err(|_| {
+        std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "custom.exec.worker_user must not contain NUL bytes",
+        )
+    })?;
+
+    let mut buf_len = 1024usize;
+    for _ in 0..6 {
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::passwd = ptr::null_mut();
+        let mut buf = vec![0u8; buf_len];
+        let rc = unsafe {
+            libc::getpwnam_r(
+                user.as_ptr(),
+                &mut pwd,
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                &mut result,
+            )
+        };
+        if rc == libc::ERANGE {
+            buf_len = buf_len.saturating_mul(2);
+            continue;
+        }
+        if rc != 0 {
+            return Err(std::io::Error::from_raw_os_error(rc));
+        }
+        if result.is_null() {
+            return Err(std::io::Error::new(
+                ErrorKind::NotFound,
+                "custom.exec.worker_user does not exist",
+            ));
+        }
+
+        return Ok(RunAsUser {
+            uid: pwd.pw_uid,
+            gid: pwd.pw_gid,
+        });
+    }
+
+    Err(std::io::Error::new(
+        ErrorKind::Other,
+        "failed to resolve custom.exec.worker_user (buffer exhausted)",
+    ))
+}
+
+#[cfg(test)]
+mod custom_exec_tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn custom_exec_requires_uid_and_gid_together() {
+        let cfg = CustomExecToml {
+            worker_user: None,
+            worker_uid: Some(1000),
+            worker_gid: None,
+        };
+        let err = cfg.resolve_run_as().expect_err("expected error");
+        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn custom_exec_accepts_uid_gid_pair() {
+        let cfg = CustomExecToml {
+            worker_user: None,
+            worker_uid: Some(1000),
+            worker_gid: Some(1001),
+        };
+        assert_eq!(
+            cfg.resolve_run_as().expect("resolve ok"),
+            Some(RunAsUser {
+                uid: 1000,
+                gid: 1001
+            })
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_exec_rejects_mismatched_user_and_uid_gid() {
+        use std::ffi::CStr;
+
+        let (user, uid, gid) = unsafe {
+            let uid = libc::getuid();
+            let pwd = libc::getpwuid(uid);
+            if pwd.is_null() {
+                return;
+            }
+            let user = CStr::from_ptr((*pwd).pw_name)
+                .to_string_lossy()
+                .into_owned();
+            (user, (*pwd).pw_uid, (*pwd).pw_gid)
+        };
+
+        let cfg = CustomExecToml {
+            worker_user: Some(user),
+            worker_uid: Some(uid.saturating_add(1)),
+            worker_gid: Some(gid),
+        };
+        let err = cfg.resolve_run_as().expect_err("expected mismatch error");
+        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_exec_accepts_matching_user_and_uid_gid() {
+        use std::ffi::CStr;
+
+        let (user, uid, gid) = unsafe {
+            let uid = libc::getuid();
+            let pwd = libc::getpwuid(uid);
+            if pwd.is_null() {
+                return;
+            }
+            let user = CStr::from_ptr((*pwd).pw_name)
+                .to_string_lossy()
+                .into_owned();
+            (user, (*pwd).pw_uid, (*pwd).pw_gid)
+        };
+
+        let cfg = CustomExecToml {
+            worker_user: Some(user),
+            worker_uid: Some(uid),
+            worker_gid: Some(gid),
+        };
+        assert_eq!(
+            cfg.resolve_run_as().expect("resolve ok"),
+            Some(RunAsUser { uid, gid })
+        );
+    }
 }
 
 impl From<ConfigToml> for UserSavedConfig {
@@ -1242,6 +1464,8 @@ impl Config {
             || config_profile.sandbox_mode.is_some()
             || cfg.sandbox_mode.is_some();
 
+        let exec_run_as = cfg.custom.exec.resolve_run_as()?;
+
         let mut model_providers = built_in_model_providers();
         // Merge user-defined providers into the built-in list.
         for (key, provider) in cfg.model_providers.into_iter() {
@@ -1373,6 +1597,7 @@ impl Config {
             cwd: resolved_cwd,
             approval_policy: constrained_approval_policy,
             sandbox_policy: constrained_sandbox_policy,
+            exec_run_as,
             did_user_set_custom_approval_policy_or_sandbox_mode,
             forced_auto_mode_downgraded_on_windows,
             shell_environment_policy,
@@ -3207,6 +3432,7 @@ model_verbosity = "high"
                 model_provider: fixture.openai_provider.clone(),
                 approval_policy: Constrained::allow_any(AskForApproval::Never),
                 sandbox_policy: Constrained::allow_any(SandboxPolicy::new_read_only_policy()),
+                exec_run_as: None,
                 did_user_set_custom_approval_policy_or_sandbox_mode: true,
                 forced_auto_mode_downgraded_on_windows: false,
                 shell_environment_policy: ShellEnvironmentPolicy::default(),
@@ -3290,6 +3516,7 @@ model_verbosity = "high"
             model_provider: fixture.openai_chat_completions_provider.clone(),
             approval_policy: Constrained::allow_any(AskForApproval::UnlessTrusted),
             sandbox_policy: Constrained::allow_any(SandboxPolicy::new_read_only_policy()),
+            exec_run_as: None,
             did_user_set_custom_approval_policy_or_sandbox_mode: true,
             forced_auto_mode_downgraded_on_windows: false,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
@@ -3388,6 +3615,7 @@ model_verbosity = "high"
             model_provider: fixture.openai_provider.clone(),
             approval_policy: Constrained::allow_any(AskForApproval::OnFailure),
             sandbox_policy: Constrained::allow_any(SandboxPolicy::new_read_only_policy()),
+            exec_run_as: None,
             did_user_set_custom_approval_policy_or_sandbox_mode: true,
             forced_auto_mode_downgraded_on_windows: false,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
@@ -3472,6 +3700,7 @@ model_verbosity = "high"
             model_provider: fixture.openai_provider.clone(),
             approval_policy: Constrained::allow_any(AskForApproval::OnFailure),
             sandbox_policy: Constrained::allow_any(SandboxPolicy::new_read_only_policy()),
+            exec_run_as: None,
             did_user_set_custom_approval_policy_or_sandbox_mode: true,
             forced_auto_mode_downgraded_on_windows: false,
             shell_environment_policy: ShellEnvironmentPolicy::default(),

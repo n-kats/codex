@@ -30,9 +30,7 @@ impl SessionTask for RegularTask {
     ) -> Option<String> {
         let sess = session.clone_session();
         let turn_span = trace_span!("turn", turn_id = %ctx.sub_id);
-        sess.services
-            .otel_manager
-            .attach_session_parent(&turn_span);
+        sess.services.otel_manager.attach_session_parent(&turn_span);
         run_task(sess, ctx, input, cancellation_token)
             .instrument(turn_span)
             .await

@@ -54,7 +54,7 @@
 - `_docs/custom_notes/tui-enter-newline-ctrl-enter-send/README.md`: TUI（tui）入力キー（Enter=改行、Ctrl+Enter/Ctrl+J=送信）と関連テスト
 - `_docs/custom_notes/tui2_input_submit_behavior_tests/README.md`: TUI2（tui2）入力キーと送信挙動、`/prompts:` の引数なし挙動、関連テスト
 - `_docs/custom_notes/exec_command_default_login/README.md`: `!`/shell 実行の login 制御（`CODEX_USER_SHELL_LOGIN` 等）
-- `_docs/custom_notes/command_exec_worker_user/README.md`: コマンド実行を worker ユーザー（assistant 等）に固定する方針（未実装）
+- `_docs/custom_notes/command_exec_worker_user/README.md`: コマンド実行を worker ユーザー（assistant 等）に固定する方針
 - `_docs/custom_notes/linux_default_shell_prefers_bash_over_zsh/README.md`: Linux のデフォルトシェル検出・bash 優先・関連テスト
 - `_docs/custom_notes/shell_snapshot_redacted_exports/README.md`: Shell snapshot の `exports` マスキング（秘匿情報混入回避）
 - `_docs/custom_notes/test_output_redacts_host_env/README.md`: テスト出力・ログからホスト環境変数の漏えい回避
@@ -86,6 +86,7 @@
 - （機能追加）カスタムプロンプト探索パスの追加: `CODEX_ADDITIONAL_PROMPT_DIRS`（コンマ区切り、相対パスはカレントディレクトリ基準）でプロンプト探索ディレクトリを追加できるようにする（詳細: `_docs/custom_notes/additional_prompt_dirs/README.md`）。
 - （テスト）シェル初期化ファイルの制御: `CODEX_SHELL_STARTUP_FILES=clean`（または `codex --shell-startup-files=clean`）で、可能な範囲でユーザー dotfiles を読まずにシェルを起動できるようにする（現状は zsh を `ZDOTDIR` で隔離）（検証・再現性のための制御、詳細: `_docs/custom_notes/linux_default_shell_prefers_bash_over_zsh/README.md` / `_docs/custom_notes/exec_command_default_login/README.md`）。
 - （テスト）`!` のユーザーコマンドの login 制御: `CODEX_USER_SHELL_LOGIN=0` で `-c`（非 login）、未指定なら `-lc`（login）で実行する（検証・再現性のための制御）。
+- （機能追加）コマンド実行の権限分離: モデルが実行する `shell` / `shell_command` / `exec_command` を worker ユーザー（例: `assistant`）に固定できる（設定は `custom.exec.*`。`!` は invoker のまま。詳細: `_docs/custom_notes/command_exec_worker_user/README.md`）。
 - （上流不具合修正・追従）exec-server（elicitation）: execve-wrapper が `git` のような素のコマンド名を送っても `PATH` で実行ファイルを解決し、`EscalateRequest.file` を絶対パス化して扱う（elicitation の文言一致と `execv()` の確実な実行のため）。公式（openai/codex の main）側で同様の修正が入ったら差分を寄せて削除する。
   - （テスト観点）`codex-exec-server` の `suite::accept_elicitation::accept_elicitation_for_prompt_rule` が、elicitation 文言の不一致により auto-accept されず（結果として deny 扱いになり）失敗するため、この修正で通ることを確認する。
     - 検証例: `cd codex-rs && cargo test -p codex-exec-server --test all suite::accept_elicitation::accept_elicitation_for_prompt_rule`

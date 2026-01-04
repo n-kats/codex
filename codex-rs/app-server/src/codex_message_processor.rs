@@ -1195,6 +1195,7 @@ impl CodexMessageProcessor {
             sandbox_permissions: SandboxPermissions::UseDefault,
             justification: None,
             arg0: None,
+            run_as: None,
         };
 
         let requested_policy = params.sandbox_policy.map(|policy| policy.to_core());
