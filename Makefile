@@ -1,5 +1,6 @@
 .PHONY: \
 	help cache-dir tmp-dir \
+	release-dir release \
 	fmt \
 	build \
 	run-tui test-tui \
@@ -15,6 +16,7 @@ ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 CODEX_RS_DIR := $(ROOT_DIR)/codex-rs
 CACHE_DIR := $(ROOT_DIR)/_cache
 TMP_DIR := $(ROOT_DIR)/_tmp
+RELEASE_DIR := $(ROOT_DIR)/_release
 CODEX_HOME ?= $(CACHE_DIR)/codex_home
 export CODEX_HOME
 
@@ -27,6 +29,9 @@ cache-dir:
 
 tmp-dir:
 	@mkdir -p "$(TMP_DIR)"
+
+release-dir:
+	@mkdir -p "$(RELEASE_DIR)"
 
 clean:
 	cd "$(CODEX_RS_DIR)" && cargo clean
@@ -61,6 +66,7 @@ help:
 		"" \
 		"  make fmt              # Format Rust" \
 		"  make build            # Build codex (CLI entrypoint)" \
+		"  make release          # Build Linux release tarball into ./_release" \
 		"" \
 		"  make verify-all-custom# Run all custom verifications (no auto-fix)" \
 		"  make verify-codex-home-cli-flag # Verify --codex-home customization" \
@@ -89,6 +95,9 @@ fmt: cache-dir
 # Build
 build: cache-dir
 	$(call run_test_logged,build_cli,cd "$(CODEX_RS_DIR)" && cargo build -p codex-cli --bin codex)
+
+release: cache-dir tmp-dir release-dir
+	$(call run_test_logged,release,/bin/bash "$(ROOT_DIR)/scripts/release_linux.sh" "$(ROOT_DIR)" "$(CODEX_RS_DIR)" "$(RELEASE_DIR)")
 
 # Lint / test helpers (no auto-fix)
 lint-arg0: cache-dir
