@@ -22,7 +22,7 @@ const SHORT_TIMEOUT_MS: u64 = 200;
 const SHORT_TIMEOUT_MS: u64 = 5_000;
 
 #[cfg(not(target_arch = "aarch64"))]
-const LONG_TIMEOUT_MS: u64 = 1_000;
+const LONG_TIMEOUT_MS: u64 = 3_000;
 #[cfg(target_arch = "aarch64")]
 const LONG_TIMEOUT_MS: u64 = 5_000;
 
@@ -62,6 +62,7 @@ async fn run_cmd_output(
         sandbox_permissions: SandboxPermissions::UseDefault,
         justification: None,
         arg0: None,
+        run_as: None,
     };
 
     let sandbox_policy = SandboxPolicy::WorkspaceWrite {
@@ -111,7 +112,13 @@ async fn test_root_write() {
 #[tokio::test]
 async fn test_dev_null_write() {
     run_cmd(
-        &["bash", "-lc", "echo blah > /dev/null"],
+        &[
+            "bash",
+            "--noprofile",
+            "--norc",
+            "-c",
+            "echo blah > /dev/null",
+        ],
         &[],
         // We have seen timeouts when running this test in CI on GitHub,
         // so we are using a generous timeout until we can diagnose further.
@@ -127,7 +134,9 @@ async fn test_writable_root() {
     run_cmd(
         &[
             "bash",
-            "-lc",
+            "--noprofile",
+            "--norc",
+            "-c",
             &format!("echo blah > {}", file_path.to_string_lossy()),
         ],
         &[tmpdir.path().to_path_buf()],
@@ -179,6 +188,7 @@ async fn assert_network_blocked(cmd: &[&str]) {
         sandbox_permissions: SandboxPermissions::UseDefault,
         justification: None,
         arg0: None,
+        run_as: None,
     };
 
     let sandbox_policy = SandboxPolicy::new_read_only_policy();

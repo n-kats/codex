@@ -1208,7 +1208,18 @@ impl CodexMessageProcessor {
             reasoning_effort,
         } = params;
 
+        let Some(config_path) = self.config.user_config_toml_path() else {
+            let error = JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: "config persistence is disabled; cannot save model selection".to_string(),
+                data: None,
+            };
+            self.outgoing.send_error(request_id, error).await;
+            return;
+        };
+
         match ConfigEditsBuilder::new(&self.config.codex_home)
+            .with_config_path(config_path.as_path().to_path_buf())
             .with_profile(self.config.active_profile.as_deref())
             .set_model(model.as_deref(), reasoning_effort)
             .apply()
@@ -1255,6 +1266,7 @@ impl CodexMessageProcessor {
             sandbox_permissions: SandboxPermissions::UseDefault,
             justification: None,
             arg0: None,
+            run_as: None,
         };
 
         let requested_policy = params.sandbox_policy.map(|policy| policy.to_core());

@@ -7,6 +7,7 @@ use chrono::Utc;
 use codex_core::AuthManager;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
+use codex_core::config::ConfigOverrides;
 use codex_core::models_manager::manager::ModelsManager;
 use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::RateLimitSnapshot;
@@ -19,12 +20,16 @@ use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::openai_models::ReasoningEffort;
 use insta::assert_snapshot;
 use ratatui::prelude::*;
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 async fn test_config(temp_home: &TempDir) -> Config {
     ConfigBuilder::default()
         .codex_home(temp_home.path().to_path_buf())
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(temp_home.path().to_path_buf()),
+            no_config: true,
+            ..Default::default()
+        })
         .build()
         .await
         .expect("load config")
@@ -76,6 +81,28 @@ fn sanitize_directory(lines: Vec<String>) -> Vec<String> {
                 }
                 rebuilt.push_str(suffix);
                 rebuilt
+            } else if let (Some(label_pos), Some(pipe_idx)) =
+                (line.find("Agents.md:"), line.rfind('│'))
+            {
+                let after_label = label_pos + "Agents.md:".len();
+                let content_end = pipe_idx.min(line.len());
+                let after_label_slice = &line[after_label..content_end];
+                let leading_spaces_len = after_label_slice
+                    .chars()
+                    .take_while(|ch| *ch == ' ')
+                    .count();
+                let value_start = after_label + leading_spaces_len;
+                let prefix = &line[..value_start];
+                let suffix = &line[pipe_idx..];
+                let content_width = pipe_idx.saturating_sub(value_start);
+                let replacement = "<none>";
+                let mut rebuilt = prefix.to_string();
+                rebuilt.push_str(replacement);
+                if content_width > replacement.len() {
+                    rebuilt.push_str(&" ".repeat(content_width - replacement.len()));
+                }
+                rebuilt.push_str(suffix);
+                rebuilt
             } else {
                 line
             }
@@ -106,7 +133,7 @@ async fn status_snapshot_includes_reasoning_details() {
         })
         .expect("set sandbox policy");
 
-    config.cwd = PathBuf::from("/workspace/tests");
+    config.cwd = temp_home.path().join("tests");
 
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage {
@@ -171,7 +198,7 @@ async fn status_snapshot_includes_forked_from() {
     let mut config = test_config(&temp_home).await;
     config.model = Some("gpt-5.1-codex-max".to_string());
     config.model_provider_id = "openai".to_string();
-    config.cwd = PathBuf::from("/workspace/tests");
+    config.cwd = temp_home.path().join("tests");
 
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage {
@@ -224,7 +251,7 @@ async fn status_snapshot_includes_monthly_limit() {
     let mut config = test_config(&temp_home).await;
     config.model = Some("gpt-5.1-codex-max".to_string());
     config.model_provider_id = "openai".to_string();
-    config.cwd = PathBuf::from("/workspace/tests");
+    config.cwd = temp_home.path().join("tests");
 
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage {
@@ -462,7 +489,7 @@ async fn status_card_token_usage_excludes_cached_tokens() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home).await;
     config.model = Some("gpt-5.1-codex-max".to_string());
-    config.cwd = PathBuf::from("/workspace/tests");
+    config.cwd = temp_home.path().join("tests");
 
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage {
@@ -509,7 +536,7 @@ async fn status_snapshot_truncates_in_narrow_terminal() {
     config.model = Some("gpt-5.1-codex-max".to_string());
     config.model_provider_id = "openai".to_string();
     config.model_reasoning_summary = ReasoningSummary::Detailed;
-    config.cwd = PathBuf::from("/workspace/tests");
+    config.cwd = temp_home.path().join("tests");
 
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage {
@@ -569,7 +596,7 @@ async fn status_snapshot_shows_missing_limits_message() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home).await;
     config.model = Some("gpt-5.1-codex-max".to_string());
-    config.cwd = PathBuf::from("/workspace/tests");
+    config.cwd = temp_home.path().join("tests");
 
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage {
@@ -616,7 +643,7 @@ async fn status_snapshot_includes_credits_and_limits() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home).await;
     config.model = Some("gpt-5.1-codex".to_string());
-    config.cwd = PathBuf::from("/workspace/tests");
+    config.cwd = temp_home.path().join("tests");
 
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage {
@@ -682,7 +709,7 @@ async fn status_snapshot_shows_empty_limits_message() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home).await;
     config.model = Some("gpt-5.1-codex-max".to_string());
-    config.cwd = PathBuf::from("/workspace/tests");
+    config.cwd = temp_home.path().join("tests");
 
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage {
@@ -736,7 +763,7 @@ async fn status_snapshot_shows_stale_limits_message() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home).await;
     config.model = Some("gpt-5.1-codex-max".to_string());
-    config.cwd = PathBuf::from("/workspace/tests");
+    config.cwd = temp_home.path().join("tests");
 
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage {
@@ -799,7 +826,7 @@ async fn status_snapshot_cached_limits_hide_credits_without_flag() {
     let temp_home = TempDir::new().expect("temp home");
     let mut config = test_config(&temp_home).await;
     config.model = Some("gpt-5.1-codex".to_string());
-    config.cwd = PathBuf::from("/workspace/tests");
+    config.cwd = temp_home.path().join("tests");
 
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage {

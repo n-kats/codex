@@ -14,6 +14,7 @@ use codex_cli::login::run_login_status;
 use codex_cli::login::run_login_with_api_key;
 use codex_cli::login::run_login_with_chatgpt;
 use codex_cli::login::run_login_with_device_code;
+use codex_cli::login::run_login_with_device_code_fallback_to_browser;
 use codex_cli::login::run_logout;
 use codex_cloud_tasks::Cli as CloudTasksCli;
 use codex_common::CliConfigOverrides;
@@ -39,6 +40,7 @@ use crate::mcp_cmd::McpCli;
 
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
+use codex_core::env::is_headless_environment;
 use codex_core::features::is_known_feature_key;
 use codex_core::terminal::TerminalName;
 
@@ -58,6 +60,38 @@ use codex_core::terminal::TerminalName;
     override_usage = "codex [OPTIONS] [PROMPT]\n       codex [OPTIONS] <COMMAND> [ARGS]"
 )]
 struct MultitoolCli {
+    /// Override the Codex home directory (defaults to `~/.codex`).
+    ///
+    /// This is equivalent to setting `CODEX_HOME`, but can be easier to use in scripts.
+    #[arg(long, global = true, value_name = "PATH")]
+    codex_home: Option<PathBuf>,
+
+    /// Override the `config.toml` file path (defaults to `$CODEX_HOME/config.toml`).
+    #[arg(
+        long = "config",
+        global = true,
+        value_name = "FILE",
+        value_hint = clap::ValueHint::FilePath,
+        conflicts_with = "no_config"
+    )]
+    config_file: Option<PathBuf>,
+
+    /// Ignore user + project config files (still honors system config and CLI `-c` overrides).
+    #[arg(
+        long = "no-config",
+        global = true,
+        default_value_t = false,
+        conflicts_with = "config_file"
+    )]
+    no_config: bool,
+
+    /// Control whether the user's shell startup files are loaded when Codex runs shell commands.
+    ///
+    /// `clean` avoids loading user zsh dotfiles by setting `ZDOTDIR` to an empty directory.
+    /// This flag is applied very early in process startup (before the Tokio runtime is created).
+    #[arg(long, global = true, value_name = "MODE")]
+    shell_startup_files: Option<String>,
+
     #[clap(flatten)]
     pub config_overrides: CliConfigOverrides,
 
@@ -471,11 +505,18 @@ fn main() -> anyhow::Result<()> {
 
 async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
     let MultitoolCli {
+        codex_home: _,
+        config_file,
+        no_config,
+        shell_startup_files: _,
         config_overrides: mut root_config_overrides,
         feature_toggles,
         mut interactive,
         subcommand,
     } = MultitoolCli::parse();
+
+    interactive.config_toml_file = config_file.clone();
+    interactive.no_config = no_config;
 
     // Fold --enable/--disable into config overrides so they flow to all subcommands.
     let toggle_overrides = feature_toggles.to_overrides()?;
@@ -491,6 +532,8 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
             handle_app_exit(exit_info)?;
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
+            exec_cli.config_toml_file = config_file.clone();
+            exec_cli.no_config = no_config;
             prepend_config_flags(
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
@@ -499,6 +542,8 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
         }
         Some(Subcommand::Review(review_args)) => {
             let mut exec_cli = ExecCli::try_parse_from(["codex", "exec"])?;
+            exec_cli.config_toml_file = config_file.clone();
+            exec_cli.no_config = no_config;
             exec_cli.command = Some(ExecCommand::Review(review_args));
             prepend_config_flags(
                 &mut exec_cli.config_overrides,
@@ -510,6 +555,8 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
             codex_mcp_server::run_main(codex_linux_sandbox_exe, root_config_overrides).await?;
         }
         Some(Subcommand::Mcp(mut mcp_cli)) => {
+            mcp_cli.config_toml_file = config_file.clone();
+            mcp_cli.no_config = no_config;
             // Propagate any root-level config overrides (e.g. `-c key=value`).
             prepend_config_flags(&mut mcp_cli.config_overrides, root_config_overrides.clone());
             mcp_cli.run().await?;
@@ -575,7 +622,8 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
             );
             match login_cli.action {
                 Some(LoginSubcommand::Status) => {
-                    run_login_status(login_cli.config_overrides).await;
+                    run_login_status(login_cli.config_overrides, config_file.clone(), no_config)
+                        .await;
                 }
                 None => {
                     if login_cli.use_device_code {
@@ -583,6 +631,8 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                             login_cli.config_overrides,
                             login_cli.issuer_base_url,
                             login_cli.client_id,
+                            config_file.clone(),
+                            no_config,
                         )
                         .await;
                     } else if login_cli.api_key.is_some() {
@@ -592,9 +642,29 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                         std::process::exit(1);
                     } else if login_cli.with_api_key {
                         let api_key = read_api_key_from_stdin();
-                        run_login_with_api_key(login_cli.config_overrides, api_key).await;
+                        run_login_with_api_key(
+                            login_cli.config_overrides,
+                            api_key,
+                            config_file.clone(),
+                            no_config,
+                        )
+                        .await;
+                    } else if is_headless_environment() {
+                        run_login_with_device_code_fallback_to_browser(
+                            login_cli.config_overrides,
+                            login_cli.issuer_base_url,
+                            login_cli.client_id,
+                            config_file.clone(),
+                            no_config,
+                        )
+                        .await;
                     } else {
-                        run_login_with_chatgpt(login_cli.config_overrides).await;
+                        run_login_with_chatgpt(
+                            login_cli.config_overrides,
+                            config_file.clone(),
+                            no_config,
+                        )
+                        .await;
                     }
                 }
             }
@@ -604,12 +674,14 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 &mut logout_cli.config_overrides,
                 root_config_overrides.clone(),
             );
-            run_logout(logout_cli.config_overrides).await;
+            run_logout(logout_cli.config_overrides, config_file.clone(), no_config).await;
         }
         Some(Subcommand::Completion(completion_cli)) => {
             print_completion(completion_cli);
         }
         Some(Subcommand::Cloud(mut cloud_cli)) => {
+            cloud_cli.config_toml_file = config_file.clone();
+            cloud_cli.no_config = no_config;
             prepend_config_flags(
                 &mut cloud_cli.config_overrides,
                 root_config_overrides.clone(),
@@ -688,6 +760,8 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 // Thread through relevant top-level flags (at minimum, `--profile`).
                 let overrides = ConfigOverrides {
                     config_profile: interactive.config_profile.clone(),
+                    config_toml_file: interactive.config_toml_file.clone(),
+                    no_config: interactive.no_config,
                     ..Default::default()
                 };
 
@@ -889,6 +963,10 @@ mod tests {
             config_overrides: root_overrides,
             subcommand,
             feature_toggles: _,
+            codex_home: _,
+            config_file: _,
+            no_config: _,
+            shell_startup_files: _,
         } = cli;
 
         let Subcommand::Resume(ResumeCommand {
@@ -918,6 +996,7 @@ mod tests {
             config_overrides: root_overrides,
             subcommand,
             feature_toggles: _,
+            ..
         } = cli;
 
         let Subcommand::Fork(ForkCommand {

@@ -120,6 +120,7 @@ async fn write_shell_snapshot(shell_type: ShellType, output_path: &Path) -> Resu
 
     let raw_snapshot = capture_snapshot(&shell).await?;
     let snapshot = strip_snapshot_preamble(&raw_snapshot)?;
+    let snapshot = redact_snapshot_exports(&snapshot);
 
     if let Some(parent) = output_path.parent() {
         let parent_display = parent.display();
@@ -162,6 +163,93 @@ async fn validate_snapshot(shell: &Shell, snapshot_path: &Path) -> Result<()> {
     run_script_with_timeout(shell, &script, SNAPSHOT_TIMEOUT, false)
         .await
         .map(|_| ())
+}
+
+fn redact_snapshot_exports(snapshot: &str) -> String {
+    let keep_trailing_newline = snapshot.ends_with('\n');
+    let mut lines: Vec<String> = snapshot.lines().map(str::to_string).collect();
+
+    let Some(exports_idx) = lines.iter().position(|l| l.starts_with("# exports ")) else {
+        return snapshot.to_string();
+    };
+
+    let exports_lines = lines.drain((exports_idx + 1)..).collect::<Vec<_>>();
+    let mut kept: Vec<String> = Vec::new();
+    for line in exports_lines {
+        let Some(key) = extract_export_key(&line) else {
+            continue;
+        };
+        if is_allowed_export_key(key) {
+            kept.push(line);
+        }
+    }
+
+    lines[exports_idx] = format!("# exports {}", kept.len());
+    lines.extend(kept);
+
+    let mut out = lines.join("\n");
+    if keep_trailing_newline {
+        out.push('\n');
+    }
+    out
+}
+
+fn extract_export_key(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+
+    let rest = match trimmed.split_whitespace().next() {
+        Some("export" | "declare" | "typeset" | "set" | "setenv") => {
+            let mut tokens = trimmed.split_whitespace();
+            let _cmd = tokens.next()?;
+            let token = tokens.find(|token| !token.starts_with('-'))?;
+            token
+        }
+        _ => trimmed,
+    };
+
+    let rest = rest.trim_start_matches('\'').trim_start_matches('"');
+    let mut end = 0;
+    for (idx, ch) in rest.char_indices() {
+        if (idx == 0 && (ch.is_ascii_alphabetic() || ch == '_'))
+            || (idx > 0 && (ch.is_ascii_alphanumeric() || ch == '_'))
+        {
+            end = idx + ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+    if end == 0 {
+        return None;
+    }
+    Some(&rest[..end])
+}
+
+fn is_allowed_export_key(key: &str) -> bool {
+    if key.starts_with("XDG_") {
+        return true;
+    }
+
+    matches!(
+        key,
+        "PATH"
+            | "HOME"
+            | "USER"
+            | "LOGNAME"
+            | "SHELL"
+            | "TERM"
+            | "TMPDIR"
+            | "TMP"
+            | "TEMP"
+            | "LANG"
+            | "LC_ALL"
+            | "LC_CTYPE"
+            | "COLORTERM"
+            | "PAGER"
+            | "GIT_PAGER"
+            | "EDITOR"
+            | "VISUAL"
+            | "CODEX_HOME"
+    )
 }
 
 async fn run_shell_script(shell: &Shell, script: &str) -> Result<String> {
@@ -498,6 +586,14 @@ mod tests {
         let snapshot = "noise\n# Snapshot file\nexport PATH=/bin\n";
         let cleaned = strip_snapshot_preamble(snapshot).expect("snapshot marker exists");
         assert_eq!(cleaned, "# Snapshot file\nexport PATH=/bin\n");
+    }
+
+    #[test]
+    fn extract_export_key_skips_typeset_flags() {
+        assert_eq!(extract_export_key("typeset -xT PATH path"), Some("PATH"));
+        assert_eq!(extract_export_key("typeset -g -x PATH=/bin"), Some("PATH"));
+        assert_eq!(extract_export_key("export -T PATH path"), Some("PATH"));
+        assert_eq!(extract_export_key("declare -x PATH=/bin"), Some("PATH"));
     }
 
     #[test]

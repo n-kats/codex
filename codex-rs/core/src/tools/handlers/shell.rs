@@ -38,6 +38,7 @@ impl ShellHandler {
             sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
             justification: params.justification,
             arg0: None,
+            run_as: turn_context.exec_run_as.clone(),
         }
     }
 }
@@ -55,15 +56,21 @@ impl ShellCommandHandler {
     ) -> ExecParams {
         let shell = session.user_shell();
         let command = Self::base_command(shell.as_ref(), &params.command, params.login);
+        let mut env = create_env(&turn_context.shell_environment_policy);
+        crate::shell_startup_files::apply_shell_startup_files_env(
+            &mut env,
+            shell.shell_type.clone(),
+        );
 
         ExecParams {
             command,
             cwd: turn_context.resolve_path(params.workdir.clone()),
             expiration: params.timeout_ms.into(),
-            env: create_env(&turn_context.shell_environment_policy),
+            env,
             sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
             justification: params.justification,
             arg0: None,
+            run_as: turn_context.exec_run_as.clone(),
         }
     }
 }
@@ -289,6 +296,7 @@ impl ShellHandler {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -367,7 +375,11 @@ mod tests {
 
         let expected_command = session.user_shell().derive_exec_args(&command, true);
         let expected_cwd = turn_context.resolve_path(workdir.clone());
-        let expected_env = create_env(&turn_context.shell_environment_policy);
+        let mut expected_env = create_env(&turn_context.shell_environment_policy);
+        crate::shell_startup_files::apply_shell_startup_files_env(
+            &mut expected_env,
+            session.user_shell().shell_type.clone(),
+        );
 
         let params = ShellCommandToolCallParams {
             command,
@@ -383,7 +395,12 @@ mod tests {
         // ExecParams cannot derive Eq due to the CancellationToken field, so we manually compare the fields.
         assert_eq!(exec_params.command, expected_command);
         assert_eq!(exec_params.cwd, expected_cwd);
-        assert_eq!(exec_params.env, expected_env);
+        let got_keys: BTreeSet<String> = exec_params.env.keys().cloned().collect();
+        let expected_keys: BTreeSet<String> = expected_env.keys().cloned().collect();
+        assert_eq!(got_keys, expected_keys);
+        for key in ["PATH", "HOME", "TERM", "CODEX_HOME"] {
+            assert_eq!(exec_params.env.get(key), expected_env.get(key));
+        }
         assert_eq!(exec_params.expiration.timeout_ms(), timeout_ms);
         assert_eq!(exec_params.sandbox_permissions, sandbox_permissions);
         assert_eq!(exec_params.justification, justification);
