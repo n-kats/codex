@@ -5,6 +5,7 @@
 現在のカスタム一覧:
 
 - （機能追加）TUI の入力: Enter で改行、Ctrl+Enter（または Ctrl+J）で送信
+- （機能追加）TUI の更新チェック: `x.y.z-custom-...` のようなカスタム版バージョン文字列でも更新判定できるようにする（詳細: `_docs/custom_notes/update_check_custom_version_suffix/README.md`）
 - （機能追加）config.toml の読み込み制御: `codex --config <FILE>` / `codex --no-config`
 - （機能追加）Codex home の上書き: `codex --codex-home PATH`（`CODEX_HOME` と同等）
 - （機能追加）カスタムプロンプト: `CODEX_ADDITIONAL_PROMPT_DIRS`（コンマ区切り、相対パスはカレントディレクトリ基準）で探索ディレクトリを追加
@@ -16,7 +17,7 @@
 - （テスト）テスト/ログの安全性: 失敗時の差分表示でホスト環境変数が全量出力されないようにする（`env` は値を丸ごと比較しない）
 - （テスト）tool parallelism: 並列ツールテストの判定を「時間」から「tool出力」へ変更し、Docker 等での不安定さを排除
 - （テスト）exec-server: `dotslash` を Docker イメージに同梱し、DotSlash 由来の bash を使えるようにする
-- （テスト）動作確認: `make` の検証ターゲットはデフォルトで `CODEX_HOME=<リポジトリ配下>/_cache/codex_home` を使用
+- （テスト）動作確認: `make` の検証ターゲットはデフォルトで `CODEX_HOME=<リポジトリ配下>/_cache/codex_home_debug` を使用
 - （テスト）動作確認ログ: `make test-*` / `make verify-*` 実行時のログを `_tmp/*_test_result.txt` に保存（`tee`）
 - （開発運用）フォーマット（rustfmt）: `make fmt`（=`cargo +nightly fmt`）で実行
 - （開発運用）NOTICE: フォークで加えた変更の著作権表記を `NOTICE` に追記

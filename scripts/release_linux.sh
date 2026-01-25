@@ -15,15 +15,61 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   exit 1
 fi
 
-date_jst="$(TZ=Asia/Tokyo date +%Y%m%d)"
-name="custom_codex_${date_jst}"
+date_jst_compact="$(TZ=Asia/Tokyo date +%Y%m%d)"
+date_jst_hyphen="$(TZ=Asia/Tokyo date +%F)"
+
+git_safe=(git -c "safe.directory=${root_dir}" -C "${root_dir}")
+
+base_version="$(
+  "${git_safe[@]}" describe --tags --abbrev=0 --match 'rust-v[0-9]*.[0-9]*.[0-9]*' fork-origin/main 2>/dev/null \
+    | sed -E 's/^rust-v//'
+)"
+if [[ -z "${base_version}" ]]; then
+  base_version="$(
+    "${git_safe[@]}" tag -l 'rust-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname 2>/dev/null \
+      | head -n 1 \
+      | sed -E 's/^rust-v//'
+  )"
+fi
+if [[ ! "${base_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  base_version="0.0.0"
+fi
+
+full_version="${base_version}-custom-${date_jst_hyphen}"
+name="custom_codex_${full_version}"
 stage_dir="$(mktemp -d)"
-trap 'rm -rf "$stage_dir"' EXIT
+cargo_toml="${codex_rs_dir}/Cargo.toml"
+cargo_toml_backup="${stage_dir}/Cargo.toml.bak"
+
+restore_cargo_toml() {
+  if [[ -f "${cargo_toml_backup}" ]]; then
+    cp "${cargo_toml_backup}" "${cargo_toml}"
+  fi
+}
+
+trap 'restore_cargo_toml; rm -rf "$stage_dir"' EXIT
 
 echo "==> Building (release)"
+cp "${cargo_toml}" "${cargo_toml_backup}"
+tmp_cargo_toml="${stage_dir}/Cargo.toml"
+awk -v new_version="${full_version}" '
+  BEGIN { in_workspace_package=0; changed=0 }
+  /^\[workspace\.package\]/ { in_workspace_package=1; print; next }
+  /^\[/ { if (in_workspace_package) in_workspace_package=0; print; next }
+  in_workspace_package && /^version[[:space:]]*=/ && changed == 0 {
+    print "version = \"" new_version "\""
+    changed=1
+    next
+  }
+  { print }
+  END { if (changed == 0) exit 3 }
+' "${cargo_toml_backup}" >"${tmp_cargo_toml}"
+cp "${tmp_cargo_toml}" "${cargo_toml}"
+
 (cd "$codex_rs_dir" && cargo build -p codex-cli --bin codex --release)
 
-bin_path="${codex_rs_dir}/target/release/codex"
+target_dir="${CARGO_TARGET_DIR:-${codex_rs_dir}/target}"
+bin_path="${target_dir}/release/codex"
 if [[ ! -x "$bin_path" ]]; then
   echo "ERROR: expected built binary at ${bin_path}" >&2
   exit 1
@@ -65,15 +111,17 @@ echo "==> Writing sha256"
 )
 
 sha_line="$(cat "$sha_file")"
-git_rev="$(cd "$root_dir" && git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+git_rev="$("${git_safe[@]}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 echo "==> Writing ${note_file}"
 {
   printf '%s\n' \
     '# custom_codex リリース（Linux）' \
     '' \
+    "- バージョン: ${full_version}" \
+    "- ベース: ${base_version}" \
     "- ファイル: ${name}.tar.gz" \
-    "- 日付（JST）: ${date_jst}" \
+    "- 日付（JST）: ${date_jst_compact}" \
     "- コミット: ${git_rev}" \
     "- strip 済み: ${strip_used}" \
     '' \

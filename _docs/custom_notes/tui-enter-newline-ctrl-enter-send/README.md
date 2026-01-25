@@ -33,7 +33,7 @@
 
 ## 動作確認（別環境で実行）
 
-- `make verify-tui-enter-newline-ctrl-enter-send`（`CODEX_HOME=<リポジトリ配下>/_cache/codex_home` で実行される）
+- `make verify-tui-enter-newline-ctrl-enter-send`（`CODEX_HOME=<リポジトリ配下>/_cache/codex_home_debug` で実行される）
 - フォーマット:
   - `make fmt`（nightly rustfmt 推奨。stable だと一部設定が無視される場合あり）
 - テスト:

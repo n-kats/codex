@@ -2119,8 +2119,8 @@ fn toml_uses_deprecated_instructions_file(value: &TomlValue) -> bool {
 /// specified by the `CODEX_HOME` environment variable. If not set, defaults to
 /// `~/.codex`.
 ///
-/// - If `CODEX_HOME` is set, the value will be canonicalized and this
-///   function will Err if the path does not exist.
+/// - If `CODEX_HOME` is set and exists, the value will be canonicalized.
+///   If it does not exist, the raw path is returned so callers can create it.
 /// - If `CODEX_HOME` is not set, this function does not verify that the
 ///   directory exists.
 pub fn find_codex_home() -> std::io::Result<PathBuf> {
@@ -2129,7 +2129,12 @@ pub fn find_codex_home() -> std::io::Result<PathBuf> {
     if let Ok(val) = std::env::var("CODEX_HOME")
         && !val.is_empty()
     {
-        return PathBuf::from(val).canonicalize();
+        let path = PathBuf::from(val);
+        return if path.exists() {
+            path.canonicalize()
+        } else {
+            Ok(path)
+        };
     }
 
     let mut p = home_dir().ok_or_else(|| {
@@ -2166,10 +2171,49 @@ mod tests {
     use core_test_support::test_absolute_path;
     use pretty_assertions::assert_eq;
 
+    use serial_test::serial;
     use std::collections::BTreeMap;
     use std::collections::HashMap;
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+    use std::sync::MutexGuard;
+    use std::sync::OnceLock;
     use std::time::Duration;
     use tempfile::TempDir;
+
+    struct EnvVarGuard {
+        _lock: MutexGuard<'static, ()>,
+        key: &'static str,
+        original: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+            let lock = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+            let original = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self {
+                _lock: lock,
+                key,
+                original,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(original) = self.original.take() {
+                    std::env::set_var(self.key, original);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
 
     fn stdio_mcp(command: &str) -> McpServerConfig {
         McpServerConfig {
@@ -2236,6 +2280,33 @@ persistence = "none"
             }),
             history_no_persistence_cfg.history
         );
+    }
+
+    #[test]
+    #[serial]
+    fn find_codex_home_env_nonexistent_returns_raw_path() {
+        let tmp = TempDir::new().expect("temp dir");
+        let missing = tmp.path().join("missing-codex-home");
+        assert!(!missing.exists(), "missing path should not exist");
+
+        let _guard = EnvVarGuard::set("CODEX_HOME", &missing);
+        let got = find_codex_home().expect("find_codex_home ok");
+        assert_eq!(got, missing);
+    }
+
+    #[test]
+    #[serial]
+    fn find_codex_home_env_existing_canonicalizes() {
+        let tmp = TempDir::new().expect("temp dir");
+        let existing = tmp.path().join("codex-home");
+        std::fs::create_dir_all(&existing).expect("create existing codex home");
+
+        let expected = existing
+            .canonicalize()
+            .expect("canonicalize existing codex home");
+        let _guard = EnvVarGuard::set("CODEX_HOME", &existing);
+        let got = find_codex_home().expect("find_codex_home ok");
+        assert_eq!(got, expected);
     }
 
     #[test]

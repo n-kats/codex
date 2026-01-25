@@ -24,7 +24,7 @@
 
 ## 動作確認
 
-`make` のターゲットはデフォルトで `CODEX_HOME=<リポジトリ配下>/_cache/codex_home` を使う。
+`make` のターゲットはデフォルトで `CODEX_HOME=<リポジトリ配下>/_cache/codex_home_debug` を使う。
 
 - `make verify-additional-prompt-dirs-env`
 

@@ -65,6 +65,8 @@
 - `_docs/custom_notes/additional_prompt_dirs/README.md`: `CODEX_ADDITIONAL_PROMPT_DIRS`（カスタムプロンプト探索パス）
 - `_docs/custom_notes/tui-enter-newline-ctrl-enter-send/README.md`: TUI（tui）入力キー（Enter=改行、Ctrl+Enter/Ctrl+J=送信）と関連テスト
 - `_docs/custom_notes/tui2_input_submit_behavior_tests/README.md`: TUI2（tui2）入力キーと送信挙動、`/prompts:` の引数なし挙動、関連テスト
+- `_docs/custom_notes/update_check_custom_version_suffix/README.md`: TUI の更新チェックで、`x.y.z-custom-...` のようなカスタム版バージョン文字列も比較できるようにする
+- `_docs/custom_notes/release_versioning/README.md`: `make release` の配布物に `x.y.z-custom-yyyy-mm-dd` 形式のバージョンを付与する
 - `_docs/custom_notes/exec_command_default_login/README.md`: `!`/shell 実行の login 制御（`CODEX_USER_SHELL_LOGIN` 等）
 - `_docs/custom_notes/command_exec_worker_user/README.md`: コマンド実行を worker ユーザー（assistant 等）に固定する方針
 - `_docs/custom_notes/user_shell_environment_policy_split/README.md`: `!`（UserShell）とモデル起動コマンドの環境変数ポリシー分離（`custom.user_shell_environment_policy` 等）
@@ -99,6 +101,7 @@
 ## カスタム一覧
 
 - （機能追加）TUI の入力: Enter で改行、Ctrl+Enter（または Ctrl+J）で送信。
+- （機能追加）TUI の更新チェック: `x.y.z-custom-...` のようなカスタム版バージョン文字列でも更新判定できるようにする（詳細: `_docs/custom_notes/update_check_custom_version_suffix/README.md`）。
 - （機能追加）config.toml の読み込み制御: `--config <FILE>` でユーザー `config.toml` の読み込みパスを任意に指定でき、`--no-config` でユーザー＋プロジェクトの config を無視できる（システム config や `-c key=value` は引き続き適用される）。
 - （機能追加）Codex home の切り替え: `--codex-home PATH` で `CODEX_HOME`（デフォルト `~/.codex`）を上書きできるようにする（詳細: `_docs/custom_notes/codex_home_cli_flag/README.md`）。
 - （機能追加）カスタムプロンプト探索パスの追加: `CODEX_ADDITIONAL_PROMPT_DIRS`（コンマ区切り、相対パスはカレントディレクトリ基準）でプロンプト探索ディレクトリを追加できるようにする（詳細: `_docs/custom_notes/additional_prompt_dirs/README.md`）。
@@ -112,7 +115,7 @@
 - （テスト）テスト/ログの安全性: 失敗時の差分表示でホスト環境変数が全量出力されないようにする（例: `env` は値を丸ごと比較せず、キー集合＋必要最小限のキーのみ値比較にする）（詳細: `_docs/custom_notes/test_output_redacts_host_env/README.md`）。
 - （テスト）tool parallelism: 並列ツールテストの判定を「時間」から「tool出力」へ変更し、Docker 等での不安定さを排除する（詳細: `_docs/custom_notes/tool_parallelism_test/README.md`）。
 - （テスト）exec-server: `dotslash` を Docker イメージに同梱し、exec-server テストで DotSlash 由来の bash を使えるようにする（詳細: `_docs/custom_notes/exec_server_tests_dotslash/README.md`）。
-- （テスト）動作確認: `make verify-*` 系ターゲットはデフォルトで `CODEX_HOME=<リポジトリ配下>/_cache/codex_home` を使って実行する。
+- （テスト）動作確認: `make verify-*` 系ターゲットはデフォルトで `CODEX_HOME=<リポジトリ配下>/_cache/codex_home_debug` を使って実行する。
 - （テスト）動作確認ログ: `make test-*` / `make verify-*` 実行時のログを `_tmp/*_test_result.txt` に保存する。
 - （開発運用）フォーマット（rustfmt）: 上流の `codex-rs/rustfmt.toml` は `imports_granularity = "Item"` を含むため、フォーマットは `make fmt`（=`cargo +nightly fmt`）で実行する（安定版 rustfmt だと警告が出る）。
 - （開発運用）NOTICE: フォークで加えた変更の著作権表記として `Modifications Copyright (c) 2025 Katsunori Nakanishi` を `NOTICE` に追記する。

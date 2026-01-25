@@ -25,7 +25,7 @@ CACHE_DIR := $(ROOT_DIR)/_cache
 TMP_DIR := $(ROOT_DIR)/_tmp
 RELEASE_DIR := $(ROOT_DIR)/_release
 RELEASE_DIR_DOCKER := $(ROOT_DIR_DOCKER)/_release
-CODEX_HOME ?= $(CACHE_DIR)/codex_home
+CODEX_HOME ?= $(CACHE_DIR)/codex_home_debug
 export CODEX_HOME
 DOCKER_DIR := $(ROOT_DIR)/docker
 CODEX_DOCKER_IMAGE_NAME ?= codex-dev
@@ -86,8 +86,8 @@ endef
 
 help:
 	@printf "%s\n" "Common commands:" \
-		"  (Make targets run with CODEX_HOME=$$PWD/_cache/codex_home by default)" \
-		"  (Docker image: $$CODEX_DOCKER_IMAGE_NAME, cache: $$PWD/_cache/docker)" \
+		"  (Make targets run with CODEX_HOME=$$PWD/_cache/codex_home_debug by default)" \
+		"  (Docker image: $(CODEX_DOCKER_IMAGE_NAME), cache: $(CODEX_DOCKER_CACHE_DIR))" \
 		"  (Docker target dir: set CODEX_DOCKER_TARGET_DIR in .env)" \
 		"  (Test targets also tee logs to $$PWD/_tmp/*_test_result.txt)" \
 		"  (Test targets default CODEX_SHELL_STARTUP_FILES=clean; override with 'make CODEX_SHELL_STARTUP_FILES=default ...')" \
