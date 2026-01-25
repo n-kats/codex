@@ -2,7 +2,7 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 .PHONY: \
-	help cache-dir tmp-dir \
+	help fetch cache-dir tmp-dir \
 	release-dir release \
 	docker-build \
 	fmt \
@@ -42,6 +42,14 @@ cache-dir:
 
 tmp-dir:
 	@mkdir -p "$(TMP_DIR)"
+
+fetch:
+	@git fetch --all
+	@if git rev-parse --is-shallow-repository | grep -q true; then \
+		git fetch fork-origin --prune --tags --unshallow; \
+	else \
+		git fetch fork-origin --prune --tags; \
+	fi
 
 release-dir:
 	@mkdir -p "$(RELEASE_DIR)"
@@ -92,6 +100,7 @@ help:
 		"  (Test targets also tee logs to $$PWD/_tmp/*_test_result.txt)" \
 		"  (Test targets default CODEX_SHELL_STARTUP_FILES=clean; override with 'make CODEX_SHELL_STARTUP_FILES=default ...')" \
 		"" \
+		"  make fetch            # git fetch --all + fork-origin tags" \
 		"  make docker-build     # Build the Docker image for build/test" \
 		"  make fmt              # Format Rust" \
 		"  make build            # Build codex (CLI entrypoint)" \

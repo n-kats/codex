@@ -20,19 +20,23 @@ date_jst_hyphen="$(TZ=Asia/Tokyo date +%F)"
 
 git_safe=(git -c "safe.directory=${root_dir}" -C "${root_dir}")
 
-base_version="$(
-  "${git_safe[@]}" describe --tags --abbrev=0 --match 'rust-v[0-9]*.[0-9]*.[0-9]*' fork-origin/main 2>/dev/null \
-    | sed -E 's/^rust-v//'
+base_version_source="highest stable rust-vX.Y.Z tag"
+is_shallow="$("${git_safe[@]}" rev-parse --is-shallow-repository 2>/dev/null || echo unknown)"
+tags_raw="$("${git_safe[@]}" tag -l 'rust-v*' --sort=-v:refname 2>/dev/null || true)"
+stable_tag="$(
+  printf '%s\n' "${tags_raw}" \
+    | { grep -E '^rust-v[0-9]+\.[0-9]+\.[0-9]+$' || true; } \
+    | { grep -E -v '^rust-v0\.0\.' || true; } \
+    | head -n 1
 )"
-if [[ -z "${base_version}" ]]; then
-  base_version="$(
-    "${git_safe[@]}" tag -l 'rust-v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname 2>/dev/null \
-      | head -n 1 \
-      | sed -E 's/^rust-v//'
-  )"
-fi
-if [[ ! "${base_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  base_version="0.0.0"
+base_version="${stable_tag#rust-v}"
+if [[ -z "${stable_tag}" || -z "${base_version}" ]]; then
+  echo "==> Release version (failed)" >&2
+  echo "base_version_source=${base_version_source}" >&2
+  echo "is_shallow_repository=${is_shallow}" >&2
+  echo "ERROR: could not derive a stable base version (x.y.z) from tags." >&2
+  echo "Fix: run 'make fetch' to update tags (and unshallow if needed), then ensure a stable rust-vX.Y.Z tag exists." >&2
+  exit 2
 fi
 
 full_version="${base_version}-custom-${date_jst_hyphen}"
@@ -48,6 +52,14 @@ restore_cargo_toml() {
 }
 
 trap 'restore_cargo_toml; rm -rf "$stage_dir"' EXIT
+
+echo "==> Release version"
+echo "base_version_source=${base_version_source}"
+echo "is_shallow_repository=${is_shallow}"
+echo "base_tag=${stable_tag}"
+echo "base_version=${base_version}"
+echo "full_version=${full_version}"
+echo "artifact_prefix=${name}"
 
 echo "==> Building (release)"
 cp "${cargo_toml}" "${cargo_toml_backup}"
