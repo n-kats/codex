@@ -3,14 +3,58 @@ use codex_arg0::arg0_dispatch;
 use ctor::ctor;
 use tempfile::TempDir;
 
+#[cfg(unix)]
+fn fallback_arg0_dispatch() -> std::io::Result<TempDir> {
+    use std::os::unix::fs::symlink;
+
+    let exe = std::env::current_exe()?;
+    let temp_dir = tempfile::Builder::new()
+        .prefix("codex-arg0-test")
+        .tempdir()?;
+    let path = temp_dir.path();
+
+    for filename in &["apply_patch", "applypatch", "codex-linux-sandbox"] {
+        symlink(&exe, path.join(filename))?;
+    }
+
+    let path_element = path.display();
+    let updated_path_env_var = match std::env::var("PATH") {
+        Ok(existing_path) => format!("{path_element}:{existing_path}"),
+        Err(_) => format!("{path_element}"),
+    };
+
+    unsafe {
+        std::env::set_var("PATH", updated_path_env_var);
+    }
+
+    Ok(temp_dir)
+}
+
 // This code runs before any other tests are run.
 // It allows the test binary to behave like codex and dispatch to apply_patch and codex-linux-sandbox
 // based on the arg0.
 // NOTE: this doesn't work on ARM
 #[ctor]
 pub static CODEX_ALIASES_TEMP_DIR: TempDir = unsafe {
-    #[allow(clippy::unwrap_used)]
-    arg0_dispatch().unwrap()
+    match arg0_dispatch() {
+        Some(temp_dir) => temp_dir,
+        None => {
+            eprintln!(
+                "WARNING: arg0_dispatch failed, falling back to a test-only PATH alias (CODEX_HOME={:?}, PATH={:?})",
+                std::env::var("CODEX_HOME"),
+                std::env::var("PATH")
+            );
+            #[cfg(unix)]
+            {
+                fallback_arg0_dispatch()
+                    .unwrap_or_else(|err| panic!("failed to build test-only arg0 aliases: {err}"))
+            }
+            #[cfg(not(unix))]
+            {
+                panic!("arg0 dispatch failed on non-unix platform")
+            }
+        }
+    }
 };
 
 #[cfg(not(target_os = "windows"))]

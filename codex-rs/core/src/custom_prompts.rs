@@ -1,8 +1,11 @@
 use codex_protocol::custom_prompts::CustomPrompt;
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use tokio::fs;
+
+const CODEX_ADDITIONAL_PROMPT_DIRS_ENV_VAR: &str = "CODEX_ADDITIONAL_PROMPT_DIRS";
 
 /// Return the default prompts directory: `$CODEX_HOME/prompts`.
 /// If `CODEX_HOME` cannot be resolved, returns `None`.
@@ -16,6 +19,47 @@ pub fn default_prompts_dir() -> Option<PathBuf> {
 /// Non-files are ignored. If the directory does not exist or cannot be read, returns empty.
 pub async fn discover_prompts_in(dir: &Path) -> Vec<CustomPrompt> {
     discover_prompts_in_excluding(dir, &HashSet::new()).await
+}
+
+/// Parse `CODEX_ADDITIONAL_PROMPT_DIRS` using `cwd` as the base for relative paths.
+///
+/// The variable uses comma-separated paths. Empty segments are ignored.
+pub fn additional_prompts_dirs(cwd: &Path) -> Vec<PathBuf> {
+    let Ok(raw) = std::env::var(CODEX_ADDITIONAL_PROMPT_DIRS_ENV_VAR) else {
+        return Vec::new();
+    };
+    parse_additional_prompts_dirs(&raw, cwd)
+}
+
+fn parse_additional_prompts_dirs(raw: &str, cwd: &Path) -> Vec<PathBuf> {
+    raw.split(',')
+        .filter_map(|segment| {
+            let trimmed = segment.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let path = PathBuf::from(trimmed);
+            Some(if path.is_absolute() {
+                path
+            } else {
+                cwd.join(path)
+            })
+        })
+        .collect()
+}
+
+/// Discover prompts across multiple directories.
+///
+/// If multiple directories contain a prompt with the same name, the later directory wins.
+/// Results are sorted by prompt name.
+pub async fn discover_prompts_in_dirs(dirs: &[PathBuf]) -> Vec<CustomPrompt> {
+    let mut merged: BTreeMap<String, CustomPrompt> = BTreeMap::new();
+    for dir in dirs {
+        for prompt in discover_prompts_in(dir).await {
+            merged.insert(prompt.name.clone(), prompt);
+        }
+    }
+    merged.into_values().collect()
 }
 
 /// Discover prompt files in the given directory, excluding any with names in `exclude`.
@@ -231,6 +275,40 @@ mod tests {
         assert_eq!(p.argument_hint.as_deref(), Some("[file] [priority]"));
         // Body should not include the frontmatter delimiters.
         assert_eq!(p.content, "Actual body with $1 and $ARGUMENTS");
+    }
+
+    #[test]
+    fn parse_additional_prompts_dirs_splits_and_resolves_relative_paths() {
+        let cwd = Path::new("/repo");
+        let out = parse_additional_prompts_dirs("./prompts, ../shared, ,/abs/prompts", cwd);
+        assert_eq!(
+            out,
+            vec![
+                PathBuf::from("/repo/./prompts"),
+                PathBuf::from("/repo/../shared"),
+                PathBuf::from("/abs/prompts"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_prompts_in_dirs_last_write_wins_and_sorts() {
+        let tmp = tempdir().expect("create TempDir");
+        let base = tmp.path().join("base");
+        let override_dir = tmp.path().join("override");
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(&override_dir).unwrap();
+
+        fs::write(base.join("b.md"), "base b").unwrap();
+        fs::write(base.join("a.md"), "base a").unwrap();
+        fs::write(override_dir.join("b.md"), "override b").unwrap();
+
+        let found = discover_prompts_in_dirs(&vec![base, override_dir]).await;
+        let names: Vec<_> = found.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, vec!["a", "b"]);
+
+        let b = found.iter().find(|p| p.name == "b").unwrap();
+        assert_eq!(b.content, "override b");
     }
 
     #[test]

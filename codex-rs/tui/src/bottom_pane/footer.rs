@@ -57,7 +57,6 @@ use ratatui::widgets::Widget;
 pub(crate) struct FooterProps {
     pub(crate) mode: FooterMode,
     pub(crate) esc_backtrack_hint: bool,
-    pub(crate) use_shift_enter_hint: bool,
     pub(crate) is_task_running: bool,
     pub(crate) steer_enabled: bool,
     pub(crate) collaboration_modes_enabled: bool,
@@ -554,7 +553,6 @@ fn footer_from_props_lines(
         }
         FooterMode::ShortcutOverlay => {
             let state = ShortcutsState {
-                use_shift_enter_hint: props.use_shift_enter_hint,
                 esc_backtrack_hint: props.esc_backtrack_hint,
                 is_wsl: props.is_wsl,
                 collaboration_modes_enabled: props.collaboration_modes_enabled,
@@ -617,7 +615,6 @@ fn footer_hint_items_line(items: &[(String, String)]) -> Line<'static> {
 
 #[derive(Clone, Copy, Debug)]
 struct ShortcutsState {
-    use_shift_enter_hint: bool,
     esc_backtrack_hint: bool,
     is_wsl: bool,
     collaboration_modes_enabled: bool,
@@ -646,7 +643,7 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
     let mut commands = Line::from("");
     let mut shell_commands = Line::from("");
     let mut newline = Line::from("");
-    let mut queue_message_tab = Line::from("");
+    let mut send = Line::from("");
     let mut file_paths = Line::from("");
     let mut paste_image = Line::from("");
     let mut external_editor = Line::from("");
@@ -661,7 +658,7 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
                 ShortcutId::Commands => commands = text,
                 ShortcutId::ShellCommands => shell_commands = text,
                 ShortcutId::InsertNewline => newline = text,
-                ShortcutId::QueueMessageTab => queue_message_tab = text,
+                ShortcutId::SendMessage => send = text,
                 ShortcutId::FilePaths => file_paths = text,
                 ShortcutId::PasteImage => paste_image = text,
                 ShortcutId::ExternalEditor => external_editor = text,
@@ -677,7 +674,7 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
         commands,
         shell_commands,
         newline,
-        queue_message_tab,
+        send,
         file_paths,
         paste_image,
         external_editor,
@@ -759,7 +756,7 @@ enum ShortcutId {
     Commands,
     ShellCommands,
     InsertNewline,
-    QueueMessageTab,
+    SendMessage,
     FilePaths,
     PasteImage,
     ExternalEditor,
@@ -784,8 +781,6 @@ impl ShortcutBinding {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DisplayCondition {
     Always,
-    WhenShiftEnterHint,
-    WhenNotShiftEnterHint,
     WhenUnderWSL,
     WhenCollaborationModesEnabled,
 }
@@ -794,8 +789,6 @@ impl DisplayCondition {
     fn matches(self, state: ShortcutsState) -> bool {
         match self {
             DisplayCondition::Always => true,
-            DisplayCondition::WhenShiftEnterHint => state.use_shift_enter_hint,
-            DisplayCondition::WhenNotShiftEnterHint => !state.use_shift_enter_hint,
             DisplayCondition::WhenUnderWSL => state.is_wsl,
             DisplayCondition::WhenCollaborationModesEnabled => state.collaboration_modes_enabled,
         }
@@ -856,27 +849,21 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
     },
     ShortcutDescriptor {
         id: ShortcutId::InsertNewline,
-        bindings: &[
-            ShortcutBinding {
-                key: key_hint::shift(KeyCode::Enter),
-                condition: DisplayCondition::WhenShiftEnterHint,
-            },
-            ShortcutBinding {
-                key: key_hint::ctrl(KeyCode::Char('j')),
-                condition: DisplayCondition::WhenNotShiftEnterHint,
-            },
-        ],
+        bindings: &[ShortcutBinding {
+            key: key_hint::plain(KeyCode::Enter),
+            condition: DisplayCondition::Always,
+        }],
         prefix: "",
         label: " for newline",
     },
     ShortcutDescriptor {
-        id: ShortcutId::QueueMessageTab,
+        id: ShortcutId::SendMessage,
         bindings: &[ShortcutBinding {
-            key: key_hint::plain(KeyCode::Tab),
+            key: key_hint::ctrl(KeyCode::Enter),
             condition: DisplayCondition::Always,
         }],
         prefix: "",
-        label: " to queue message",
+        label: " to send (or ctrl + j)",
     },
     ShortcutDescriptor {
         id: ShortcutId::FilePaths,
@@ -1068,7 +1055,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ComposerEmpty,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
@@ -1084,7 +1070,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ShortcutOverlay,
                 esc_backtrack_hint: true,
-                use_shift_enter_hint: true,
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
@@ -1100,7 +1085,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ShortcutOverlay,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: true,
@@ -1116,7 +1100,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::QuitShortcutReminder,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
@@ -1132,7 +1115,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::QuitShortcutReminder,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: true,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
@@ -1148,7 +1130,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::EscHint,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
@@ -1164,7 +1145,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::EscHint,
                 esc_backtrack_hint: true,
-                use_shift_enter_hint: false,
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
@@ -1180,7 +1160,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ComposerEmpty,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: true,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
@@ -1196,7 +1175,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ComposerEmpty,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: false,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
@@ -1212,7 +1190,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ComposerHasDraft,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: true,
                 steer_enabled: false,
                 collaboration_modes_enabled: false,
@@ -1228,7 +1205,6 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ComposerHasDraft,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
                 is_task_running: true,
                 steer_enabled: true,
                 collaboration_modes_enabled: false,
@@ -1242,7 +1218,6 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerEmpty,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
             is_task_running: false,
             steer_enabled: false,
             collaboration_modes_enabled: true,
@@ -1269,7 +1244,6 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerEmpty,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
             is_task_running: true,
             steer_enabled: false,
             collaboration_modes_enabled: true,
@@ -1313,7 +1287,6 @@ mod tests {
 
         let actual_key = descriptor
             .binding_for(ShortcutsState {
-                use_shift_enter_hint: false,
                 esc_backtrack_hint: false,
                 is_wsl,
                 collaboration_modes_enabled: false,

@@ -1687,90 +1687,100 @@ impl App {
                     let feature_key = Feature::WindowsSandbox.key();
                     let elevated_key = Feature::WindowsSandboxElevated.key();
                     let elevated_enabled = matches!(mode, WindowsSandboxEnableMode::Elevated);
-                    match ConfigEditsBuilder::new(&self.config.codex_home)
-                        .with_profile(profile)
-                        .set_feature_enabled(feature_key, true)
-                        .set_feature_enabled(elevated_key, elevated_enabled)
-                        .apply()
-                        .await
-                    {
-                        Ok(()) => {
-                            self.config.set_windows_sandbox_globally(true);
-                            self.config
-                                .set_windows_elevated_sandbox_globally(elevated_enabled);
-                            self.chat_widget
-                                .set_feature_enabled(Feature::WindowsSandbox, true);
-                            self.chat_widget.set_feature_enabled(
-                                Feature::WindowsSandboxElevated,
-                                elevated_enabled,
-                            );
-                            self.chat_widget.clear_forced_auto_mode_downgrade();
-                            let windows_sandbox_level =
-                                WindowsSandboxLevel::from_config(&self.config);
-                            if let Some((sample_paths, extra_count, failed_scan)) =
-                                self.chat_widget.world_writable_warning_details()
-                            {
-                                self.app_event_tx.send(AppEvent::CodexOp(
-                                    Op::OverrideTurnContext {
-                                        cwd: None,
-                                        approval_policy: None,
-                                        sandbox_policy: None,
-                                        windows_sandbox_level: Some(windows_sandbox_level),
-                                        model: None,
-                                        effort: None,
-                                        summary: None,
-                                        collaboration_mode: None,
-                                        personality: None,
-                                    },
-                                ));
-                                self.app_event_tx.send(
-                                    AppEvent::OpenWorldWritableWarningConfirmation {
-                                        preset: Some(preset.clone()),
-                                        sample_paths,
-                                        extra_count,
-                                        failed_scan,
-                                    },
+                    if let Some(config_path) = self.config.user_config_toml_path() {
+                        match ConfigEditsBuilder::new(&self.config.codex_home)
+                            .with_config_path(config_path.as_path().to_path_buf())
+                            .with_profile(profile)
+                            .set_feature_enabled(feature_key, true)
+                            .set_feature_enabled(elevated_key, elevated_enabled)
+                            .apply()
+                            .await
+                        {
+                            Ok(()) => {
+                                self.config.set_windows_sandbox_globally(true);
+                                self.config
+                                    .set_windows_elevated_sandbox_globally(elevated_enabled);
+                                self.chat_widget
+                                    .set_feature_enabled(Feature::WindowsSandbox, true);
+                                self.chat_widget.set_feature_enabled(
+                                    Feature::WindowsSandboxElevated,
+                                    elevated_enabled,
                                 );
-                            } else {
-                                self.app_event_tx.send(AppEvent::CodexOp(
-                                    Op::OverrideTurnContext {
-                                        cwd: None,
-                                        approval_policy: Some(preset.approval),
-                                        sandbox_policy: Some(preset.sandbox.clone()),
-                                        windows_sandbox_level: Some(windows_sandbox_level),
-                                        model: None,
-                                        effort: None,
-                                        summary: None,
-                                        collaboration_mode: None,
-                                        personality: None,
-                                    },
-                                ));
-                                self.app_event_tx
-                                    .send(AppEvent::UpdateAskForApprovalPolicy(preset.approval));
-                                self.app_event_tx
-                                    .send(AppEvent::UpdateSandboxPolicy(preset.sandbox.clone()));
-                                self.chat_widget.add_info_message(
-                                    match mode {
+                                self.chat_widget.clear_forced_auto_mode_downgrade();
+
+                                let windows_sandbox_level =
+                                    WindowsSandboxLevel::from_config(&self.config);
+                                if let Some((sample_paths, extra_count, failed_scan)) =
+                                    self.chat_widget.world_writable_warning_details()
+                                {
+                                    self.app_event_tx.send(AppEvent::CodexOp(
+                                        Op::OverrideTurnContext {
+                                            cwd: None,
+                                            approval_policy: None,
+                                            sandbox_policy: None,
+                                            windows_sandbox_level: Some(windows_sandbox_level),
+                                            model: None,
+                                            effort: None,
+                                            summary: None,
+                                            collaboration_mode: None,
+                                            personality: None,
+                                        },
+                                    ));
+                                    self.app_event_tx.send(
+                                        AppEvent::OpenWorldWritableWarningConfirmation {
+                                            preset: Some(preset.clone()),
+                                            sample_paths,
+                                            extra_count,
+                                            failed_scan,
+                                        },
+                                    );
+                                } else {
+                                    self.app_event_tx.send(AppEvent::CodexOp(
+                                        Op::OverrideTurnContext {
+                                            cwd: None,
+                                            approval_policy: Some(preset.approval),
+                                            sandbox_policy: Some(preset.sandbox.clone()),
+                                            windows_sandbox_level: Some(windows_sandbox_level),
+                                            model: None,
+                                            effort: None,
+                                            summary: None,
+                                            collaboration_mode: None,
+                                            personality: None,
+                                        },
+                                    ));
+                                    self.app_event_tx.send(AppEvent::UpdateAskForApprovalPolicy(
+                                        preset.approval,
+                                    ));
+                                    self.app_event_tx.send(AppEvent::UpdateSandboxPolicy(
+                                        preset.sandbox.clone(),
+                                    ));
+
+                                    let message = match mode {
                                         WindowsSandboxEnableMode::Elevated => {
                                             "Enabled elevated agent sandbox.".to_string()
                                         }
                                         WindowsSandboxEnableMode::Legacy => {
                                             "Enabled non-elevated agent sandbox.".to_string()
                                         }
-                                    },
-                                    None,
+                                    };
+                                    self.chat_widget.add_info_message(message, None);
+                                }
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    error = %err,
+                                    "failed to enable Windows sandbox feature"
                                 );
+                                self.chat_widget.add_error_message(format!(
+                                    "Failed to enable the Windows sandbox feature: {err}"
+                                ));
                             }
                         }
-                        Err(err) => {
-                            tracing::error!(
-                                error = %err,
-                                "failed to enable Windows sandbox feature"
-                            );
-                            self.chat_widget.add_error_message(format!(
-                                "Failed to enable the Windows sandbox feature: {err}"
-                            ));
-                        }
+                    } else {
+                        self.chat_widget.add_error_message(
+                            "Config persistence is disabled; cannot enable the Windows sandbox feature."
+                                .to_string(),
+                        );
                     }
                 }
                 #[cfg(not(target_os = "windows"))]
@@ -1780,39 +1790,47 @@ impl App {
             }
             AppEvent::PersistModelSelection { model, effort } => {
                 let profile = self.active_profile.as_deref();
-                match ConfigEditsBuilder::new(&self.config.codex_home)
-                    .with_profile(profile)
-                    .set_model(Some(model.as_str()), effort)
-                    .apply()
-                    .await
-                {
-                    Ok(()) => {
-                        let mut message = format!("Model changed to {model}");
-                        if let Some(label) = Self::reasoning_label_for(&model, effort) {
-                            message.push(' ');
-                            message.push_str(label);
+                if let Some(config_path) = self.config.user_config_toml_path() {
+                    match ConfigEditsBuilder::new(&self.config.codex_home)
+                        .with_config_path(config_path.as_path().to_path_buf())
+                        .with_profile(profile)
+                        .set_model(Some(model.as_str()), effort)
+                        .apply()
+                        .await
+                    {
+                        Ok(()) => {
+                            let mut message = format!("Model changed to {model}");
+                            if let Some(label) = Self::reasoning_label_for(&model, effort) {
+                                message.push(' ');
+                                message.push_str(label);
+                            }
+                            if let Some(profile) = profile {
+                                message.push_str(" for ");
+                                message.push_str(profile);
+                                message.push_str(" profile");
+                            }
+                            self.chat_widget.add_info_message(message, None);
                         }
-                        if let Some(profile) = profile {
-                            message.push_str(" for ");
-                            message.push_str(profile);
-                            message.push_str(" profile");
+                        Err(err) => {
+                            tracing::error!(
+                                error = %err,
+                                "failed to persist model selection"
+                            );
+                            if let Some(profile) = profile {
+                                self.chat_widget.add_error_message(format!(
+                                    "Failed to save model for profile `{profile}`: {err}"
+                                ));
+                            } else {
+                                self.chat_widget.add_error_message(format!(
+                                    "Failed to save default model: {err}"
+                                ));
+                            }
                         }
-                        self.chat_widget.add_info_message(message, None);
                     }
-                    Err(err) => {
-                        tracing::error!(
-                            error = %err,
-                            "failed to persist model selection"
-                        );
-                        if let Some(profile) = profile {
-                            self.chat_widget.add_error_message(format!(
-                                "Failed to save model for profile `{profile}`: {err}"
-                            ));
-                        } else {
-                            self.chat_widget
-                                .add_error_message(format!("Failed to save default model: {err}"));
-                        }
-                    }
+                } else {
+                    self.chat_widget.add_error_message(
+                        "Config persistence is disabled; cannot save model selection.".to_string(),
+                    );
                 }
             }
             AppEvent::PersistPersonalitySelection { personality } => {
@@ -1930,7 +1948,15 @@ impl App {
                         Feature::WindowsSandbox | Feature::WindowsSandboxElevated
                     )
                 });
+                let Some(config_path) = self.config.user_config_toml_path() else {
+                    self.chat_widget.add_error_message(
+                        "Config persistence is disabled; cannot update experimental features."
+                            .to_string(),
+                    );
+                    return Ok(AppRunControl::Continue);
+                };
                 let mut builder = ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_config_path(config_path.as_path().to_path_buf())
                     .with_profile(self.active_profile.as_deref());
                 for (feature, enabled) in &updates {
                     let feature_key = feature.key();
@@ -1994,66 +2020,98 @@ impl App {
                 self.chat_widget.set_rate_limit_switch_prompt_hidden(hidden);
             }
             AppEvent::PersistFullAccessWarningAcknowledged => {
-                if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
-                    .set_hide_full_access_warning(true)
-                    .apply()
-                    .await
-                {
-                    tracing::error!(
-                        error = %err,
-                        "failed to persist full access warning acknowledgement"
+                if let Some(config_path) = self.config.user_config_toml_path() {
+                    if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
+                        .with_config_path(config_path.as_path().to_path_buf())
+                        .set_hide_full_access_warning(true)
+                        .apply()
+                        .await
+                    {
+                        tracing::error!(
+                            error = %err,
+                            "failed to persist full access warning acknowledgement"
+                        );
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save full access confirmation preference: {err}"
+                        ));
+                    }
+                } else {
+                    self.chat_widget.add_error_message(
+                        "Config persistence is disabled; cannot save full access confirmation preference."
+                            .to_string(),
                     );
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to save full access confirmation preference: {err}"
-                    ));
                 }
             }
             AppEvent::PersistWorldWritableWarningAcknowledged => {
-                if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
-                    .set_hide_world_writable_warning(true)
-                    .apply()
-                    .await
-                {
-                    tracing::error!(
-                        error = %err,
-                        "failed to persist world-writable warning acknowledgement"
+                if let Some(config_path) = self.config.user_config_toml_path() {
+                    if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
+                        .with_config_path(config_path.as_path().to_path_buf())
+                        .set_hide_world_writable_warning(true)
+                        .apply()
+                        .await
+                    {
+                        tracing::error!(
+                            error = %err,
+                            "failed to persist world-writable warning acknowledgement"
+                        );
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save Agent mode warning preference: {err}"
+                        ));
+                    }
+                } else {
+                    self.chat_widget.add_error_message(
+                        "Config persistence is disabled; cannot save Agent mode warning preference."
+                            .to_string(),
                     );
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to save Agent mode warning preference: {err}"
-                    ));
                 }
             }
             AppEvent::PersistRateLimitSwitchPromptHidden => {
-                if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
-                    .set_hide_rate_limit_model_nudge(true)
-                    .apply()
-                    .await
-                {
-                    tracing::error!(
-                        error = %err,
-                        "failed to persist rate limit switch prompt preference"
+                if let Some(config_path) = self.config.user_config_toml_path() {
+                    if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
+                        .with_config_path(config_path.as_path().to_path_buf())
+                        .set_hide_rate_limit_model_nudge(true)
+                        .apply()
+                        .await
+                    {
+                        tracing::error!(
+                            error = %err,
+                            "failed to persist rate limit switch prompt preference"
+                        );
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save rate limit reminder preference: {err}"
+                        ));
+                    }
+                } else {
+                    self.chat_widget.add_error_message(
+                        "Config persistence is disabled; cannot save rate limit reminder preference."
+                            .to_string(),
                     );
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to save rate limit reminder preference: {err}"
-                    ));
                 }
             }
             AppEvent::PersistModelMigrationPromptAcknowledged {
                 from_model,
                 to_model,
             } => {
-                if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
-                    .record_model_migration_seen(from_model.as_str(), to_model.as_str())
-                    .apply()
-                    .await
-                {
-                    tracing::error!(
-                        error = %err,
-                        "failed to persist model migration prompt acknowledgement"
+                if let Some(config_path) = self.config.user_config_toml_path() {
+                    if let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
+                        .with_config_path(config_path.as_path().to_path_buf())
+                        .record_model_migration_seen(from_model.as_str(), to_model.as_str())
+                        .apply()
+                        .await
+                    {
+                        tracing::error!(
+                            error = %err,
+                            "failed to persist model migration prompt acknowledgement"
+                        );
+                        self.chat_widget.add_error_message(format!(
+                            "Failed to save model migration prompt preference: {err}"
+                        ));
+                    }
+                } else {
+                    self.chat_widget.add_error_message(
+                        "Config persistence is disabled; cannot save model migration prompt preference."
+                            .to_string(),
                     );
-                    self.chat_widget.add_error_message(format!(
-                        "Failed to save model migration prompt preference: {err}"
-                    ));
                 }
             }
             AppEvent::OpenApprovalsPopup => {

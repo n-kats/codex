@@ -29,6 +29,7 @@ use codex_api::error::ApiError;
 use codex_api::requests::responses::Compression;
 use codex_app_server_protocol::AuthMode;
 use codex_otel::OtelManager;
+use codex_otel::traces::otel_manager::LlmGenerationRecorder;
 
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
@@ -254,17 +255,34 @@ impl ModelClientSession {
             WireApi::Responses => self.stream_responses_api(prompt).await,
             WireApi::ResponsesWebsocket => self.stream_responses_websocket(prompt).await,
             WireApi::Chat => {
-                let api_stream = self.stream_chat_completions(prompt).await?;
+                if prompt.output_schema.is_some() {
+                    return Err(CodexErr::UnsupportedOperation(
+                        "output_schema is not supported for Chat Completions API".to_string(),
+                    ));
+                }
+
+                let instructions = prompt.base_instructions.text.clone();
+                let tools_json = create_tools_json_for_chat_completions_api(&prompt.tools)?;
+                let api_prompt = build_api_prompt(prompt, instructions, tools_json);
+                let llm_recorder = Some(self.state.otel_manager.start_llm_generation(
+                    "chat_completions",
+                    &self.state.model_info.slug,
+                    &api_prompt,
+                ));
+
+                let api_stream = self.stream_chat_completions(&api_prompt).await?;
 
                 if self.state.config.show_raw_agent_reasoning {
                     Ok(map_response_stream(
                         api_stream.streaming_mode(),
                         self.state.otel_manager.clone(),
+                        llm_recorder,
                     ))
                 } else {
                     Ok(map_response_stream(
                         api_stream.aggregate(),
                         self.state.otel_manager.clone(),
+                        llm_recorder,
                     ))
                 }
             }
@@ -435,17 +453,8 @@ impl ModelClientSession {
     ///
     /// This path is only used when the provider is configured with
     /// `WireApi::Chat`; it does not support `output_schema` today.
-    async fn stream_chat_completions(&self, prompt: &Prompt) -> Result<ApiResponseStream> {
-        if prompt.output_schema.is_some() {
-            return Err(CodexErr::UnsupportedOperation(
-                "output_schema is not supported for Chat Completions API".to_string(),
-            ));
-        }
-
+    async fn stream_chat_completions(&self, api_prompt: &ApiPrompt) -> Result<ApiResponseStream> {
         let auth_manager = self.state.auth_manager.clone();
-        let instructions = prompt.base_instructions.text.clone();
-        let tools_json = create_tools_json_for_chat_completions_api(&prompt.tools)?;
-        let api_prompt = build_api_prompt(prompt, instructions, tools_json);
         let conversation_id = self.state.conversation_id.to_string();
         let session_source = self.state.session_source.clone();
 
@@ -470,7 +479,7 @@ impl ModelClientSession {
             let stream_result = client
                 .stream_prompt(
                     &self.state.model_info.slug,
-                    &api_prompt,
+                    api_prompt,
                     Some(conversation_id.clone()),
                     Some(session_source.clone()),
                 )
@@ -499,11 +508,20 @@ impl ModelClientSession {
             let stream =
                 codex_api::stream_from_fixture(path, self.state.provider.stream_idle_timeout())
                     .map_err(map_api_error)?;
-            return Ok(map_response_stream(stream, self.state.otel_manager.clone()));
+            return Ok(map_response_stream(
+                stream,
+                self.state.otel_manager.clone(),
+                None,
+            ));
         }
 
         let auth_manager = self.state.auth_manager.clone();
         let api_prompt = self.build_responses_request(prompt)?;
+        let llm_recorder = Some(self.state.otel_manager.start_llm_generation(
+            "responses",
+            &self.state.model_info.slug,
+            &api_prompt,
+        ));
 
         let mut auth_recovery = auth_manager
             .as_ref()
@@ -533,7 +551,11 @@ impl ModelClientSession {
 
             match stream_result {
                 Ok(stream) => {
-                    return Ok(map_response_stream(stream, self.state.otel_manager.clone()));
+                    return Ok(map_response_stream(
+                        stream,
+                        self.state.otel_manager.clone(),
+                        llm_recorder,
+                    ));
                 }
                 Err(ApiError::Transport(TransportError::Http { status, .. }))
                     if status == StatusCode::UNAUTHORIZED =>
@@ -550,6 +572,11 @@ impl ModelClientSession {
     async fn stream_responses_websocket(&mut self, prompt: &Prompt) -> Result<ResponseStream> {
         let auth_manager = self.state.auth_manager.clone();
         let api_prompt = self.build_responses_request(prompt)?;
+        let llm_recorder = Some(self.state.otel_manager.start_llm_generation(
+            "responses",
+            &self.state.model_info.slug,
+            &api_prompt,
+        ));
 
         let mut auth_recovery = auth_manager
             .as_ref()
@@ -592,6 +619,7 @@ impl ModelClientSession {
             return Ok(map_response_stream(
                 stream_result,
                 self.state.otel_manager.clone(),
+                llm_recorder,
             ));
         }
     }
@@ -672,7 +700,11 @@ fn build_responses_headers(
     headers
 }
 
-fn map_response_stream<S>(api_stream: S, otel_manager: OtelManager) -> ResponseStream
+fn map_response_stream<S>(
+    api_stream: S,
+    otel_manager: OtelManager,
+    mut llm_recorder: Option<LlmGenerationRecorder>,
+) -> ResponseStream
 where
     S: futures::Stream<Item = std::result::Result<ResponseEvent, ApiError>>
         + Unpin
@@ -690,6 +722,9 @@ where
                     response_id,
                     token_usage,
                 }) => {
+                    if let Some(recorder) = llm_recorder.as_mut() {
+                        recorder.on_completed(response_id.as_str(), token_usage.as_ref());
+                    }
                     if let Some(usage) = &token_usage {
                         otel_manager.sse_event_completed(
                             usage.input_tokens,
@@ -707,11 +742,20 @@ where
                         .await
                         .is_err()
                     {
+                        if let Some(recorder) = llm_recorder.as_mut() {
+                            recorder.on_error("receiver dropped before completion event delivered");
+                        }
                         return;
                     }
                 }
                 Ok(event) => {
+                    if let Some(recorder) = llm_recorder.as_mut() {
+                        recorder.on_event(&event);
+                    }
                     if tx_event.send(Ok(event)).await.is_err() {
+                        if let Some(recorder) = llm_recorder.as_mut() {
+                            recorder.on_error("receiver dropped before event delivered");
+                        }
                         return;
                     }
                 }
@@ -721,11 +765,19 @@ where
                         otel_manager.see_event_completed_failed(&mapped);
                         logged_error = true;
                     }
+                    if let Some(recorder) = llm_recorder.as_mut() {
+                        let error = mapped.to_string();
+                        recorder.on_error(error.as_str());
+                    }
                     if tx_event.send(Err(mapped)).await.is_err() {
                         return;
                     }
                 }
             }
+        }
+
+        if let Some(recorder) = llm_recorder.as_mut() {
+            recorder.on_error("stream ended without response.completed");
         }
     });
 

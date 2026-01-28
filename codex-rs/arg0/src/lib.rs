@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::future::Future;
 use std::path::Path;
 use std::path::PathBuf;
@@ -49,6 +50,8 @@ pub fn arg0_dispatch() -> Option<TempDir> {
 
     // This modifies the environment, which is not thread-safe, so do this
     // before creating any threads/the Tokio runtime.
+    apply_codex_home_override_from_args();
+    apply_shell_startup_files_override_from_args();
     load_dotenv();
 
     match prepend_path_entry_for_codex_aliases() {
@@ -108,6 +111,9 @@ where
 }
 
 const ILLEGAL_ENV_VAR_PREFIX: &str = "CODEX_";
+const CODEX_HOME_CLI_FLAG: &str = "--codex-home";
+const SHELL_STARTUP_FILES_CLI_FLAG: &str = "--shell-startup-files";
+const CODEX_SHELL_STARTUP_FILES_ENV_VAR: &str = "CODEX_SHELL_STARTUP_FILES";
 
 /// Load env vars from ~/.codex/.env.
 ///
@@ -119,6 +125,87 @@ fn load_dotenv() {
     {
         set_filtered(iter);
     }
+}
+
+fn apply_codex_home_override_from_args() {
+    let Some(codex_home) = parse_codex_home_flag(std::env::args_os()) else {
+        return;
+    };
+
+    // It is safe to call set_var() because our process is single-threaded at this point in its
+    // execution (before the Tokio runtime is created).
+    unsafe { std::env::set_var("CODEX_HOME", &codex_home) };
+
+    if let Err(err) = std::fs::create_dir_all(&codex_home) {
+        eprintln!(
+            "WARNING: proceeding, even though we could not create CODEX_HOME directory {}: {err}",
+            codex_home.display()
+        );
+    }
+}
+
+fn parse_codex_home_flag<I>(mut args: I) -> Option<PathBuf>
+where
+    I: Iterator<Item = OsString>,
+{
+    // Skip argv0.
+    let _ = args.next();
+
+    while let Some(arg) = args.next() {
+        let Some(arg) = arg.to_str() else {
+            continue;
+        };
+
+        if let Some((flag, value)) = arg.split_once('=') {
+            if flag == CODEX_HOME_CLI_FLAG && !value.is_empty() {
+                return Some(PathBuf::from(value));
+            }
+            continue;
+        }
+
+        if arg == CODEX_HOME_CLI_FLAG {
+            return args.next().and_then(|s| s.to_str().map(PathBuf::from));
+        }
+    }
+
+    None
+}
+
+fn apply_shell_startup_files_override_from_args() {
+    let Some(mode) = parse_shell_startup_files_flag(std::env::args_os()) else {
+        return;
+    };
+
+    // It is safe to call set_var() because our process is single-threaded at this point in its
+    // execution (before the Tokio runtime is created).
+    unsafe { std::env::set_var(CODEX_SHELL_STARTUP_FILES_ENV_VAR, mode) };
+}
+
+fn parse_shell_startup_files_flag<I>(mut args: I) -> Option<String>
+where
+    I: Iterator<Item = OsString>,
+{
+    // Skip argv0.
+    let _ = args.next();
+
+    while let Some(arg) = args.next() {
+        let Some(arg) = arg.to_str() else {
+            continue;
+        };
+
+        if let Some((flag, value)) = arg.split_once('=') {
+            if flag == SHELL_STARTUP_FILES_CLI_FLAG && !value.is_empty() {
+                return Some(value.to_string());
+            }
+            continue;
+        }
+
+        if arg == SHELL_STARTUP_FILES_CLI_FLAG {
+            return args.next().and_then(|s| s.to_str().map(str::to_string));
+        }
+    }
+
+    None
 }
 
 /// Helper to set vars from a dotenvy iterator while filtering out `CODEX_` keys.
@@ -232,4 +319,43 @@ pub fn prepend_path_entry_for_codex_aliases() -> std::io::Result<TempDir> {
     }
 
     Ok(temp_dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_codex_home_flag;
+    use pretty_assertions::assert_eq;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    #[test]
+    fn parses_codex_home_with_equals_syntax() {
+        let args = vec![
+            OsString::from("codex"),
+            OsString::from("--codex-home=/tmp/codex-home"),
+        ];
+        assert_eq!(
+            Some(PathBuf::from("/tmp/codex-home")),
+            parse_codex_home_flag(args.into_iter())
+        );
+    }
+
+    #[test]
+    fn parses_codex_home_with_separate_value() {
+        let args = vec![
+            OsString::from("codex"),
+            OsString::from("--codex-home"),
+            OsString::from("/tmp/codex-home"),
+        ];
+        assert_eq!(
+            Some(PathBuf::from("/tmp/codex-home")),
+            parse_codex_home_flag(args.into_iter())
+        );
+    }
+
+    #[test]
+    fn ignores_missing_codex_home_flag() {
+        let args = vec![OsString::from("codex"), OsString::from("--help")];
+        assert_eq!(None, parse_codex_home_flag(args.into_iter()));
+    }
 }

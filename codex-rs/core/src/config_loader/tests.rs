@@ -171,9 +171,7 @@ extra = true
 
     let overrides = LoaderOverrides {
         managed_config_path: Some(managed_path),
-        #[cfg(target_os = "macos")]
-        managed_preferences_base64: None,
-        macos_managed_config_requirements_base64: None,
+        ..Default::default()
     };
 
     let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
@@ -207,9 +205,7 @@ async fn returns_empty_when_all_layers_missing() {
 
     let overrides = LoaderOverrides {
         managed_config_path: Some(managed_path),
-        #[cfg(target_os = "macos")]
-        managed_preferences_base64: None,
-        macos_managed_config_requirements_base64: None,
+        ..Default::default()
     };
 
     let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
@@ -294,19 +290,19 @@ flag = true
     )
     .expect("write managed config");
 
-    let overrides = LoaderOverrides {
-        managed_config_path: Some(managed_path),
-        managed_preferences_base64: Some(
-            base64::prelude::BASE64_STANDARD.encode(
-                r#"
+    let encoded = base64::prelude::BASE64_STANDARD.encode(
+        r#"
 [nested]
 value = "managed"
 flag = false
 "#
-                .as_bytes(),
-            ),
-        ),
-        macos_managed_config_requirements_base64: None,
+        .as_bytes(),
+    );
+
+    let overrides = LoaderOverrides {
+        managed_config_path: Some(managed_path),
+        managed_preferences_base64: Some(encoded),
+        ..Default::default()
     };
 
     let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");

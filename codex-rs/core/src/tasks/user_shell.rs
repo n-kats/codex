@@ -34,6 +34,7 @@ use super::SessionTask;
 use super::SessionTaskContext;
 
 const USER_SHELL_TIMEOUT_MS: u64 = 60 * 60 * 1000; // 1 hour
+const CODEX_USER_SHELL_LOGIN_ENV_VAR: &str = "CODEX_USER_SHELL_LOGIN";
 
 #[derive(Clone)]
 pub(crate) struct UserShellCommandTask {
@@ -74,7 +75,7 @@ impl SessionTask for UserShellCommandTask {
         // Execute the user's script under their default shell when known; this
         // allows commands that use shell features (pipes, &&, redirects, etc.).
         // We do not source rc files or otherwise reformat the script.
-        let use_login_shell = true;
+        let use_login_shell = user_shell_uses_login_shell();
         let session_shell = session.user_shell();
         let display_command = session_shell.derive_exec_args(&self.command, use_login_shell);
         let exec_command =
@@ -104,12 +105,13 @@ impl SessionTask for UserShellCommandTask {
         let exec_env = ExecEnv {
             command: exec_command.clone(),
             cwd: cwd.clone(),
-            env: create_env(&turn_context.shell_environment_policy),
+            env: create_exec_env(&session, &turn_context),
             // TODO(zhao-oai): Now that we have ExecExpiration::Cancellation, we
             // should use that instead of an "arbitrarily large" timeout here.
             expiration: USER_SHELL_TIMEOUT_MS.into(),
             sandbox: SandboxType::None,
             windows_sandbox_level: turn_context.windows_sandbox_level,
+            run_as: None,
             sandbox_permissions: SandboxPermissions::UseDefault,
             justification: None,
             arg0: None,
@@ -249,4 +251,26 @@ impl SessionTask for UserShellCommandTask {
         }
         None
     }
+}
+
+fn user_shell_uses_login_shell() -> bool {
+    let Ok(raw) = std::env::var(CODEX_USER_SHELL_LOGIN_ENV_VAR) else {
+        return true;
+    };
+    !matches!(
+        raw.trim(),
+        "0" | "false" | "False" | "FALSE" | "no" | "No" | "NO"
+    )
+}
+
+fn create_exec_env(
+    session: &crate::codex::Session,
+    turn_context: &TurnContext,
+) -> std::collections::HashMap<String, String> {
+    let mut env = create_env(&turn_context.user_shell_environment_policy);
+    crate::shell_startup_files::apply_shell_startup_files_env(
+        &mut env,
+        session.user_shell().shell_type.clone(),
+    );
+    env
 }

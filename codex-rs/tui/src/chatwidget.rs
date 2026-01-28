@@ -2438,8 +2438,6 @@ impl ChatWidget {
                         text_elements,
                     };
                     if self.is_session_configured() {
-                        // Submitted is only emitted when steer is enabled (Enter sends immediately).
-                        // Reset any reasoning header only when we are actually submitting a turn.
                         self.reasoning_buffer.clear();
                         self.full_reasoning_buffer.clear();
                         self.set_status_header(String::from("Working"));

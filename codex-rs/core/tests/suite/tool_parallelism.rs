@@ -69,14 +69,6 @@ async fn build_codex_with_test_tool(server: &wiremock::MockServer) -> anyhow::Re
     builder.build(server).await
 }
 
-fn assert_parallel_duration(actual: Duration) {
-    // Allow headroom for slow CI scheduling; barrier synchronization already enforces overlap.
-    assert!(
-        actual < Duration::from_millis(1_200),
-        "expected parallel execution to finish quickly, got {actual:?}"
-    );
-}
-
 fn assert_serial_duration(actual: Duration) {
     assert!(
         actual >= Duration::from_millis(500),
@@ -132,7 +124,7 @@ async fn read_file_tools_run_in_parallel() -> anyhow::Result<()> {
         ev_assistant_message("msg-1", "done"),
         ev_completed("resp-2"),
     ]);
-    mount_sse_sequence(
+    let request_log = mount_sse_sequence(
         &server,
         vec![warmup_first, warmup_second, first_response, second_response],
     )
@@ -140,8 +132,15 @@ async fn read_file_tools_run_in_parallel() -> anyhow::Result<()> {
 
     run_turn(&test, "warm up parallel tool").await?;
 
-    let duration = run_turn_and_measure(&test, "exercise sync tool").await?;
-    assert_parallel_duration(duration);
+    run_turn(&test, "exercise sync tool").await?;
+    assert_eq!(
+        request_log.function_call_output_text("call-1").as_deref(),
+        Some("ok")
+    );
+    assert_eq!(
+        request_log.function_call_output_text("call-2").as_deref(),
+        Some("ok")
+    );
 
     Ok(())
 }

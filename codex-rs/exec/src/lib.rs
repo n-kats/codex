@@ -26,9 +26,10 @@ use codex_core::auth::enforce_login_restrictions;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_overrides;
+use codex_core::config::load_config_as_toml_with_cli_overrides_and_loader_overrides;
 use codex_core::config::resolve_oss_provider;
 use codex_core::config_loader::ConfigLoadError;
+use codex_core::config_loader::LoaderOverrides;
 use codex_core::config_loader::format_config_error_with_source;
 use codex_core::git_info::get_git_repo_root;
 use codex_core::models_manager::manager::RefreshStrategy;
@@ -95,6 +96,8 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         sandbox_mode: sandbox_mode_cli_arg,
         prompt,
         output_schema: output_schema_path,
+        config_toml_file,
+        no_config,
         config_overrides,
     } = cli;
 
@@ -155,10 +158,24 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
             }
         };
 
-        match load_config_as_toml_with_cli_overrides(
+        let mut loader_overrides = LoaderOverrides::default();
+        if no_config {
+            loader_overrides.disable_user_config = true;
+            loader_overrides.disable_project_config = true;
+        } else if let Some(path) = &config_toml_file {
+            let resolved = if path.is_absolute() {
+                path.clone()
+            } else {
+                std::env::current_dir()?.join(path)
+            };
+            loader_overrides.user_config_path = Some(resolved);
+        }
+
+        match load_config_as_toml_with_cli_overrides_and_loader_overrides(
             &codex_home,
             &config_cwd,
             cli_kv_overrides.clone(),
+            loader_overrides,
         )
         .await
         {
@@ -216,6 +233,8 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         model,
         review_model: None,
         config_profile,
+        config_toml_file,
+        no_config,
         // Default to never ask for approvals in headless mode. Feature flags can override.
         approval_policy: Some(AskForApproval::Never),
         sandbox_mode,
