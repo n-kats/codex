@@ -13,6 +13,7 @@ RUN apt-get update && \
     cmake \
     clang libssl-dev musl-tools \
     bash coreutils findutils \
+    iputils-ping netcat-openbsd openssh-client wget \
     just && \
     rm -rf /var/lib/apt/lists/*
 
