@@ -29,6 +29,7 @@
 - `tmp-rebase` ブランチを作成して比較用に残す（既に存在する場合は作業停止）。
 - `fork-origin/main` に rebase し、コンフリクトを解消する。
 - `git range-diff` で `tmp-rebase` と比較し、rebase 内容を確認する。
+- rebase 後の修正はテストが通るまで `--amend` / squash しない（追加コミットで進める）。
 - `git range-diff` の目視レビュー後、カスタム仕様レポート（項目ごとの実装箇所・テスト/検証）を作成して表示し、欠損がないことを確認する。
 - 実行手順（コマンド）: `_docs/custom_notes/rebase_rules/README.md` を参照する。
 
