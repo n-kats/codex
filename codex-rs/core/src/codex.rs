@@ -2634,11 +2634,11 @@ mod handlers {
         sess.interrupt_task().await;
     }
 
-	    pub async fn override_turn_context(
-	        sess: &Session,
-	        sub_id: String,
-	        mut updates: SessionSettingsUpdate,
-	    ) {
+    pub async fn override_turn_context(
+        sess: &Session,
+        sub_id: String,
+        mut updates: SessionSettingsUpdate,
+    ) {
         if let Some(project_doc_paths) = updates.project_doc_paths.clone() {
             let session_configuration = { sess.state.lock().await.session_configuration.clone() };
             let mut config = Session::build_per_turn_config(&session_configuration);
@@ -2685,20 +2685,20 @@ mod handlers {
                         return;
                     }
                 };
-	            updates.user_instructions = Some(user_instructions);
-	        }
+            updates.user_instructions = Some(user_instructions);
+        }
 
-	        if let Err(err) = sess.update_settings(updates).await {
-	            sess.send_event_raw(Event {
-	                id: sub_id,
-	                msg: EventMsg::Error(ErrorEvent {
-	                    message: err.to_string(),
-	                    codex_error_info: Some(CodexErrorInfo::BadRequest),
-	                }),
-	            })
-	            .await;
-	        }
-	    }
+        if let Err(err) = sess.update_settings(updates).await {
+            sess.send_event_raw(Event {
+                id: sub_id,
+                msg: EventMsg::Error(ErrorEvent {
+                    message: err.to_string(),
+                    codex_error_info: Some(CodexErrorInfo::BadRequest),
+                }),
+            })
+            .await;
+        }
+    }
 
     pub async fn user_input_or_turn(
         sess: &Arc<Session>,
