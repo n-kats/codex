@@ -52,5 +52,11 @@ pub fn run_main() -> ! {
 
     // If execvp returns, there was an error.
     let err = std::io::Error::last_os_error();
-    panic!("Failed to execvp {}: {err}", command[0].as_str());
+    eprintln!("Failed to execvp {}: {err}", command[0].as_str());
+    let exit_code = match err.raw_os_error() {
+        Some(libc::ENOENT) => 127,
+        Some(libc::EACCES) => 126,
+        _ => 1,
+    };
+    std::process::exit(exit_code);
 }
