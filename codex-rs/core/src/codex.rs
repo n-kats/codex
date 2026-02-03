@@ -2634,11 +2634,11 @@ mod handlers {
         sess.interrupt_task().await;
     }
 
-    pub async fn override_turn_context(
-        sess: &Session,
-        sub_id: String,
-        mut updates: SessionSettingsUpdate,
-    ) {
+	    pub async fn override_turn_context(
+	        sess: &Session,
+	        sub_id: String,
+	        mut updates: SessionSettingsUpdate,
+	    ) {
         if let Some(project_doc_paths) = updates.project_doc_paths.clone() {
             let session_configuration = { sess.state.lock().await.session_configuration.clone() };
             let mut config = Session::build_per_turn_config(&session_configuration);
@@ -2685,37 +2685,20 @@ mod handlers {
                         return;
                     }
                 };
-            updates.user_instructions = Some(user_instructions);
-        }
+	            updates.user_instructions = Some(user_instructions);
+	        }
 
-        let previous_context = sess
-            .new_default_turn_with_sub_id(sess.next_internal_sub_id())
-            .await;
-        if let Err(err) = sess.update_settings(updates).await {
-            sess.send_event_raw(Event {
-                id: sub_id.clone(),
-                msg: EventMsg::Error(ErrorEvent {
-                    message: err.to_string(),
-                    codex_error_info: Some(CodexErrorInfo::BadRequest),
-                }),
-            })
-            .await;
-            return;
-        }
-
-        let initial_context_seeded = sess.state.lock().await.initial_context_seeded;
-        if !initial_context_seeded {
-            return;
-        }
-
-        let current_context = sess.new_default_turn_with_sub_id(sub_id).await;
-        let update_items =
-            sess.build_settings_update_items(Some(&previous_context), &current_context);
-        if !update_items.is_empty() {
-            sess.record_conversation_items(&current_context, &update_items)
-                .await;
-        }
-    }
+	        if let Err(err) = sess.update_settings(updates).await {
+	            sess.send_event_raw(Event {
+	                id: sub_id,
+	                msg: EventMsg::Error(ErrorEvent {
+	                    message: err.to_string(),
+	                    codex_error_info: Some(CodexErrorInfo::BadRequest),
+	                }),
+	            })
+	            .await;
+	        }
+	    }
 
     pub async fn user_input_or_turn(
         sess: &Arc<Session>,
