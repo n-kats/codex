@@ -91,6 +91,7 @@ impl EscalateServer {
                 windows_sandbox_level: WindowsSandboxLevel::Disabled,
                 justification: None,
                 arg0: None,
+                run_as: None,
             },
             &sandbox_state.sandbox_policy,
             &sandbox_state.sandbox_cwd,

@@ -2102,6 +2102,7 @@ mod tests {
     use crate::exec_cell::ExecCell;
     use codex_core::config::Config;
     use codex_core::config::ConfigBuilder;
+    use codex_core::config::ConfigOverrides;
     use codex_core::config::types::McpServerConfig;
     use codex_core::config::types::McpServerTransportConfig;
     use codex_core::protocol::McpAuthStatus;
@@ -2125,8 +2126,14 @@ mod tests {
     const SMALL_PNG_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==";
     async fn test_config() -> Config {
         let codex_home = std::env::temp_dir();
+        let cwd = tempfile::tempdir().expect("temp cwd").keep();
         ConfigBuilder::default()
             .codex_home(codex_home.clone())
+            .harness_overrides(ConfigOverrides {
+                cwd: Some(cwd),
+                no_config: true,
+                ..Default::default()
+            })
             .build()
             .await
             .expect("config")

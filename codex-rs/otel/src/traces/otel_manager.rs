@@ -12,6 +12,7 @@ use crate::otel_provider::traceparent_context_from_env;
 use chrono::SecondsFormat;
 use chrono::Utc;
 use codex_api::ApiError;
+use codex_api::Prompt as ApiPrompt;
 use codex_api::ResponseEvent;
 use codex_app_server_protocol::AuthMode;
 use codex_protocol::ThreadId;
@@ -33,12 +34,188 @@ use std::future::Future;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::time::error::Elapsed;
+use tracing::Instrument;
 use tracing::Span;
+use tracing::trace_span;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 pub use crate::OtelEventMetadata;
 pub use crate::OtelManager;
 pub use crate::ToolDecisionSource;
+const MAX_LANGFUSE_OBSERVATION_JSON_CHARS: usize = 32_000;
+
+#[derive(Debug)]
+pub struct LlmGenerationRecorder {
+    span: Span,
+    wire_api: String,
+    model: String,
+    log_user_prompts: bool,
+    output_text: String,
+    reasoning_content: String,
+    reasoning_summary: String,
+    output_items: Vec<ResponseItem>,
+    response_id: Option<String>,
+    token_usage: Option<serde_json::Value>,
+}
+
+impl LlmGenerationRecorder {
+    fn new(otel: &OtelManager, wire_api: &str, model: &str, prompt: &ApiPrompt) -> Self {
+        let span = trace_span!("llm_generation", wire_api = wire_api, model = model);
+        otel.attach_session_parent(&span);
+
+        span.set_attribute("langfuse.observation.type", "generation".to_string());
+        span.set_attribute("langfuse.observation.model.name", model.to_string());
+        let input = if otel.metadata.log_user_prompts {
+            let prompt_json = serde_json::json!({
+                "wire_api": wire_api,
+                "model": model,
+                "instructions": &prompt.instructions,
+                "input": &prompt.input,
+                "tools": &prompt.tools,
+                "parallel_tool_calls": prompt.parallel_tool_calls,
+                "output_schema": &prompt.output_schema,
+            });
+            serde_json::to_string(&prompt_json)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize prompt\"}".to_string())
+        } else {
+            "[REDACTED]".to_string()
+        };
+        let (input_truncated, _input_was_truncated, _input_original_len) =
+            truncate_for_langfuse_observation_json(&input);
+        span.set_attribute("langfuse.observation.input", input_truncated);
+
+        Self {
+            span,
+            wire_api: wire_api.to_string(),
+            model: model.to_string(),
+            log_user_prompts: otel.metadata.log_user_prompts,
+            output_text: String::new(),
+            reasoning_content: String::new(),
+            reasoning_summary: String::new(),
+            output_items: Vec::new(),
+            response_id: None,
+            token_usage: None,
+        }
+    }
+
+    pub fn on_event(&mut self, event: &ResponseEvent) {
+        if !self.log_user_prompts {
+            return;
+        }
+
+        match event {
+            ResponseEvent::OutputTextDelta(delta) => {
+                self.output_text.push_str(delta);
+            }
+            ResponseEvent::ReasoningContentDelta { delta, .. } => {
+                self.reasoning_content.push_str(delta);
+            }
+            ResponseEvent::ReasoningSummaryDelta { delta, .. } => {
+                self.reasoning_summary.push_str(delta);
+            }
+            ResponseEvent::ReasoningSummaryPartAdded { .. } => {}
+            ResponseEvent::OutputItemAdded(item) | ResponseEvent::OutputItemDone(item) => {
+                self.output_items.push(item.clone());
+            }
+            _ => {}
+        }
+    }
+
+    pub fn on_completed(
+        &mut self,
+        response_id: &str,
+        token_usage: Option<&codex_protocol::protocol::TokenUsage>,
+    ) {
+        self.response_id = Some(response_id.to_string());
+        self.token_usage = token_usage.and_then(|usage| serde_json::to_value(usage).ok());
+
+        let output_text = if self.log_user_prompts {
+            Cow::Borrowed(self.output_text.as_str())
+        } else {
+            Cow::Borrowed("[REDACTED]")
+        };
+        let reasoning_content = if self.log_user_prompts {
+            Cow::Borrowed(self.reasoning_content.as_str())
+        } else {
+            Cow::Borrowed("[REDACTED]")
+        };
+        let reasoning_summary = if self.log_user_prompts {
+            Cow::Borrowed(self.reasoning_summary.as_str())
+        } else {
+            Cow::Borrowed("[REDACTED]")
+        };
+        let output_items = if self.log_user_prompts {
+            Cow::Borrowed(self.output_items.as_slice())
+        } else {
+            Cow::Borrowed(&[] as &[ResponseItem])
+        };
+
+        let output_json = serde_json::json!({
+            "wire_api": &self.wire_api,
+            "model": &self.model,
+            "response_id": self.response_id,
+            "output_text": &output_text,
+            "reasoning_content": &reasoning_content,
+            "reasoning_summary": &reasoning_summary,
+            "output_items": &output_items,
+            "token_usage": self.token_usage,
+        });
+
+        let output = serde_json::to_string(&output_json)
+            .unwrap_or_else(|_| "{\"error\":\"failed to serialize output\"}".to_string());
+        let (output_truncated, _output_was_truncated, _output_original_len) =
+            truncate_for_langfuse_observation_json(&output);
+        self.span
+            .set_attribute("langfuse.observation.output", output_truncated);
+
+        // Ensure the span is ended immediately (so it materializes in Langfuse even during long-lived TUI sessions).
+        self.span.in_scope(|| {});
+    }
+
+    pub fn on_error(&mut self, error: &str) {
+        let output_text = if self.log_user_prompts {
+            Cow::Borrowed(self.output_text.as_str())
+        } else {
+            Cow::Borrowed("[REDACTED]")
+        };
+        let reasoning_content = if self.log_user_prompts {
+            Cow::Borrowed(self.reasoning_content.as_str())
+        } else {
+            Cow::Borrowed("[REDACTED]")
+        };
+        let reasoning_summary = if self.log_user_prompts {
+            Cow::Borrowed(self.reasoning_summary.as_str())
+        } else {
+            Cow::Borrowed("[REDACTED]")
+        };
+        let output_items = if self.log_user_prompts {
+            Cow::Borrowed(self.output_items.as_slice())
+        } else {
+            Cow::Borrowed(&[] as &[ResponseItem])
+        };
+
+        let output_json = serde_json::json!({
+            "wire_api": &self.wire_api,
+            "model": &self.model,
+            "response_id": self.response_id,
+            "output_text": &output_text,
+            "reasoning_content": &reasoning_content,
+            "reasoning_summary": &reasoning_summary,
+            "output_items": &output_items,
+            "token_usage": self.token_usage,
+            "error": error,
+        });
+
+        let output = serde_json::to_string(&output_json)
+            .unwrap_or_else(|_| "{\"error\":\"failed to serialize output\"}".to_string());
+        let (output_truncated, _output_was_truncated, _output_original_len) =
+            truncate_for_langfuse_observation_json(&output);
+        self.span
+            .set_attribute("langfuse.observation.output", output_truncated);
+
+        self.span.in_scope(|| {});
+    }
+}
 
 const SSE_UNKNOWN_KIND: &str = "unknown";
 const WEBSOCKET_UNKNOWN_KIND: &str = "unknown";
@@ -56,6 +233,35 @@ impl OtelManager {
         terminal_type: String,
         session_source: SessionSource,
     ) -> OtelManager {
+        // `new_session` is a trace root for the lifetime of the Codex session.
+        //
+        // Langfuse materializes OTEL spans/observations only once they have an end time. If we
+        // keep the root span open for the entire interactive TUI session, child spans that
+        // reference it can show up with a missing parent, and the trace row can be missing until
+        // the session exits.
+        //
+        // To avoid this, we create a short-lived root span, capture its OTel context, and
+        // immediately drop it. It is valid for a parent span to end before its children.
+        let session_span = trace_span!(
+            "new_session",
+            conversation_id = %conversation_id,
+            session_source = %session_source
+        );
+
+        // Make the Langfuse trace name match the resume session id for easier correlation.
+        //
+        // Collector remaps this to `langfuse.trace.name` for Langfuse ingest.
+        let trace_name = format!("codex_{conversation_id}");
+        session_span.set_attribute("codex.trace.name", trace_name.clone());
+        session_span.set_attribute("session.id", conversation_id.to_string());
+
+        if let Some(context) = traceparent_context_from_env() {
+            let _ = session_span.set_parent(context);
+        }
+
+        let session_parent_context = Some(session_span.context());
+        session_span.in_scope(|| {});
+
         Self {
             metadata: OtelEventMetadata {
                 conversation_id,
@@ -69,6 +275,7 @@ impl OtelManager {
                 app_version: env!("CARGO_PKG_VERSION"),
                 terminal_type,
             },
+            session_parent_context,
             metrics: crate::metrics::global(),
             metrics_use_metadata_tags: true,
         }
@@ -78,6 +285,29 @@ impl OtelManager {
         if let Some(context) = traceparent_context_from_env() {
             let _ = span.set_parent(context);
         }
+    }
+
+    pub fn session_parent_context(&self) -> Option<opentelemetry::Context> {
+        self.session_parent_context.clone()
+    }
+
+    pub fn attach_session_parent(&self, span: &Span) {
+        let conversation_id = self.metadata.conversation_id.to_string();
+        span.set_attribute("session.id", conversation_id.clone());
+        span.set_attribute("codex.trace.name", format!("codex_{conversation_id}"));
+
+        if let Some(parent_context) = self.session_parent_context() {
+            let _ = span.set_parent(parent_context);
+        }
+    }
+
+    pub fn start_llm_generation(
+        &self,
+        wire_api: &str,
+        model: &str,
+        prompt: &ApiPrompt,
+    ) -> LlmGenerationRecorder {
+        LlmGenerationRecorder::new(self, wire_api, model, prompt)
     }
 
     pub fn record_responses(&self, handle_responses_span: &Span, event: &ResponseEvent) {
@@ -94,6 +324,26 @@ impl OtelManager {
                 handle_responses_span.record("from", "output_item_added");
                 if let ResponseItem::FunctionCall { name, .. } = &item {
                     handle_responses_span.record("tool_name", name.as_str());
+                }
+            }
+            ResponseEvent::Completed {
+                response_id,
+                token_usage,
+            } => {
+                handle_responses_span.set_attribute("response_id", response_id.clone());
+                if let Some(usage) = token_usage {
+                    handle_responses_span
+                        .set_attribute("input_token_count", usage.input_tokens as i64);
+                    handle_responses_span
+                        .set_attribute("output_token_count", usage.output_tokens as i64);
+                    handle_responses_span
+                        .set_attribute("cached_token_count", usage.cached_input_tokens as i64);
+                    handle_responses_span.set_attribute(
+                        "reasoning_token_count",
+                        usage.reasoning_output_tokens as i64,
+                    );
+                    handle_responses_span
+                        .set_attribute("tool_token_count", usage.total_tokens as i64);
                 }
             }
             _ => {}
@@ -177,6 +427,15 @@ impl OtelManager {
             duration,
             &[("status", status_str.as_str()), ("success", success_str)],
         );
+        let api_request_span = trace_span!(
+            "api_request",
+            attempt = attempt,
+            status = status,
+            duration_ms = %duration.as_millis(),
+            error.message = error,
+        );
+        self.attach_session_parent(&api_request_span);
+        api_request_span.in_scope(|| {});
         tracing::event!(
             tracing::Level::INFO,
             event.name = "codex.api_request",
@@ -557,6 +816,37 @@ impl OtelManager {
         );
     }
 
+    pub fn tool_call(&self, tool_name: &str, call_id: &str, item: &ResponseItem, payload: &str) {
+        let (payload_truncated, payload_was_truncated, payload_original_len) =
+            truncate_for_langfuse_observation_json(payload);
+
+        let item_json = serde_json::to_string(item).unwrap_or_else(|_| "{}".to_string());
+        let (item_truncated, item_was_truncated, item_original_len) =
+            truncate_for_langfuse_observation_json(&item_json);
+
+        let input_json = serde_json::json!({
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "payload": payload_truncated,
+            "payload_truncated": payload_was_truncated,
+            "payload_original_len": payload_original_len,
+            "response_item_json": item_truncated,
+            "response_item_truncated": item_was_truncated,
+            "response_item_original_len": item_original_len,
+        });
+
+        let tool_call_span = trace_span!("tool_call", tool_name = tool_name, call_id = call_id);
+        self.attach_session_parent(&tool_call_span);
+        tool_call_span.set_attribute("codex.observation.type", "span".to_string());
+        tool_call_span.set_attribute(
+            "codex.observation.input",
+            serde_json::to_string(&input_json)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize tool call\"}".to_string()),
+        );
+
+        tool_call_span.in_scope(|| {});
+    }
+
     pub async fn log_tool_result<F, Fut, E>(
         &self,
         tool_name: &str,
@@ -569,14 +859,53 @@ impl OtelManager {
         Fut: Future<Output = Result<(String, bool), E>>,
         E: Display,
     {
+        let (arguments_truncated, arguments_was_truncated, arguments_original_len) =
+            truncate_for_langfuse_observation_json(arguments);
+
+        let input_json = serde_json::json!({
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "arguments": arguments_truncated,
+            "arguments_truncated": arguments_was_truncated,
+            "arguments_original_len": arguments_original_len,
+        });
+
+        let tool_exec_span = trace_span!("tool_exec", tool_name = tool_name, call_id = call_id);
+        self.attach_session_parent(&tool_exec_span);
+        tool_exec_span.set_attribute("codex.observation.type", "span".to_string());
+        tool_exec_span.set_attribute(
+            "codex.observation.input",
+            serde_json::to_string(&input_json)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize tool input\"}".to_string()),
+        );
+
         let start = Instant::now();
-        let result = f().await;
+        let result = f().instrument(tool_exec_span.clone()).await;
         let duration = start.elapsed();
 
         let (output, success) = match &result {
             Ok((preview, success)) => (Cow::Borrowed(preview.as_str()), *success),
             Err(error) => (Cow::Owned(error.to_string()), false),
         };
+
+        let (output_truncated, output_was_truncated, output_original_len) =
+            truncate_for_langfuse_observation_json(output.as_ref());
+
+        let output_json = serde_json::json!({
+            "tool_name": tool_name,
+            "call_id": call_id,
+            "success": success,
+            "duration_ms": duration.as_millis(),
+            "output": output_truncated,
+            "output_truncated": output_was_truncated,
+            "output_original_len": output_original_len,
+        });
+
+        tool_exec_span.set_attribute(
+            "codex.observation.output",
+            serde_json::to_string(&output_json)
+                .unwrap_or_else(|_| "{\"error\":\"failed to serialize tool output\"}".to_string()),
+        );
 
         self.tool_result(
             tool_name,
@@ -688,4 +1017,17 @@ impl OtelManager {
 
 fn timestamp() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+fn truncate_for_langfuse_observation_json(value: &str) -> (String, bool, usize) {
+    let original_len = value.chars().count();
+    if original_len <= MAX_LANGFUSE_OBSERVATION_JSON_CHARS {
+        return (value.to_string(), false, original_len);
+    }
+
+    let truncated = value
+        .chars()
+        .take(MAX_LANGFUSE_OBSERVATION_JSON_CHARS)
+        .collect::<String>();
+    (truncated, true, original_len)
 }

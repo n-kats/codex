@@ -19,6 +19,7 @@ use codex_core::AuthManager;
 use codex_core::CodexAuth;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
+use codex_core::config::ConfigOverrides;
 use codex_core::config::Constrained;
 use codex_core::config::ConstraintError;
 use codex_core::config_loader::RequirementSource;
@@ -96,8 +97,14 @@ use toml::Value as TomlValue;
 async fn test_config() -> Config {
     // Use base defaults to avoid depending on host state.
     let codex_home = std::env::temp_dir();
+    let cwd = tempdir().expect("temp cwd").keep();
     ConfigBuilder::default()
         .codex_home(codex_home.clone())
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(cwd),
+            no_config: true,
+            ..Default::default()
+        })
         .build()
         .await
         .expect("config")
@@ -282,7 +289,7 @@ async fn submission_preserves_text_elements_and_local_images() {
 
     chat.bottom_pane
         .set_composer_text(text.clone(), text_elements.clone(), local_images.clone());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -1680,7 +1687,7 @@ async fn enqueueing_history_prompt_multiple_times_is_stable() {
     // Submit an initial prompt to seed history.
     chat.bottom_pane
         .set_composer_text("repeat me".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     // Simulate an active task so further submissions are queued.
     chat.bottom_pane.set_task_running(true);
@@ -1698,6 +1705,29 @@ async fn enqueueing_history_prompt_multiple_times_is_stable() {
     for message in chat.queued_user_messages.iter() {
         assert_eq!(message.text, "repeat me");
     }
+}
+
+#[tokio::test]
+async fn ctrl_j_submits_user_message() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(None).await;
+    chat.thread_id = Some(ThreadId::new());
+
+    chat.bottom_pane
+        .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+
+    match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => {
+            assert_eq!(
+                items,
+                vec![UserInput::Text {
+                    text: "hello".to_string(),
+                    text_elements: Vec::new(),
+                }]
+            );
+        }
+        other => panic!("expected Op::UserTurn, got {other:?}"),
+    };
 }
 
 #[tokio::test]
@@ -2268,7 +2298,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode:
@@ -2286,7 +2316,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
 
     chat.bottom_pane
         .set_composer_text("follow up".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode:
@@ -2482,7 +2512,7 @@ async fn collab_mode_is_not_sent_until_selected() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode,
@@ -2515,7 +2545,7 @@ async fn user_turn_includes_personality_from_config() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             personality: Some(Personality::Friendly),

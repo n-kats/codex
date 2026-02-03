@@ -295,6 +295,57 @@
       },
       "type": "object"
     },
+    "CustomConfigToml": {
+      "properties": {
+        "assistant_shell_environment_policy": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ShellEnvironmentPolicyToml"
+            }
+          ],
+          "description": "Optional override of the environment policy used for model-triggered command execution (`shell`, `shell_command`, `exec_command`, ...).\n\nWhen unset, this defaults to the top-level `shell_environment_policy`."
+        },
+        "exec": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomExecToml"
+            }
+          ],
+          "default": {
+            "worker_gid": null,
+            "worker_uid": null,
+            "worker_user": null
+          }
+        },
+        "user_shell_environment_policy": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ShellEnvironmentPolicyToml"
+            }
+          ],
+          "description": "Optional override of the environment policy used for user-initiated shell commands (`!`).\n\nWhen unset, this defaults to the assistant/tool policy."
+        }
+      },
+      "type": "object"
+    },
+    "CustomExecToml": {
+      "properties": {
+        "worker_gid": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "worker_uid": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "worker_user": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "FeedbackConfigToml": {
       "additionalProperties": false,
       "properties": {
@@ -1152,6 +1203,23 @@
     "compact_prompt": {
       "description": "Compact prompt used for history compaction.",
       "type": "string"
+    },
+    "custom": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/CustomConfigToml"
+        }
+      ],
+      "default": {
+        "assistant_shell_environment_policy": null,
+        "exec": {
+          "worker_gid": null,
+          "worker_uid": null,
+          "worker_user": null
+        },
+        "user_shell_environment_policy": null
+      },
+      "description": "Custom configuration namespace for downstream forks."
     },
     "developer_instructions": {
       "default": null,

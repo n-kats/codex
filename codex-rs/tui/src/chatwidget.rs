@@ -2708,8 +2708,6 @@ impl ChatWidget {
                         mention_paths: self.bottom_pane.take_mention_paths(),
                     };
                     if self.is_session_configured() {
-                        // Submitted is only emitted when steer is enabled (Enter sends immediately).
-                        // Reset any reasoning header only when we are actually submitting a turn.
                         self.reasoning_buffer.clear();
                         self.full_reasoning_buffer.clear();
                         self.set_status_header(String::from("Working"));
@@ -2824,6 +2822,12 @@ impl ChatWidget {
                 }
                 const INIT_PROMPT: &str = include_str!("../prompt_for_init_command.md");
                 self.submit_user_message(INIT_PROMPT.to_string().into());
+            }
+            SlashCommand::CustomAgents => {
+                self.add_info_message(
+                    "Usage: /custom-agents <path> [path...] | /custom-agents clear".to_string(),
+                    None,
+                );
             }
             SlashCommand::Compact => {
                 self.clear_token_usage();
@@ -3088,6 +3092,93 @@ impl ChatWidget {
                 } else {
                     self.queue_user_message(user_message);
                 }
+            }
+            SlashCommand::CustomAgents => {
+                use crate::bottom_pane::parse_positional_args;
+
+                let clear = matches!(trimmed, "clear" | "off" | "none" | "auto" | "default");
+                if clear {
+                    self.config.project_doc_paths.clear();
+                    self.app_event_tx
+                        .send(AppEvent::CodexOp(Op::OverrideTurnContext {
+                            cwd: None,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            windows_sandbox_level: None,
+                            model: None,
+                            effort: None,
+                            summary: None,
+                            collaboration_mode: None,
+                            personality: None,
+                            project_doc_paths: Some(None),
+                        }));
+                    self.add_info_message(
+                        "Project AGENTS.md auto-discovery enabled.".to_string(),
+                        None,
+                    );
+                    return;
+                }
+
+                let args = parse_positional_args(trimmed, &[]);
+                if args.is_empty() {
+                    self.add_to_history(history_cell::new_error_event(
+                        "Usage: /custom-agents <path> [path...] | /custom-agents clear".to_string(),
+                    ));
+                    self.request_redraw();
+                    return;
+                }
+
+                let mut resolved_paths = Vec::with_capacity(args.len());
+                for arg in args {
+                    let raw = std::path::PathBuf::from(arg.text);
+                    let path = if raw.is_absolute() {
+                        raw
+                    } else {
+                        self.config.cwd.join(raw)
+                    };
+
+                    let md = match std::fs::symlink_metadata(&path) {
+                        Ok(md) => md,
+                        Err(err) => {
+                            self.add_to_history(history_cell::new_error_event(format!(
+                                "Project doc path {}: {err}",
+                                path.display()
+                            )));
+                            self.request_redraw();
+                            return;
+                        }
+                    };
+                    let ft = md.file_type();
+                    if !(ft.is_file() || ft.is_symlink()) {
+                        self.add_to_history(history_cell::new_error_event(format!(
+                            "Project doc path is not a file: {}",
+                            path.display()
+                        )));
+                        self.request_redraw();
+                        return;
+                    }
+
+                    resolved_paths.push(path);
+                }
+
+                self.config.project_doc_paths = resolved_paths.clone();
+                self.app_event_tx
+                    .send(AppEvent::CodexOp(Op::OverrideTurnContext {
+                        cwd: None,
+                        approval_policy: None,
+                        sandbox_policy: None,
+                        windows_sandbox_level: None,
+                        model: None,
+                        effort: None,
+                        summary: None,
+                        collaboration_mode: None,
+                        personality: None,
+                        project_doc_paths: Some(Some(resolved_paths)),
+                    }));
+                self.add_info_message(
+                    "Updated project AGENTS.md paths for this session.".to_string(),
+                    None,
+                );
             }
             SlashCommand::Review if !trimmed.is_empty() => {
                 let Some((prepared_args, _prepared_elements)) =
@@ -3828,6 +3919,7 @@ impl ChatWidget {
                 summary: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             }));
             tx.send(AppEvent::UpdateModel(switch_model.clone()));
             tx.send(AppEvent::UpdateReasoningEffort(Some(default_effort)));
@@ -3948,6 +4040,7 @@ impl ChatWidget {
                         collaboration_mode: None,
                         windows_sandbox_level: None,
                         personality: Some(personality),
+                        project_doc_paths: None,
                     }));
                     tx.send(AppEvent::UpdatePersonality(personality));
                     tx.send(AppEvent::PersistPersonalitySelection { personality });
@@ -4219,6 +4312,7 @@ impl ChatWidget {
                 summary: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             }));
             tx.send(AppEvent::UpdateModel(model_for_action.clone()));
             tx.send(AppEvent::UpdateReasoningEffort(effort_for_action));
@@ -4393,6 +4487,7 @@ impl ChatWidget {
                 summary: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             }));
         self.app_event_tx.send(AppEvent::UpdateModel(model.clone()));
         self.app_event_tx
@@ -4582,6 +4677,7 @@ impl ChatWidget {
                 summary: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             }));
             tx.send(AppEvent::UpdateAskForApprovalPolicy(approval));
             tx.send(AppEvent::UpdateSandboxPolicy(sandbox_clone));

@@ -61,6 +61,7 @@ mod file_search_popup;
 mod footer;
 mod list_selection_view;
 mod prompt_args;
+pub(crate) use prompt_args::parse_positional_args;
 mod skill_popup;
 mod skills_toggle_view;
 mod slash_commands;

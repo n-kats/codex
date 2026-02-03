@@ -22,10 +22,11 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_overrides;
+use codex_core::config::load_config_as_toml_with_cli_overrides_and_loader_overrides;
 use codex_core::config::resolve_oss_provider;
 use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::config_loader::ConfigLoadError;
+use codex_core::config_loader::LoaderOverrides;
 use codex_core::config_loader::format_config_error_with_source;
 use codex_core::default_client::set_default_client_residency_requirement;
 use codex_core::find_thread_path_by_id_str;
@@ -127,6 +128,7 @@ pub use public_widgets::composer_input::ComposerInput;
 pub async fn run_main(
     mut cli: Cli,
     codex_linux_sandbox_exe: Option<PathBuf>,
+    agents_md: Vec<PathBuf>,
 ) -> std::io::Result<AppExitInfo> {
     let (sandbox_mode, approval_policy) = if cli.full_auto {
         (
@@ -183,11 +185,25 @@ pub async fn run_main(
         None => AbsolutePathBuf::current_dir()?,
     };
 
+    let mut loader_overrides = LoaderOverrides::default();
+    if cli.no_config {
+        loader_overrides.disable_user_config = true;
+        loader_overrides.disable_project_config = true;
+    } else if let Some(path) = &cli.config_toml_file {
+        let resolved = if path.is_absolute() {
+            path.clone()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        loader_overrides.user_config_path = Some(resolved);
+    }
+
     #[allow(clippy::print_stderr)]
-    let config_toml = match load_config_as_toml_with_cli_overrides(
+    let config_toml = match load_config_as_toml_with_cli_overrides_and_loader_overrides(
         &codex_home,
         &config_cwd,
         cli_kv_overrides.clone(),
+        loader_overrides,
     )
     .await
     {
@@ -270,10 +286,13 @@ pub async fn run_main(
         approval_policy,
         sandbox_mode,
         cwd,
+        config_toml_file: cli.config_toml_file.clone(),
+        no_config: cli.no_config,
         model_provider: model_provider_override.clone(),
         config_profile: cli.config_profile.clone(),
         codex_linux_sandbox_exe,
         show_raw_agent_reasoning: cli.oss.then_some(true),
+        project_doc_paths: agents_md,
         additional_writable_roots: additional_dirs,
         ..Default::default()
     };

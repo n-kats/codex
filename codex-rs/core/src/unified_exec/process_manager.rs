@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use tokio::sync::Notify;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
@@ -14,6 +16,8 @@ use crate::exec_env::create_env;
 use crate::exec_policy::ExecApprovalRequest;
 use crate::protocol::ExecCommandSource;
 use crate::sandboxing::ExecEnv;
+use crate::shell::ShellType;
+use crate::spawn::RunAsUser;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::events::ToolEventStage;
@@ -33,9 +37,13 @@ use crate::unified_exec::ProcessStore;
 use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecProcessManager;
+
+#[cfg(test)]
+use crate::sandboxing::SandboxPermissions;
 use crate::unified_exec::UnifiedExecResponse;
 use crate::unified_exec::WARNING_UNIFIED_EXEC_PROCESSES;
 use crate::unified_exec::WriteStdinRequest;
+use crate::unified_exec::async_watcher::TRAILING_OUTPUT_GRACE;
 use crate::unified_exec::async_watcher::emit_exec_end_for_unified_exec;
 use crate::unified_exec::async_watcher::spawn_exit_watcher;
 use crate::unified_exec::async_watcher::start_streaming_output;
@@ -46,6 +54,8 @@ use crate::unified_exec::process::OutputBuffer;
 use crate::unified_exec::process::OutputHandles;
 use crate::unified_exec::process::UnifiedExecProcess;
 use crate::unified_exec::resolve_max_tokens;
+#[cfg(test)]
+use codex_protocol::config_types::WindowsSandboxLevel;
 
 const UNIFIED_EXEC_ENV: [(&str, &str); 10] = [
     ("NO_COLOR", "1"),
@@ -67,6 +77,148 @@ fn apply_unified_exec_env(mut env: HashMap<String, String>) -> HashMap<String, S
     env
 }
 
+struct PreparedPtyCommand {
+    program: String,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+    arg0: Option<String>,
+}
+
+#[cfg(unix)]
+fn unix_preferred_executable_path(candidates: &[&str], fallback: &str) -> String {
+    candidates
+        .iter()
+        .find_map(|path| {
+            std::path::Path::new(path)
+                .exists()
+                .then_some((*path).to_string())
+        })
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+#[cfg(unix)]
+async fn sudo_preflight_check(run_as: &RunAsUser) -> Result<(), String> {
+    use tokio::process::Command;
+
+    let sudo_program = unix_preferred_executable_path(
+        &["/usr/bin/sudo", "/bin/sudo", "/usr/local/bin/sudo"],
+        "sudo",
+    );
+    let env_program =
+        unix_preferred_executable_path(&["/usr/bin/env", "/bin/env", "/usr/local/bin/env"], "env");
+    let id_program =
+        unix_preferred_executable_path(&["/usr/bin/id", "/bin/id", "/usr/local/bin/id"], "id");
+
+    let uid = format!("#{}", run_as.uid);
+    let gid = format!("#{}", run_as.gid);
+    let output = Command::new(&sudo_program)
+        .args([
+            "-n",
+            "-u",
+            uid.as_str(),
+            "-g",
+            gid.as_str(),
+            "--",
+            env_program.as_str(),
+            "-i",
+            id_program.as_str(),
+            "-u",
+        ])
+        .env_clear()
+        .output()
+        .await
+        .map_err(|err| format!("failed to run `{sudo_program}`: {err}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        let code = output.status.code();
+        return Err(format!(
+            "`{sudo_program} -n -u '{uid}' -g '{gid}' -- {env_program} -i {id_program} -u` failed (exit={code:?}) stderr={stderr:?}",
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = stdout.trim();
+    if stdout != format!("{}", run_as.uid) {
+        return Err(format!(
+            "`{sudo_program} ... id -u` returned {stdout:?} (expected {})",
+            run_as.uid
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn prepare_pty_command(exec_env: &ExecEnv) -> Result<PreparedPtyCommand, UnifiedExecError> {
+    let (program, args) = exec_env
+        .command
+        .split_first()
+        .ok_or(UnifiedExecError::MissingCommandLine)?;
+
+    let Some(run_as) = exec_env.run_as.as_ref() else {
+        return Ok(PreparedPtyCommand {
+            program: program.to_string(),
+            args: args.to_vec(),
+            env: exec_env.env.clone(),
+            arg0: exec_env.arg0.clone(),
+        });
+    };
+
+    let sudo_program = unix_preferred_executable_path(
+        &["/usr/bin/sudo", "/bin/sudo", "/usr/local/bin/sudo"],
+        "sudo",
+    );
+    let env_program =
+        unix_preferred_executable_path(&["/usr/bin/env", "/bin/env", "/usr/local/bin/env"], "env");
+
+    // `sudo` resets most of the environment by default, so we pass the desired
+    // environment explicitly via `env -i KEY=VALUE ...`.
+    let mut sudo_args = vec![
+        "-n".to_string(),
+        "-u".to_string(),
+        format!("#{}", run_as.uid),
+        "-g".to_string(),
+        format!("#{}", run_as.gid),
+        "--".to_string(),
+        env_program,
+        "-i".to_string(),
+    ];
+
+    let mut env_kv: Vec<_> = exec_env.env.iter().collect();
+    env_kv.sort_by_key(|(key, _)| *key);
+    sudo_args.extend(
+        env_kv
+            .into_iter()
+            .map(|(key, value)| format!("{key}={value}")),
+    );
+
+    sudo_args.push(program.to_string());
+    sudo_args.extend(args.iter().cloned());
+
+    Ok(PreparedPtyCommand {
+        program: sudo_program,
+        args: sudo_args,
+        env: HashMap::new(),
+        arg0: None,
+    })
+}
+
+#[cfg(not(unix))]
+fn prepare_pty_command(exec_env: &ExecEnv) -> Result<PreparedPtyCommand, UnifiedExecError> {
+    let (program, args) = exec_env
+        .command
+        .split_first()
+        .ok_or(UnifiedExecError::MissingCommandLine)?;
+    Ok(PreparedPtyCommand {
+        program: program.to_string(),
+        args: args.to_vec(),
+        env: exec_env.env.clone(),
+        arg0: exec_env.arg0.clone(),
+    })
+}
+
 struct PreparedProcessHandles {
     writer_tx: mpsc::Sender<Vec<u8>>,
     output_buffer: OutputBuffer,
@@ -78,6 +230,108 @@ struct PreparedProcessHandles {
 }
 
 impl UnifiedExecProcessManager {
+    #[cfg(unix)]
+    async fn cached_exec_command_sudo_preflight(&self, run_as: RunAsUser) -> Result<(), String> {
+        {
+            let guard = self.sudo_preflight.lock().await;
+            if let Some(state) = guard.as_ref().filter(|state| {
+                state.run_as.uid == run_as.uid
+                    && state.run_as.gid == run_as.gid
+                    && state.run_as.supplementary_gids == run_as.supplementary_gids
+            }) {
+                return state.result.clone();
+            }
+        }
+
+        let result = sudo_preflight_check(&run_as).await;
+        let mut guard = self.sudo_preflight.lock().await;
+        let warned = guard
+            .as_ref()
+            .filter(|state| {
+                state.run_as.uid == run_as.uid
+                    && state.run_as.gid == run_as.gid
+                    && state.run_as.supplementary_gids == run_as.supplementary_gids
+            })
+            .is_some_and(|state| state.warned);
+        guard.replace(super::SudoPreflightState {
+            run_as,
+            result: result.clone(),
+            warned,
+        });
+        result
+    }
+
+    #[cfg(not(unix))]
+    async fn cached_exec_command_sudo_preflight(&self, _run_as: RunAsUser) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub(crate) async fn preflight_exec_command_sudo_worker_user(
+        &self,
+        run_as: RunAsUser,
+    ) -> Result<(), UnifiedExecError> {
+        self.cached_exec_command_sudo_preflight(run_as)
+            .await
+            .map_err(|err| {
+                UnifiedExecError::create_process(format!(
+                    "exec_command requires passwordless sudo to run as the configured worker user: {err}"
+                ))
+            })
+    }
+
+    #[cfg(unix)]
+    pub(crate) async fn exec_command_sudo_worker_user_startup_warning(
+        &self,
+        run_as: RunAsUser,
+    ) -> Option<String> {
+        {
+            let mut guard = self.sudo_preflight.lock().await;
+            if let Some(state) = guard.as_mut().filter(|state| {
+                state.run_as.uid == run_as.uid
+                    && state.run_as.gid == run_as.gid
+                    && state.run_as.supplementary_gids == run_as.supplementary_gids
+            }) {
+                if state.warned {
+                    return None;
+                }
+                if let Err(err) = state.result.as_ref() {
+                    state.warned = true;
+                    return Some(err.clone());
+                }
+                return None;
+            }
+        }
+
+        match sudo_preflight_check(&run_as).await {
+            Ok(()) => {
+                let mut guard = self.sudo_preflight.lock().await;
+                guard.replace(super::SudoPreflightState {
+                    run_as,
+                    result: Ok(()),
+                    warned: false,
+                });
+                None
+            }
+            Err(err) => {
+                let mut guard = self.sudo_preflight.lock().await;
+                guard.replace(super::SudoPreflightState {
+                    run_as,
+                    result: Err(err.clone()),
+                    warned: true,
+                });
+                Some(err)
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) async fn exec_command_sudo_worker_user_startup_warning(
+        &self,
+        _run_as: RunAsUser,
+    ) -> Option<String> {
+        None
+    }
+
     pub(crate) async fn allocate_process_id(&self) -> String {
         loop {
             let mut store = self.process_store.lock().await;
@@ -176,7 +430,9 @@ impl UnifiedExecProcessManager {
         let text = String::from_utf8_lossy(&collected).to_string();
         let output = formatted_truncate_text(&text, TruncationPolicy::Tokens(max_tokens));
         let exit_code = process.exit_code();
-        let has_exited = process.has_exited() || exit_code.is_some();
+        let has_exited = process.has_exited()
+            || exit_code.is_some()
+            || process.cancellation_token().is_cancelled();
         let chunk_id = generate_chunk_id();
         let process_id = request.process_id.clone();
         if has_exited {
@@ -303,6 +559,28 @@ impl UnifiedExecProcessManager {
             } => (Some(process_id), exit_code, call_id),
             ProcessStatus::Exited { exit_code, entry } => {
                 let call_id = entry.call_id.clone();
+                let exit = exit_code.unwrap_or(-1);
+                let output_drained = entry.process.output_drained_notify();
+                let _ = tokio::time::timeout(TRAILING_OUTPUT_GRACE * 2, output_drained.notified())
+                    .await;
+
+                if !entry.end_emitted.swap(true, Ordering::SeqCst) {
+                    let duration = Instant::now().saturating_duration_since(entry.started_at);
+                    emit_exec_end_for_unified_exec(
+                        Arc::clone(&entry.session_ref),
+                        Arc::clone(&entry.turn_ref),
+                        entry.call_id.clone(),
+                        entry.command.clone(),
+                        entry.cwd.clone(),
+                        Some(entry.process_id.clone()),
+                        Arc::clone(&entry.transcript),
+                        output.clone(),
+                        exit,
+                        duration,
+                    )
+                    .await;
+                }
+
                 (None, exit_code, call_id)
             }
             ProcessStatus::Unknown => {
@@ -336,7 +614,16 @@ impl UnifiedExecProcessManager {
         let exit_code = entry.process.exit_code();
         let process_id = entry.process_id.clone();
 
-        if entry.process.has_exited() {
+        let has_exited = entry.process.has_exited()
+            || exit_code.is_some()
+            || entry.process.cancellation_token().is_cancelled();
+        if has_exited {
+            // If we only observe an exit code (but `has_exited()` hasn't flipped yet),
+            // proactively signal the background watchers so we don't miss the
+            // ExecCommandEnd event.
+            if exit_code.is_some() {
+                entry.process.cancellation_token().cancel();
+            }
             let Some(entry) = store.remove(&process_id) else {
                 return ProcessStatus::Unknown;
             };
@@ -405,12 +692,19 @@ impl UnifiedExecProcessManager {
         tty: bool,
         transcript: Arc<tokio::sync::Mutex<HeadTailBuffer>>,
     ) {
+        let end_emitted = Arc::new(AtomicBool::new(false));
         let entry = ProcessEntry {
             process: Arc::clone(&process),
+            session_ref: Arc::clone(&context.session),
+            turn_ref: Arc::clone(&context.turn),
             call_id: context.call_id.clone(),
             process_id: process_id.clone(),
             command: command.to_vec(),
             tty,
+            cwd: cwd.clone(),
+            started_at,
+            transcript: Arc::clone(&transcript),
+            end_emitted: Arc::clone(&end_emitted),
             last_used: started_at,
         };
         let number_processes = {
@@ -439,6 +733,7 @@ impl UnifiedExecProcessManager {
             cwd,
             process_id,
             transcript,
+            end_emitted,
             started_at,
         );
     }
@@ -448,27 +743,27 @@ impl UnifiedExecProcessManager {
         env: &ExecEnv,
         tty: bool,
     ) -> Result<UnifiedExecProcess, UnifiedExecError> {
-        let (program, args) = env
-            .command
-            .split_first()
-            .ok_or(UnifiedExecError::MissingCommandLine)?;
+        if let Some(run_as) = env.run_as.clone() {
+            self.preflight_exec_command_sudo_worker_user(run_as).await?;
+        }
+        let prepared = prepare_pty_command(env)?;
 
         let spawn_result = if tty {
             codex_utils_pty::pty::spawn_process(
-                program,
-                args,
+                prepared.program.as_str(),
+                &prepared.args,
                 env.cwd.as_path(),
-                &env.env,
-                &env.arg0,
+                &prepared.env,
+                &prepared.arg0,
             )
             .await
         } else {
             codex_utils_pty::pipe::spawn_process_no_stdin(
-                program,
-                args,
+                prepared.program.as_str(),
+                &prepared.args,
                 env.cwd.as_path(),
-                &env.env,
-                &env.arg0,
+                &prepared.env,
+                &prepared.arg0,
             )
             .await
         };
@@ -483,7 +778,15 @@ impl UnifiedExecProcessManager {
         cwd: PathBuf,
         context: &UnifiedExecContext,
     ) -> Result<UnifiedExecProcess, UnifiedExecError> {
-        let env = apply_unified_exec_env(create_env(&context.turn.shell_environment_policy));
+        let shell_type = request
+            .command
+            .first()
+            .map(|program| crate::shell::detect_shell_type(&PathBuf::from(program)))
+            .flatten()
+            .unwrap_or(ShellType::Sh);
+
+        let mut env = apply_unified_exec_env(create_env(&context.turn.shell_environment_policy));
+        crate::shell_startup_files::apply_shell_startup_files_env(&mut env, shell_type);
         let features = context.session.features();
         let mut orchestrator = ToolOrchestrator::new();
         let mut runtime = UnifiedExecRuntime::new(self);
@@ -672,6 +975,8 @@ enum ProcessStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::exec::ExecExpiration;
+    use crate::exec::SandboxType;
     use pretty_assertions::assert_eq;
     use tokio::time::Duration;
     use tokio::time::Instant;
@@ -772,5 +1077,77 @@ mod tests {
 
         // (10) is exited but among the last 8; we should drop the LRU outside that set.
         assert_eq!(candidate, Some(id(1)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_pty_command_keeps_original_when_no_run_as() {
+        let exec_env = ExecEnv {
+            command: vec!["bash".to_string(), "-lc".to_string(), "echo hi".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            env: HashMap::from([("B".to_string(), "2".to_string())]),
+            expiration: ExecExpiration::DefaultTimeout,
+            sandbox: SandboxType::None,
+            windows_sandbox_level: WindowsSandboxLevel::Disabled,
+            run_as: None,
+            sandbox_permissions: SandboxPermissions::UseDefault,
+            justification: None,
+            arg0: Some("codex-linux-sandbox".to_string()),
+        };
+
+        let prepared = prepare_pty_command(&exec_env).expect("prepare_pty_command");
+
+        assert_eq!(prepared.program, "bash".to_string());
+        assert_eq!(
+            prepared.args,
+            vec!["-lc".to_string(), "echo hi".to_string()]
+        );
+        assert_eq!(prepared.env, exec_env.env);
+        assert_eq!(prepared.arg0, exec_env.arg0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_pty_command_wraps_with_sudo_and_env_i_when_run_as_configured() {
+        let exec_env = ExecEnv {
+            command: vec!["bash".to_string(), "-lc".to_string(), "echo hi".to_string()],
+            cwd: PathBuf::from("/tmp"),
+            env: HashMap::from([
+                ("B".to_string(), "2".to_string()),
+                ("A".to_string(), "1".to_string()),
+            ]),
+            expiration: ExecExpiration::DefaultTimeout,
+            sandbox: SandboxType::None,
+            windows_sandbox_level: WindowsSandboxLevel::Disabled,
+            run_as: Some(crate::spawn::RunAsUser {
+                uid: 1001,
+                gid: 1002,
+                supplementary_gids: None,
+            }),
+            sandbox_permissions: SandboxPermissions::UseDefault,
+            justification: None,
+            arg0: Some("codex-linux-sandbox".to_string()),
+        };
+
+        let prepared = prepare_pty_command(&exec_env).expect("prepare_pty_command");
+
+        assert!(prepared.program.ends_with("sudo"));
+        assert_eq!(prepared.env, HashMap::new());
+        assert_eq!(prepared.arg0, None);
+
+        let args = &prepared.args;
+        assert_eq!(args.get(0), Some(&"-n".to_string()));
+        assert_eq!(args.get(1), Some(&"-u".to_string()));
+        assert_eq!(args.get(2), Some(&"#1001".to_string()));
+        assert_eq!(args.get(3), Some(&"-g".to_string()));
+        assert_eq!(args.get(4), Some(&"#1002".to_string()));
+        assert_eq!(args.get(5), Some(&"--".to_string()));
+        assert!(args.get(6).expect("env program").ends_with("env"));
+        assert_eq!(args.get(7), Some(&"-i".to_string()));
+        assert_eq!(args.get(8), Some(&"A=1".to_string()));
+        assert_eq!(args.get(9), Some(&"B=2".to_string()));
+        assert_eq!(args.get(10), Some(&"bash".to_string()));
+        assert_eq!(args.get(11), Some(&"-lc".to_string()));
+        assert_eq!(args.get(12), Some(&"echo hi".to_string()));
     }
 }

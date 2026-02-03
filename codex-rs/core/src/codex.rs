@@ -29,6 +29,7 @@ use crate::models_manager::manager::ModelsManager;
 use crate::parse_command::parse_command;
 use crate::parse_turn_item;
 use crate::rollout::session_index;
+use crate::spawn::RunAsUser;
 use crate::stream_events_utils::HandleOutputCtx;
 use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
@@ -303,7 +304,9 @@ impl Codex {
         }
 
         let enabled_skills = loaded_skills.enabled_skills();
-        let user_instructions = get_user_instructions(&config, Some(&enabled_skills)).await;
+        let user_instructions = get_user_instructions(&config, Some(&enabled_skills))
+            .await
+            .map_err(|err| CodexErr::Fatal(format!("failed to load project docs: {err}")))?;
 
         let exec_policy = ExecPolicyManager::load(&config.features, &config.config_layer_stack)
             .await
@@ -523,7 +526,9 @@ pub(crate) struct TurnContext {
     pub(crate) approval_policy: AskForApproval,
     pub(crate) sandbox_policy: SandboxPolicy,
     pub(crate) windows_sandbox_level: WindowsSandboxLevel,
+    pub(crate) exec_run_as: Option<RunAsUser>,
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
+    pub(crate) user_shell_environment_policy: ShellEnvironmentPolicy,
     pub(crate) tools_config: ToolsConfig,
     pub(crate) ghost_snapshot: GhostSnapshotConfig,
     pub(crate) final_output_json_schema: Option<Value>,
@@ -636,6 +641,9 @@ impl SessionConfiguration {
         if let Some(cwd) = updates.cwd.clone() {
             next_configuration.cwd = cwd;
         }
+        if let Some(user_instructions) = updates.user_instructions.clone() {
+            next_configuration.user_instructions = user_instructions;
+        }
         Ok(next_configuration)
     }
 }
@@ -650,6 +658,8 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
     pub(crate) final_output_json_schema: Option<Option<Value>>,
     pub(crate) personality: Option<Personality>,
+    pub(crate) user_instructions: Option<Option<String>>,
+    pub(crate) project_doc_paths: Option<Option<Vec<PathBuf>>>,
 }
 
 impl Session {
@@ -724,7 +734,9 @@ impl Session {
             approval_policy: session_configuration.approval_policy.value(),
             sandbox_policy: session_configuration.sandbox_policy.get().clone(),
             windows_sandbox_level: session_configuration.windows_sandbox_level,
+            exec_run_as: per_turn_config.exec_run_as.clone(),
             shell_environment_policy: per_turn_config.shell_environment_policy.clone(),
+            user_shell_environment_policy: per_turn_config.user_shell_environment_policy.clone(),
             tools_config,
             ghost_snapshot: per_turn_config.ghost_snapshot.clone(),
             final_output_json_schema: None,
@@ -1275,6 +1287,35 @@ impl Session {
         if let Some(final_schema) = final_output_json_schema {
             turn_context.final_output_json_schema = final_schema;
         }
+
+        if self.enabled(Feature::UnifiedExec) {
+            if let Some(run_as) = turn_context.exec_run_as.clone() {
+                if let Some(err) = self
+                    .services
+                    .unified_exec_manager
+                    .exec_command_sudo_worker_user_startup_warning(run_as)
+                    .await
+                {
+                    self.send_event(
+                        &turn_context,
+                        EventMsg::BackgroundEvent(BackgroundEventEvent {
+                            message: format!(
+                                "Warning: custom.exec.worker_* is set; exec_command requires passwordless sudo to switch users. {err}"
+                            ),
+                        }),
+                    )
+                    .await;
+                    self.record_model_warning(
+                        format!(
+                            "custom.exec.worker_* is set; exec_command requires passwordless sudo to switch users. {err}"
+                        ),
+                        &turn_context,
+                    )
+                    .await;
+                }
+            }
+        }
+
         Arc::new(turn_context)
     }
 
@@ -2432,6 +2473,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                 summary,
                 collaboration_mode,
                 personality,
+                project_doc_paths,
             } => {
                 let collaboration_mode = if let Some(collab_mode) = collaboration_mode {
                     collab_mode
@@ -2454,6 +2496,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                         collaboration_mode: Some(collaboration_mode),
                         reasoning_summary: summary,
                         personality,
+                        project_doc_paths,
                         ..Default::default()
                     },
                 )
@@ -2583,6 +2626,7 @@ mod handlers {
     use mcp_types::RequestId;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use tracing::error;
     use tracing::info;
     use tracing::warn;
 
@@ -2593,17 +2637,83 @@ mod handlers {
     pub async fn override_turn_context(
         sess: &Session,
         sub_id: String,
-        updates: SessionSettingsUpdate,
+        mut updates: SessionSettingsUpdate,
     ) {
+        if let Some(project_doc_paths) = updates.project_doc_paths.clone() {
+            let session_configuration = { sess.state.lock().await.session_configuration.clone() };
+            let mut config = Session::build_per_turn_config(&session_configuration);
+            if let Some(cwd) = updates.cwd.clone() {
+                config.cwd = cwd;
+            }
+
+            config.project_doc_paths = match project_doc_paths {
+                Some(paths) => paths
+                    .into_iter()
+                    .map(|path| {
+                        if path.is_absolute() {
+                            path
+                        } else {
+                            config.cwd.join(path)
+                        }
+                    })
+                    .collect(),
+                None => Vec::new(),
+            };
+
+            let loaded_skills = sess.services.skills_manager.skills_for_config(&config);
+            for err in &loaded_skills.errors {
+                error!(
+                    "failed to load skill {}: {}",
+                    err.path.display(),
+                    err.message
+                );
+            }
+
+            let enabled_skills = loaded_skills.enabled_skills();
+            let user_instructions =
+                match super::get_user_instructions(&config, Some(&enabled_skills)).await {
+                    Ok(value) => value,
+                    Err(err) => {
+                        sess.send_event_raw(Event {
+                            id: sub_id,
+                            msg: EventMsg::Error(ErrorEvent {
+                                message: format!("failed to load project docs: {err}"),
+                                codex_error_info: Some(CodexErrorInfo::BadRequest),
+                            }),
+                        })
+                        .await;
+                        return;
+                    }
+                };
+            updates.user_instructions = Some(user_instructions);
+        }
+
+        let previous_context = sess
+            .new_default_turn_with_sub_id(sess.next_internal_sub_id())
+            .await;
         if let Err(err) = sess.update_settings(updates).await {
             sess.send_event_raw(Event {
-                id: sub_id,
+                id: sub_id.clone(),
                 msg: EventMsg::Error(ErrorEvent {
                     message: err.to_string(),
                     codex_error_info: Some(CodexErrorInfo::BadRequest),
                 }),
             })
             .await;
+            return;
+        }
+
+        let initial_context_seeded = sess.state.lock().await.initial_context_seeded;
+        if !initial_context_seeded {
+            return;
+        }
+
+        let current_context = sess.new_default_turn_with_sub_id(sub_id).await;
+        let update_items =
+            sess.build_settings_update_items(Some(&previous_context), &current_context);
+        if !update_items.is_empty() {
+            sess.record_conversation_items(&current_context, &update_items)
+                .await;
         }
     }
 
@@ -2647,6 +2757,8 @@ mod handlers {
                         reasoning_summary: Some(summary),
                         final_output_json_schema: Some(final_output_json_schema),
                         personality,
+                        user_instructions: None,
+                        project_doc_paths: None,
                     },
                 )
             }
@@ -2865,12 +2977,19 @@ mod handlers {
     }
 
     pub async fn list_custom_prompts(sess: &Session, sub_id: String) {
+        let cwd = {
+            let state = sess.state.lock().await;
+            state.session_configuration.cwd.clone()
+        };
+
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        if let Some(dir) = crate::custom_prompts::default_prompts_dir() {
+            dirs.push(dir);
+        }
+        dirs.extend(crate::custom_prompts::additional_prompts_dirs(&cwd));
+
         let custom_prompts: Vec<CustomPrompt> =
-            if let Some(dir) = crate::custom_prompts::default_prompts_dir() {
-                crate::custom_prompts::discover_prompts_in(&dir).await
-            } else {
-                Vec::new()
-            };
+            crate::custom_prompts::discover_prompts_in_dirs(&dirs).await;
 
         let event = Event {
             id: sub_id,
@@ -3196,7 +3315,9 @@ async fn spawn_review_thread(
         approval_policy: parent_turn_context.approval_policy,
         sandbox_policy: parent_turn_context.sandbox_policy.clone(),
         windows_sandbox_level: parent_turn_context.windows_sandbox_level,
+        exec_run_as: parent_turn_context.exec_run_as.clone(),
         shell_environment_policy: parent_turn_context.shell_environment_policy.clone(),
+        user_shell_environment_policy: parent_turn_context.user_shell_environment_policy.clone(),
         cwd: parent_turn_context.cwd.clone(),
         final_output_json_schema: None,
         codex_linux_sandbox_exe: parent_turn_context.codex_linux_sandbox_exe.clone(),
@@ -5953,6 +6074,7 @@ mod tests {
             windows_sandbox_level: turn_context.windows_sandbox_level,
             justification: Some("test".to_string()),
             arg0: None,
+            run_as: None,
         };
 
         let params2 = ExecParams {
@@ -5964,6 +6086,7 @@ mod tests {
             windows_sandbox_level: turn_context.windows_sandbox_level,
             justification: params.justification.clone(),
             arg0: None,
+            run_as: None,
         };
 
         let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));

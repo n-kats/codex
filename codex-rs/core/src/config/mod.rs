@@ -41,6 +41,7 @@ use crate::project_doc::DEFAULT_PROJECT_DOC_FILENAME;
 use crate::project_doc::LOCAL_PROJECT_DOC_FILENAME;
 use crate::protocol::AskForApproval;
 use crate::protocol::SandboxPolicy;
+use crate::spawn::RunAsUser;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
 use codex_app_server_protocol::Tools;
 use codex_app_server_protocol::UserSavedConfig;
@@ -145,6 +146,9 @@ pub struct Config {
     /// particular geography. HTTP clients should direct their requests
     /// using backend-specific headers or URLs to enforce this.
     pub enforce_residency: Constrained<Option<ResidencyRequirement>>,
+    /// When set, command-executing tool calls will be spawned as this UID/GID
+    /// instead of the invoker user (worker_only).
+    pub exec_run_as: Option<RunAsUser>,
 
     /// True if the user passed in an override or set a value in config.toml
     /// for either of approval_policy or sandbox_mode.
@@ -155,6 +159,7 @@ pub struct Config {
     pub forced_auto_mode_downgraded_on_windows: bool,
 
     pub shell_environment_policy: ShellEnvironmentPolicy,
+    pub user_shell_environment_policy: ShellEnvironmentPolicy,
 
     /// When `true`, `AgentReasoning` events emitted by the backend will be
     /// suppressed from the frontend output. This can reduce visual noise when
@@ -259,6 +264,12 @@ pub struct Config {
 
     /// Additional filenames to try when looking for project-level docs.
     pub project_doc_fallback_filenames: Vec<String>,
+
+    /// Explicit project doc file paths to use instead of auto-discovery.
+    ///
+    /// When non-empty, Codex will read these files in order and will not scan
+    /// for `AGENTS.md` along the repository root → cwd path.
+    pub project_doc_paths: Vec<PathBuf>,
 
     /// Token budget applied when storing tool/function outputs in the context manager.
     pub tool_output_token_limit: Option<usize>,
@@ -419,13 +430,26 @@ impl ConfigBuilder {
         let codex_home = codex_home.map_or_else(find_codex_home, std::io::Result::Ok)?;
         let cli_overrides = cli_overrides.unwrap_or_default();
         let mut harness_overrides = harness_overrides.unwrap_or_default();
-        let loader_overrides = loader_overrides.unwrap_or_default();
         let cwd_override = harness_overrides.cwd.as_deref().or(fallback_cwd.as_deref());
         let cwd = match cwd_override {
             Some(path) => AbsolutePathBuf::try_from(path)?,
             None => AbsolutePathBuf::current_dir()?,
         };
         harness_overrides.cwd = Some(cwd.to_path_buf());
+        let mut loader_overrides = loader_overrides.unwrap_or_default();
+        if harness_overrides.no_config {
+            loader_overrides.user_config_path = None;
+            loader_overrides.disable_user_config = true;
+            loader_overrides.disable_project_config = true;
+        } else if let Some(config_toml_file) = &harness_overrides.config_toml_file {
+            let resolved = if config_toml_file.is_absolute() {
+                config_toml_file.clone()
+            } else {
+                std::env::current_dir()?.join(config_toml_file)
+            };
+            loader_overrides.user_config_path = Some(resolved);
+            loader_overrides.disable_user_config = false;
+        }
         let config_layer_stack = load_config_layers_state(
             &codex_home,
             Some(cwd),
@@ -465,6 +489,14 @@ impl ConfigBuilder {
 }
 
 impl Config {
+    pub fn user_config_toml_path(&self) -> Option<&AbsolutePathBuf> {
+        let layer = self.config_layer_stack.get_user_layer()?;
+        match &layer.name {
+            codex_app_server_protocol::ConfigLayerSource::User { file } => Some(file),
+            _ => None,
+        }
+    }
+
     /// This is the preferred way to create an instance of [Config].
     pub async fn load_with_cli_overrides(
         cli_overrides: Vec<(String, TomlValue)>,
@@ -524,11 +556,28 @@ pub async fn load_config_as_toml_with_cli_overrides(
     cwd: &AbsolutePathBuf,
     cli_overrides: Vec<(String, TomlValue)>,
 ) -> std::io::Result<ConfigToml> {
+    load_config_as_toml_with_cli_overrides_and_loader_overrides(
+        codex_home,
+        cwd,
+        cli_overrides,
+        LoaderOverrides::default(),
+    )
+    .await
+}
+
+/// DEPRECATED: Prefer [Config::load_with_cli_overrides()] and inspect the
+/// derived [Config] instead of working with [ConfigToml] directly.
+pub async fn load_config_as_toml_with_cli_overrides_and_loader_overrides(
+    codex_home: &Path,
+    cwd: &AbsolutePathBuf,
+    cli_overrides: Vec<(String, TomlValue)>,
+    loader_overrides: LoaderOverrides,
+) -> std::io::Result<ConfigToml> {
     let config_layer_stack = load_config_layers_state(
         codex_home,
         Some(cwd.clone()),
         &cli_overrides,
-        LoaderOverrides::default(),
+        loader_overrides,
         CloudRequirementsLoader::default(),
     )
     .await?;
@@ -617,6 +666,13 @@ fn mcp_server_matches_requirement(
 pub async fn load_global_mcp_servers(
     codex_home: &Path,
 ) -> std::io::Result<BTreeMap<String, McpServerConfig>> {
+    load_global_mcp_servers_with_loader_overrides(codex_home, LoaderOverrides::default()).await
+}
+
+pub async fn load_global_mcp_servers_with_loader_overrides(
+    codex_home: &Path,
+    loader_overrides: LoaderOverrides,
+) -> std::io::Result<BTreeMap<String, McpServerConfig>> {
     // In general, Config::load_with_cli_overrides() should be used to load the
     // full config with requirements.toml applied, but in this case, we need
     // access to the raw TOML in order to warn the user about deprecated fields.
@@ -632,7 +688,7 @@ pub async fn load_global_mcp_servers(
         codex_home,
         cwd,
         &cli_overrides,
-        LoaderOverrides::default(),
+        loader_overrides,
         CloudRequirementsLoader::default(),
     )
     .await?;
@@ -812,6 +868,10 @@ pub struct ConfigToml {
     /// Sandbox configuration to apply if `sandbox` is `WorkspaceWrite`.
     pub sandbox_workspace_write: Option<SandboxWorkspaceWrite>,
 
+    /// Custom configuration namespace for downstream forks.
+    #[serde(default)]
+    pub custom: CustomConfigToml,
+
     /// Optional external command to spawn for end-user notifications.
     #[serde(default)]
     pub notify: Option<Vec<String>>,
@@ -987,6 +1047,332 @@ pub struct ConfigToml {
     pub experimental_use_freeform_apply_patch: Option<bool>,
     /// Preferred OSS provider for local models, e.g. "lmstudio", "ollama", or "ollama-chat".
     pub oss_provider: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+pub struct CustomConfigToml {
+    #[serde(default)]
+    pub exec: CustomExecToml,
+
+    /// Optional override of the environment policy used for user-initiated
+    /// shell commands (`!`).
+    ///
+    /// When unset, this defaults to the assistant/tool policy.
+    pub user_shell_environment_policy: Option<ShellEnvironmentPolicyToml>,
+
+    /// Optional override of the environment policy used for model-triggered
+    /// command execution (`shell`, `shell_command`, `exec_command`, ...).
+    ///
+    /// When unset, this defaults to the top-level `shell_environment_policy`.
+    pub assistant_shell_environment_policy: Option<ShellEnvironmentPolicyToml>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+pub struct CustomExecToml {
+    pub worker_user: Option<String>,
+    pub worker_uid: Option<u32>,
+    pub worker_gid: Option<u32>,
+}
+
+impl CustomExecToml {
+    fn resolve_run_as(&self) -> std::io::Result<Option<RunAsUser>> {
+        let worker_user = self
+            .worker_user
+            .as_ref()
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+
+        #[cfg(not(unix))]
+        {
+            if worker_user.is_some() || self.worker_uid.is_some() || self.worker_gid.is_some() {
+                return Err(std::io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "custom.exec is only supported on unix targets",
+                ));
+            }
+            return Ok(None);
+        }
+
+        #[cfg(unix)]
+        {
+            let ids = match (self.worker_uid, self.worker_gid) {
+                (None, None) => None,
+                (Some(uid), Some(gid)) => Some(RunAsUser {
+                    uid,
+                    gid,
+                    supplementary_gids: None,
+                }),
+                _ => {
+                    return Err(std::io::Error::new(
+                        ErrorKind::InvalidInput,
+                        "custom.exec.worker_uid and custom.exec.worker_gid must be set together",
+                    ));
+                }
+            };
+
+            let user_ids = if let Some(user) = worker_user {
+                Some(resolve_user_to_ids(user)?)
+            } else {
+                None
+            };
+
+            match (user_ids, ids) {
+                (None, None) => Ok(None),
+                (Some(user_ids), None) => Ok(Some(user_ids)),
+                (None, Some(ids)) => Ok(Some(ids)),
+                (Some(user_ids), Some(ids)) => {
+                    if user_ids.uid == ids.uid && user_ids.gid == ids.gid {
+                        Ok(Some(user_ids))
+                    } else {
+                        Err(std::io::Error::new(
+                            ErrorKind::InvalidInput,
+                            format!(
+                                "custom.exec.worker_user resolved to uid/gid {}/{} but custom.exec.worker_uid/gid is {}/{}",
+                                user_ids.uid, user_ids.gid, ids.uid, ids.gid
+                            ),
+                        ))
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn resolve_user_to_ids(user: &str) -> std::io::Result<RunAsUser> {
+    use std::ffi::CString;
+    use std::ptr;
+
+    let user = CString::new(user).map_err(|_| {
+        std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "custom.exec.worker_user must not contain NUL bytes",
+        )
+    })?;
+
+    let mut buf_len = 1024usize;
+    for _ in 0..6 {
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::passwd = ptr::null_mut();
+        let mut buf = vec![0u8; buf_len];
+        let rc = unsafe {
+            libc::getpwnam_r(
+                user.as_ptr(),
+                &mut pwd,
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                &mut result,
+            )
+        };
+        if rc == libc::ERANGE {
+            buf_len = buf_len.saturating_mul(2);
+            continue;
+        }
+        if rc != 0 {
+            return Err(std::io::Error::from_raw_os_error(rc));
+        }
+        if result.is_null() {
+            return Err(std::io::Error::new(
+                ErrorKind::NotFound,
+                "custom.exec.worker_user does not exist",
+            ));
+        }
+
+        let uid = pwd.pw_uid;
+        let gid = pwd.pw_gid;
+        let supplementary_gids = resolve_user_supplementary_gids(&user, gid)?;
+        return Ok(RunAsUser {
+            uid,
+            gid,
+            supplementary_gids: Some(supplementary_gids),
+        });
+    }
+
+    Err(std::io::Error::new(
+        ErrorKind::Other,
+        "failed to resolve custom.exec.worker_user (buffer exhausted)",
+    ))
+}
+
+#[cfg(unix)]
+fn resolve_user_supplementary_gids(
+    user: &std::ffi::CString,
+    primary_gid: u32,
+) -> std::io::Result<Vec<u32>> {
+    let primary_gid_u32 = primary_gid;
+    let primary_gid: libc::gid_t = primary_gid;
+
+    let mut capacity: usize = 16;
+    for _ in 0..6 {
+        let mut groups: Vec<libc::gid_t> = vec![0; capacity];
+        let mut ngroups: libc::c_int = groups.len().try_into().unwrap_or(libc::c_int::MAX);
+
+        let rc = unsafe {
+            libc::getgrouplist(
+                user.as_ptr(),
+                primary_gid,
+                groups.as_mut_ptr(),
+                &mut ngroups,
+            )
+        };
+        if rc == -1 {
+            let needed: usize = ngroups
+                .try_into()
+                .unwrap_or_else(|_| groups.len().saturating_mul(2));
+            capacity = needed.clamp(capacity.saturating_add(1), 1024);
+            continue;
+        }
+
+        let len: usize = ngroups.try_into().unwrap_or_default();
+        groups.truncate(len);
+
+        let mut resolved: Vec<u32> = groups
+            .into_iter()
+            .filter_map(|gid| u32::try_from(gid).ok())
+            .filter(|gid| *gid != primary_gid_u32)
+            .collect();
+        resolved.sort_unstable();
+        resolved.dedup();
+        return Ok(resolved);
+    }
+
+    Err(std::io::Error::new(
+        ErrorKind::Other,
+        "failed to resolve custom.exec.worker_user supplementary groups",
+    ))
+}
+
+#[cfg(test)]
+mod custom_exec_tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn custom_exec_requires_uid_and_gid_together() {
+        let cfg = CustomExecToml {
+            worker_user: None,
+            worker_uid: Some(1000),
+            worker_gid: None,
+        };
+        let err = cfg.resolve_run_as().expect_err("expected error");
+        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn custom_exec_accepts_uid_gid_pair() {
+        let cfg = CustomExecToml {
+            worker_user: None,
+            worker_uid: Some(1000),
+            worker_gid: Some(1001),
+        };
+        assert_eq!(
+            cfg.resolve_run_as().expect("resolve ok"),
+            Some(RunAsUser {
+                uid: 1000,
+                gid: 1001,
+                supplementary_gids: None,
+            })
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_exec_rejects_mismatched_user_and_uid_gid() {
+        use std::ffi::CStr;
+
+        let (user, uid, gid) = unsafe {
+            let uid = libc::getuid();
+            let pwd = libc::getpwuid(uid);
+            if pwd.is_null() {
+                return;
+            }
+            let user = CStr::from_ptr((*pwd).pw_name)
+                .to_string_lossy()
+                .into_owned();
+            (user, (*pwd).pw_uid, (*pwd).pw_gid)
+        };
+
+        let cfg = CustomExecToml {
+            worker_user: Some(user),
+            worker_uid: Some(uid.saturating_add(1)),
+            worker_gid: Some(gid),
+        };
+        let err = cfg.resolve_run_as().expect_err("expected mismatch error");
+        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_exec_accepts_matching_user_and_uid_gid() {
+        use std::ffi::CStr;
+
+        let (user, uid, gid) = unsafe {
+            let uid = libc::getuid();
+            let pwd = libc::getpwuid(uid);
+            if pwd.is_null() {
+                return;
+            }
+            let user = CStr::from_ptr((*pwd).pw_name)
+                .to_string_lossy()
+                .into_owned();
+            (user, (*pwd).pw_uid, (*pwd).pw_gid)
+        };
+
+        let cfg = CustomExecToml {
+            worker_user: Some(user),
+            worker_uid: Some(uid),
+            worker_gid: Some(gid),
+        };
+        let expected = resolve_user_to_ids(cfg.worker_user.as_ref().expect("user"))
+            .expect("resolve_user_to_ids");
+        assert_eq!(cfg.resolve_run_as().expect("resolve ok"), Some(expected));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_user_to_ids_includes_current_process_groups() {
+        use std::ffi::CStr;
+
+        let (user, primary_gid) = unsafe {
+            let uid = libc::getuid();
+            let pwd = libc::getpwuid(uid);
+            if pwd.is_null() {
+                return;
+            }
+            let user = CStr::from_ptr((*pwd).pw_name)
+                .to_string_lossy()
+                .into_owned();
+            (user, (*pwd).pw_gid)
+        };
+
+        let resolved = resolve_user_to_ids(&user).expect("resolve user");
+        let resolved_supplementary = resolved.supplementary_gids.unwrap_or_default();
+
+        let mut ngroups = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+        if ngroups < 0 {
+            return;
+        }
+        let mut groups: Vec<libc::gid_t> = vec![0; ngroups as usize];
+        ngroups = unsafe { libc::getgroups(ngroups, groups.as_mut_ptr()) };
+        if ngroups < 0 {
+            return;
+        }
+
+        let current: Vec<u32> = groups
+            .into_iter()
+            .take(ngroups as usize)
+            .filter_map(|gid| u32::try_from(gid).ok())
+            .filter(|gid| *gid != primary_gid)
+            .collect();
+
+        for gid in current {
+            assert!(
+                resolved_supplementary.contains(&gid),
+                "missing supplementary gid {gid}"
+            );
+        }
+    }
 }
 
 impl From<ConfigToml> for UserSavedConfig {
@@ -1185,6 +1571,11 @@ pub struct ConfigOverrides {
     pub model: Option<String>,
     pub review_model: Option<String>,
     pub cwd: Option<PathBuf>,
+    /// Override which file is treated as the "user config.toml" layer.
+    /// Normally this is `$CODEX_HOME/config.toml`.
+    pub config_toml_file: Option<PathBuf>,
+    /// When true, disables loading user + project config files entirely.
+    pub no_config: bool,
     pub approval_policy: Option<AskForApproval>,
     pub sandbox_mode: Option<SandboxMode>,
     pub model_provider: Option<String>,
@@ -1198,6 +1589,8 @@ pub struct ConfigOverrides {
     pub show_raw_agent_reasoning: Option<bool>,
     pub tools_web_search_request: Option<bool>,
     pub ephemeral: Option<bool>,
+    /// Explicit project doc paths to use instead of auto-discovery.
+    pub project_doc_paths: Vec<PathBuf>,
     /// Additional directories that should be treated as writable roots for this session.
     pub additional_writable_roots: Vec<PathBuf>,
 }
@@ -1248,6 +1641,38 @@ fn resolve_web_search_mode(
     None
 }
 
+fn resolve_project_doc_paths(paths: &[PathBuf], cwd: &PathBuf) -> std::io::Result<Vec<PathBuf>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut resolved = Vec::with_capacity(paths.len());
+    for path in paths {
+        let path = if path.is_absolute() {
+            path.clone()
+        } else {
+            cwd.join(path)
+        };
+
+        let md = std::fs::symlink_metadata(&path).map_err(|e| {
+            std::io::Error::new(
+                e.kind(),
+                format!("project doc path {}: {e}", path.display()),
+            )
+        })?;
+        let ft = md.file_type();
+        if !(ft.is_file() || ft.is_symlink()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("project doc path is not a file: {}", path.display()),
+            ));
+        }
+        resolved.push(path);
+    }
+
+    Ok(resolved)
+}
+
 pub(crate) fn resolve_web_search_mode_for_turn(
     explicit_mode: Option<WebSearchMode>,
     is_azure_responses_endpoint: bool,
@@ -1292,6 +1717,8 @@ impl Config {
             model,
             review_model: override_review_model,
             cwd,
+            config_toml_file: _config_toml_file,
+            no_config: _no_config,
             approval_policy: approval_policy_override,
             sandbox_mode,
             model_provider,
@@ -1305,6 +1732,7 @@ impl Config {
             show_raw_agent_reasoning,
             tools_web_search_request: override_tools_web_search_request,
             ephemeral,
+            project_doc_paths,
             additional_writable_roots,
         } = overrides;
 
@@ -1350,6 +1778,9 @@ impl Config {
                 }
             }
         };
+
+        let project_doc_paths = resolve_project_doc_paths(&project_doc_paths, &resolved_cwd)?;
+
         let additional_writable_roots: Vec<AbsolutePathBuf> = additional_writable_roots
             .into_iter()
             .map(|path| AbsolutePathBuf::resolve_path_against_base(path, &resolved_cwd))
@@ -1398,6 +1829,8 @@ impl Config {
             || config_profile.sandbox_mode.is_some()
             || cfg.sandbox_mode.is_some();
 
+        let exec_run_as = cfg.custom.exec.resolve_run_as()?;
+
         let mut model_providers = built_in_model_providers();
         // Merge user-defined providers into the built-in list.
         for (key, provider) in cfg.model_providers.into_iter() {
@@ -1418,7 +1851,30 @@ impl Config {
             })?
             .clone();
 
-        let shell_environment_policy = cfg.shell_environment_policy.into();
+        let shell_environment_policy = cfg
+            .custom
+            .assistant_shell_environment_policy
+            .clone()
+            .map(ShellEnvironmentPolicy::from)
+            .unwrap_or_else(|| ShellEnvironmentPolicy::from(cfg.shell_environment_policy));
+        if exec_run_as.is_some()
+            && matches!(
+                shell_environment_policy.inherit,
+                crate::config::types::ShellEnvironmentPolicyInherit::All
+            )
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "custom.exec is configured, but shell_environment_policy.inherit is 'all'; refusing because a model-run `env`/`printenv` would leak the invoker environment (set inherit = 'core' or 'none', or use include_only).",
+            ));
+        }
+
+        let user_shell_environment_policy = cfg
+            .custom
+            .user_shell_environment_policy
+            .clone()
+            .map(ShellEnvironmentPolicy::from)
+            .unwrap_or_else(|| shell_environment_policy.clone());
 
         let history = cfg.history.unwrap_or_default();
 
@@ -1550,9 +2006,11 @@ impl Config {
             approval_policy: constrained_approval_policy,
             sandbox_policy: constrained_sandbox_policy,
             enforce_residency,
+            exec_run_as,
             did_user_set_custom_approval_policy_or_sandbox_mode,
             forced_auto_mode_downgraded_on_windows,
             shell_environment_policy,
+            user_shell_environment_policy,
             notify: cfg.notify,
             user_instructions,
             base_instructions,
@@ -1582,6 +2040,7 @@ impl Config {
                     }
                 })
                 .collect(),
+            project_doc_paths,
             tool_output_token_limit: cfg.tool_output_token_limit,
             agent_max_threads,
             codex_home,
@@ -1764,11 +2223,22 @@ fn toml_uses_deprecated_instructions_file(value: &TomlValue) -> bool {
 /// specified by the `CODEX_HOME` environment variable. If not set, defaults to
 /// `~/.codex`.
 ///
-/// - If `CODEX_HOME` is set, the value must exist and be a directory. The
-///   value will be canonicalized and this function will Err otherwise.
+/// - If `CODEX_HOME` is set and exists, the value will be canonicalized.
+///   If it does not exist, the raw path is returned so callers can create it.
 /// - If `CODEX_HOME` is not set, this function does not verify that the
 ///   directory exists.
 pub fn find_codex_home() -> std::io::Result<PathBuf> {
+    if let Ok(val) = std::env::var("CODEX_HOME")
+        && !val.is_empty()
+    {
+        let path = PathBuf::from(val);
+        return if path.exists() {
+            path.canonicalize()
+        } else {
+            Ok(path)
+        };
+    }
+
     codex_utils_home_dir::find_codex_home()
 }
 
@@ -1797,10 +2267,49 @@ mod tests {
     use core_test_support::test_absolute_path;
     use pretty_assertions::assert_eq;
 
+    use serial_test::serial;
     use std::collections::BTreeMap;
     use std::collections::HashMap;
+    use std::ffi::OsString;
+    use std::sync::Mutex;
+    use std::sync::MutexGuard;
+    use std::sync::OnceLock;
     use std::time::Duration;
     use tempfile::TempDir;
+
+    struct EnvVarGuard {
+        _lock: MutexGuard<'static, ()>,
+        key: &'static str,
+        original: Option<OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+            let lock = ENV_LOCK.get_or_init(Mutex::default).lock().unwrap();
+            let original = std::env::var_os(key);
+            unsafe {
+                std::env::set_var(key, value);
+            }
+            Self {
+                _lock: lock,
+                key,
+                original,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            unsafe {
+                if let Some(original) = self.original.take() {
+                    std::env::set_var(self.key, original);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
 
     fn stdio_mcp(command: &str) -> McpServerConfig {
         McpServerConfig {
@@ -1869,6 +2378,33 @@ persistence = "none"
             }),
             history_no_persistence_cfg.history
         );
+    }
+
+    #[test]
+    #[serial]
+    fn find_codex_home_env_nonexistent_returns_raw_path() {
+        let tmp = TempDir::new().expect("temp dir");
+        let missing = tmp.path().join("missing-codex-home");
+        assert!(!missing.exists(), "missing path should not exist");
+
+        let _guard = EnvVarGuard::set("CODEX_HOME", &missing);
+        let got = find_codex_home().expect("find_codex_home ok");
+        assert_eq!(got, missing);
+    }
+
+    #[test]
+    #[serial]
+    fn find_codex_home_env_existing_canonicalizes() {
+        let tmp = TempDir::new().expect("temp dir");
+        let existing = tmp.path().join("codex-home");
+        std::fs::create_dir_all(&existing).expect("create existing codex home");
+
+        let expected = existing
+            .canonicalize()
+            .expect("canonicalize existing codex home");
+        let _guard = EnvVarGuard::set("CODEX_HOME", &existing);
+        let got = find_codex_home().expect("find_codex_home ok");
+        assert_eq!(got, expected);
     }
 
     #[test]
@@ -2239,6 +2775,111 @@ trust_level = "trusted"
         assert_eq!(
             config.cli_auth_credentials_store_mode,
             AuthCredentialsStoreMode::File,
+        );
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_exec_rejects_inherit_all_shell_environment_policy() {
+        use crate::config::types::ShellEnvironmentPolicyInherit;
+
+        let codex_home = TempDir::new().expect("tempdir");
+        let cfg = ConfigToml {
+            shell_environment_policy: ShellEnvironmentPolicyToml {
+                inherit: Some(ShellEnvironmentPolicyInherit::All),
+                ..Default::default()
+            },
+            custom: CustomConfigToml {
+                exec: CustomExecToml {
+                    worker_user: None,
+                    worker_uid: Some(1000),
+                    worker_gid: Some(1000),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let err = Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )
+        .expect_err("expected error");
+
+        assert_eq!(err.kind(), ErrorKind::InvalidInput);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn custom_exec_allows_inherit_core_shell_environment_policy() -> std::io::Result<()> {
+        use crate::config::types::ShellEnvironmentPolicyInherit;
+
+        let codex_home = TempDir::new()?;
+        let cfg = ConfigToml {
+            shell_environment_policy: ShellEnvironmentPolicyToml {
+                inherit: Some(ShellEnvironmentPolicyInherit::Core),
+                ..Default::default()
+            },
+            custom: CustomConfigToml {
+                exec: CustomExecToml {
+                    worker_user: None,
+                    worker_uid: Some(1000),
+                    worker_gid: Some(1000),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn custom_user_shell_environment_policy_overrides_user_shell_env() -> std::io::Result<()> {
+        let cfg: ConfigToml = toml::from_str(
+            r#"
+            [shell_environment_policy]
+            inherit = "none"
+            set = { HOME = "/home/assistant" }
+
+            [custom.user_shell_environment_policy]
+            inherit = "none"
+            set = { HOME = "/home/ubuntu" }
+        "#,
+        )
+        .expect("parse config toml");
+
+        let codex_home = TempDir::new()?;
+        let config = Config::load_from_base_config_with_overrides(
+            cfg,
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )?;
+
+        assert_eq!(
+            config
+                .shell_environment_policy
+                .r#set
+                .get("HOME")
+                .map(String::as_str),
+            Some("/home/assistant")
+        );
+        assert_eq!(
+            config
+                .user_shell_environment_policy
+                .r#set
+                .get("HOME")
+                .map(String::as_str),
+            Some("/home/ubuntu")
         );
 
         Ok(())
@@ -2633,9 +3274,7 @@ profile = "project"
 
         let overrides = LoaderOverrides {
             managed_config_path: Some(managed_path.clone()),
-            #[cfg(target_os = "macos")]
-            managed_preferences_base64: None,
-            macos_managed_config_requirements_base64: None,
+            ..Default::default()
         };
 
         let cwd = AbsolutePathBuf::try_from(codex_home.path())?;
@@ -2762,9 +3401,7 @@ profile = "project"
 
         let overrides = LoaderOverrides {
             managed_config_path: Some(managed_path),
-            #[cfg(target_os = "macos")]
-            managed_preferences_base64: None,
-            macos_managed_config_requirements_base64: None,
+            ..Default::default()
         };
 
         let cwd = AbsolutePathBuf::try_from(codex_home.path())?;
@@ -3784,9 +4421,11 @@ model_verbosity = "high"
                 approval_policy: Constrained::allow_any(AskForApproval::Never),
                 sandbox_policy: Constrained::allow_any(SandboxPolicy::new_read_only_policy()),
                 enforce_residency: Constrained::allow_any(None),
+                exec_run_as: None,
                 did_user_set_custom_approval_policy_or_sandbox_mode: true,
                 forced_auto_mode_downgraded_on_windows: false,
                 shell_environment_policy: ShellEnvironmentPolicy::default(),
+                user_shell_environment_policy: ShellEnvironmentPolicy::default(),
                 user_instructions: None,
                 notify: None,
                 cwd: fixture.cwd(),
@@ -3797,6 +4436,7 @@ model_verbosity = "high"
                 model_providers: fixture.model_provider_map.clone(),
                 project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
                 project_doc_fallback_filenames: Vec::new(),
+                project_doc_paths: Vec::new(),
                 tool_output_token_limit: None,
                 agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
                 codex_home: fixture.codex_home(),
@@ -3869,9 +4509,11 @@ model_verbosity = "high"
             approval_policy: Constrained::allow_any(AskForApproval::UnlessTrusted),
             sandbox_policy: Constrained::allow_any(SandboxPolicy::new_read_only_policy()),
             enforce_residency: Constrained::allow_any(None),
+            exec_run_as: None,
             did_user_set_custom_approval_policy_or_sandbox_mode: true,
             forced_auto_mode_downgraded_on_windows: false,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
+            user_shell_environment_policy: ShellEnvironmentPolicy::default(),
             user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
@@ -3882,6 +4524,7 @@ model_verbosity = "high"
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
             project_doc_fallback_filenames: Vec::new(),
+            project_doc_paths: Vec::new(),
             tool_output_token_limit: None,
             agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
             codex_home: fixture.codex_home(),
@@ -3969,9 +4612,11 @@ model_verbosity = "high"
             approval_policy: Constrained::allow_any(AskForApproval::OnFailure),
             sandbox_policy: Constrained::allow_any(SandboxPolicy::new_read_only_policy()),
             enforce_residency: Constrained::allow_any(None),
+            exec_run_as: None,
             did_user_set_custom_approval_policy_or_sandbox_mode: true,
             forced_auto_mode_downgraded_on_windows: false,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
+            user_shell_environment_policy: ShellEnvironmentPolicy::default(),
             user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
@@ -3982,6 +4627,7 @@ model_verbosity = "high"
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
             project_doc_fallback_filenames: Vec::new(),
+            project_doc_paths: Vec::new(),
             tool_output_token_limit: None,
             agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
             codex_home: fixture.codex_home(),
@@ -4055,9 +4701,11 @@ model_verbosity = "high"
             approval_policy: Constrained::allow_any(AskForApproval::OnFailure),
             sandbox_policy: Constrained::allow_any(SandboxPolicy::new_read_only_policy()),
             enforce_residency: Constrained::allow_any(None),
+            exec_run_as: None,
             did_user_set_custom_approval_policy_or_sandbox_mode: true,
             forced_auto_mode_downgraded_on_windows: false,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
+            user_shell_environment_policy: ShellEnvironmentPolicy::default(),
             user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
@@ -4068,6 +4716,7 @@ model_verbosity = "high"
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
             project_doc_fallback_filenames: Vec::new(),
+            project_doc_paths: Vec::new(),
             tool_output_token_limit: None,
             agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
             codex_home: fixture.codex_home(),

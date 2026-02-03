@@ -17,7 +17,13 @@ use toml::Value as TomlValue;
 #[derive(Debug, Default, Clone)]
 pub struct LoaderOverrides {
     pub managed_config_path: Option<PathBuf>,
-    //TODO(gt): Add a macos_ prefix to this field and remove the target_os check.
+    /// Overrides the path for the user config layer (normally `$CODEX_HOME/config.toml`).
+    pub user_config_path: Option<PathBuf>,
+    /// When true, the user config layer is omitted entirely.
+    pub disable_user_config: bool,
+    /// When true, project config layers (cwd + `.codex/` tree/repo) are omitted.
+    pub disable_project_config: bool,
+    // TODO(gt): Add a `macos_` prefix to this field and remove the target_os check.
     #[cfg(target_os = "macos")]
     pub managed_preferences_base64: Option<String>,
     pub macos_managed_config_requirements_base64: Option<String>,

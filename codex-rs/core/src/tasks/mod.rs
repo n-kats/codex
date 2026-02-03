@@ -125,8 +125,10 @@ impl Session {
 
         let cancellation_token = CancellationToken::new();
         let done = Arc::new(Notify::new());
+        let start_gate = Arc::new(Notify::new());
 
         let done_clone = Arc::clone(&done);
+        let start_gate_clone = Arc::clone(&start_gate);
         let handle = {
             let session_ctx = Arc::new(SessionTaskContext::new(Arc::clone(self)));
             let ctx = Arc::clone(&turn_context);
@@ -135,6 +137,9 @@ impl Session {
             let session_span = Span::current();
             tokio::spawn(
                 async move {
+                    // Ensure `ActiveTurn` is registered before any task events are emitted so
+                    // interrupts reliably abort the running turn.
+                    start_gate_clone.notified().await;
                     let ctx_for_finish = Arc::clone(&ctx);
                     let last_agent_message = task_for_run
                         .run(
@@ -173,6 +178,7 @@ impl Session {
             _timer: timer,
         };
         self.register_new_active_task(running_task).await;
+        start_gate.notify_one();
     }
 
     pub async fn abort_all_tasks(self: &Arc<Self>, reason: TurnAbortReason) {

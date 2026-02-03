@@ -27,6 +27,8 @@ pub enum SlashCommand {
     Init,
     Compact,
     Plan,
+    #[strum(serialize = "custom-agents")]
+    CustomAgents,
     Collab,
     Agent,
     // Undo,
@@ -62,6 +64,7 @@ impl SlashCommand {
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
+            SlashCommand::CustomAgents => "switch project AGENTS.md for this session",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::Ps => "list background terminals",
             SlashCommand::Model => "choose what model and reasoning effort to use",
@@ -112,6 +115,7 @@ impl SlashCommand {
             | SlashCommand::Experimental
             | SlashCommand::Review
             | SlashCommand::Plan
+            | SlashCommand::CustomAgents
             | SlashCommand::Logout => false,
             SlashCommand::Diff
             | SlashCommand::Rename

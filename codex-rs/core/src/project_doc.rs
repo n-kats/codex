@@ -39,8 +39,9 @@ const PROJECT_DOC_SEPARATOR: &str = "\n\n--- project-doc ---\n\n";
 pub(crate) async fn get_user_instructions(
     config: &Config,
     skills: Option<&[SkillMetadata]>,
-) -> Option<String> {
+) -> std::io::Result<Option<String>> {
     let project_docs = read_project_docs(config).await;
+    let strict_paths = !config.project_doc_paths.is_empty();
 
     let mut output = String::new();
 
@@ -56,9 +57,8 @@ pub(crate) async fn get_user_instructions(
             output.push_str(&docs);
         }
         Ok(None) => {}
-        Err(e) => {
-            error!("error trying to find project doc: {e:#}");
-        }
+        Err(e) if strict_paths => return Err(e),
+        Err(e) => error!("error trying to find project doc: {e:#}"),
     };
 
     let skills_section = skills.and_then(render_skills_section);
@@ -76,11 +76,7 @@ pub(crate) async fn get_user_instructions(
         output.push_str(HIERARCHICAL_AGENTS_MESSAGE);
     }
 
-    if !output.is_empty() {
-        Some(output)
-    } else {
-        None
-    }
+    Ok((!output.is_empty()).then_some(output))
 }
 
 /// Attempt to locate and load the project documentation.
@@ -91,6 +87,7 @@ pub(crate) async fn get_user_instructions(
 /// callers can decide how to handle them.
 pub async fn read_project_docs(config: &Config) -> std::io::Result<Option<String>> {
     let max_total = config.project_doc_max_bytes;
+    let strict_paths = !config.project_doc_paths.is_empty();
 
     if max_total == 0 {
         return Ok(None);
@@ -111,7 +108,8 @@ pub async fn read_project_docs(config: &Config) -> std::io::Result<Option<String
 
         let file = match tokio::fs::File::open(&p).await {
             Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !strict_paths => continue,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && strict_paths => return Err(e),
             Err(e) => return Err(e),
         };
 
@@ -148,6 +146,10 @@ pub async fn read_project_docs(config: &Config) -> std::io::Result<Option<String
 /// directory (inclusive). Symlinks are allowed. When `project_doc_max_bytes`
 /// is zero, returns an empty list.
 pub fn discover_project_doc_paths(config: &Config) -> std::io::Result<Vec<PathBuf>> {
+    if !config.project_doc_paths.is_empty() {
+        return Ok(config.project_doc_paths.clone());
+    }
+
     let mut dir = config.cwd.clone();
     if let Ok(canon) = normalize_path(&dir) {
         dir = canon;
@@ -280,7 +282,9 @@ mod tests {
     async fn no_doc_file_returns_none() {
         let tmp = tempfile::tempdir().expect("tempdir");
 
-        let res = get_user_instructions(&make_config(&tmp, 4096, None).await, None).await;
+        let res = get_user_instructions(&make_config(&tmp, 4096, None).await, None)
+            .await
+            .expect("get_user_instructions should succeed");
         assert!(
             res.is_none(),
             "Expected None when AGENTS.md is absent and no system instructions provided"
@@ -296,6 +300,7 @@ mod tests {
 
         let res = get_user_instructions(&make_config(&tmp, 4096, None).await, None)
             .await
+            .expect("get_user_instructions should succeed")
             .expect("doc expected");
 
         assert_eq!(
@@ -315,6 +320,7 @@ mod tests {
 
         let res = get_user_instructions(&make_config(&tmp, LIMIT, None).await, None)
             .await
+            .expect("get_user_instructions should succeed")
             .expect("doc expected");
 
         assert_eq!(res.len(), LIMIT, "doc should be truncated to LIMIT bytes");
@@ -347,6 +353,7 @@ mod tests {
 
         let res = get_user_instructions(&cfg, None)
             .await
+            .expect("get_user_instructions should succeed")
             .expect("doc expected");
         assert_eq!(res, "root level doc");
     }
@@ -357,7 +364,9 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         fs::write(tmp.path().join("AGENTS.md"), "something").unwrap();
 
-        let res = get_user_instructions(&make_config(&tmp, 0, None).await, None).await;
+        let res = get_user_instructions(&make_config(&tmp, 0, None).await, None)
+            .await
+            .expect("get_user_instructions should succeed");
         assert!(
             res.is_none(),
             "With limit 0 the function should return None"
@@ -375,6 +384,7 @@ mod tests {
 
         let res = get_user_instructions(&make_config(&tmp, 4096, Some(INSTRUCTIONS)).await, None)
             .await
+            .expect("get_user_instructions should succeed")
             .expect("should produce a combined instruction string");
 
         let expected = format!("{INSTRUCTIONS}{PROJECT_DOC_SEPARATOR}{}", "proj doc");
@@ -390,8 +400,9 @@ mod tests {
 
         const INSTRUCTIONS: &str = "some instructions";
 
-        let res =
-            get_user_instructions(&make_config(&tmp, 4096, Some(INSTRUCTIONS)).await, None).await;
+        let res = get_user_instructions(&make_config(&tmp, 4096, Some(INSTRUCTIONS)).await, None)
+            .await
+            .expect("get_user_instructions should succeed");
 
         assert_eq!(res, Some(INSTRUCTIONS.to_string()));
     }
@@ -422,6 +433,7 @@ mod tests {
 
         let res = get_user_instructions(&cfg, None)
             .await
+            .expect("get_user_instructions should succeed")
             .expect("doc expected");
         assert_eq!(res, "root doc\n\ncrate doc");
     }
@@ -437,6 +449,7 @@ mod tests {
 
         let res = get_user_instructions(&cfg, None)
             .await
+            .expect("get_user_instructions should succeed")
             .expect("local doc expected");
 
         assert_eq!(res, "local");
@@ -459,6 +472,7 @@ mod tests {
 
         let res = get_user_instructions(&cfg, None)
             .await
+            .expect("get_user_instructions should succeed")
             .expect("fallback doc expected");
 
         assert_eq!(res, "example instructions");
@@ -475,6 +489,7 @@ mod tests {
 
         let res = get_user_instructions(&cfg, None)
             .await
+            .expect("get_user_instructions should succeed")
             .expect("AGENTS.md should win");
 
         assert_eq!(res, "primary");
@@ -508,6 +523,7 @@ mod tests {
             skills.errors.is_empty().then_some(skills.skills.as_slice()),
         )
         .await
+        .expect("get_user_instructions should succeed")
         .expect("instructions expected");
         let expected_path = dunce::canonicalize(
             cfg.codex_home
@@ -535,6 +551,7 @@ mod tests {
             skills.errors.is_empty().then_some(skills.skills.as_slice()),
         )
         .await
+        .expect("get_user_instructions should succeed")
         .expect("instructions expected");
         let expected_path =
             dunce::canonicalize(cfg.codex_home.join("skills/linting/SKILL.md").as_path())
