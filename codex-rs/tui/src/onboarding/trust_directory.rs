@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use codex_core::config::set_project_trust_level;
+use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::git_info::resolve_root_git_project_for_trust;
 use codex_protocol::config_types::TrustLevel;
 use crossterm::event::KeyCode;
@@ -26,6 +26,7 @@ use crate::selection_list::selection_option_row;
 use super::onboarding_screen::StepState;
 pub(crate) struct TrustDirectoryWidget {
     pub codex_home: PathBuf,
+    pub config_toml_file: Option<PathBuf>,
     pub cwd: PathBuf,
     pub is_git_repo: bool,
     pub selection: Option<TrustDirectorySelection>,
@@ -154,7 +155,16 @@ impl TrustDirectoryWidget {
     fn handle_trust(&mut self) {
         let target =
             resolve_root_git_project_for_trust(&self.cwd).unwrap_or_else(|| self.cwd.clone());
-        if let Err(e) = set_project_trust_level(&self.codex_home, &target, TrustLevel::Trusted) {
+        let Some(config_path) = self.config_toml_file.clone() else {
+            self.error =
+                Some("Config persistence is disabled; cannot set trust level.".to_string());
+            return;
+        };
+        if let Err(e) = ConfigEditsBuilder::new(&self.codex_home)
+            .with_config_path(config_path)
+            .set_project_trust_level(&target, TrustLevel::Trusted)
+            .apply_blocking()
+        {
             tracing::error!("Failed to set project trusted: {e:?}");
             self.error = Some(format!("Failed to set trust for {}: {e}", target.display()));
         }
@@ -166,7 +176,16 @@ impl TrustDirectoryWidget {
         self.highlighted = TrustDirectorySelection::DontTrust;
         let target =
             resolve_root_git_project_for_trust(&self.cwd).unwrap_or_else(|| self.cwd.clone());
-        if let Err(e) = set_project_trust_level(&self.codex_home, &target, TrustLevel::Untrusted) {
+        let Some(config_path) = self.config_toml_file.clone() else {
+            self.error =
+                Some("Config persistence is disabled; cannot set trust level.".to_string());
+            return;
+        };
+        if let Err(e) = ConfigEditsBuilder::new(&self.codex_home)
+            .with_config_path(config_path)
+            .set_project_trust_level(&target, TrustLevel::Untrusted)
+            .apply_blocking()
+        {
             tracing::error!("Failed to set project untrusted: {e:?}");
             self.error = Some(format!(
                 "Failed to set untrusted for {}: {e}",
@@ -197,6 +216,7 @@ mod tests {
         let codex_home = TempDir::new().expect("temp home");
         let mut widget = TrustDirectoryWidget {
             codex_home: codex_home.path().to_path_buf(),
+            config_toml_file: Some(codex_home.path().join("config.toml")),
             cwd: PathBuf::from("."),
             is_git_repo: false,
             selection: None,
@@ -221,6 +241,7 @@ mod tests {
         let codex_home = TempDir::new().expect("temp home");
         let widget = TrustDirectoryWidget {
             codex_home: codex_home.path().to_path_buf(),
+            config_toml_file: Some(codex_home.path().join("config.toml")),
             cwd: PathBuf::from("/workspace/project"),
             is_git_repo: true,
             selection: None,

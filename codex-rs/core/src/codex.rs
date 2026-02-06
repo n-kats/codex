@@ -31,6 +31,7 @@ use crate::models_manager::manager::ModelsManager;
 use crate::parse_command::parse_command;
 use crate::parse_turn_item;
 use crate::rollout::session_index;
+use crate::spawn::RunAsUser;
 use crate::stream_events_utils::HandleOutputCtx;
 use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
@@ -526,6 +527,7 @@ pub(crate) struct TurnContext {
     pub(crate) sandbox_policy: SandboxPolicy,
     pub(crate) windows_sandbox_level: WindowsSandboxLevel,
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
+    pub(crate) exec_run_as: Option<RunAsUser>,
     pub(crate) tools_config: ToolsConfig,
     pub(crate) features: Features,
     pub(crate) ghost_snapshot: GhostSnapshotConfig,
@@ -817,6 +819,7 @@ impl Session {
             sandbox_policy: session_configuration.sandbox_policy.get().clone(),
             windows_sandbox_level: session_configuration.windows_sandbox_level,
             shell_environment_policy: per_turn_config.shell_environment_policy.clone(),
+            exec_run_as: per_turn_config.exec_run_as.clone(),
             tools_config,
             features: per_turn_config.features.clone(),
             ghost_snapshot: per_turn_config.ghost_snapshot.clone(),
@@ -1499,10 +1502,6 @@ impl Session {
             return None;
         }
         let previous = previous?;
-        if next.model_info.slug != previous.model_info.slug {
-            return None;
-        }
-
         // if a personality is specified and it's different from the previous one, build a personality update item
         if let Some(personality) = next.personality
             && next.personality != previous.personality
@@ -2637,6 +2636,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                 summary,
                 collaboration_mode,
                 personality,
+                ..
             } => {
                 let collaboration_mode = if let Some(collab_mode) = collaboration_mode {
                     collab_mode
@@ -3116,12 +3116,19 @@ mod handlers {
     }
 
     pub async fn list_custom_prompts(sess: &Session, sub_id: String) {
+        let cwd = {
+            let state = sess.state.lock().await;
+            state.session_configuration.cwd.clone()
+        };
+
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        if let Some(dir) = crate::custom_prompts::default_prompts_dir() {
+            dirs.push(dir);
+        }
+        dirs.extend(crate::custom_prompts::additional_prompts_dirs(&cwd));
+
         let custom_prompts: Vec<CustomPrompt> =
-            if let Some(dir) = crate::custom_prompts::default_prompts_dir() {
-                crate::custom_prompts::discover_prompts_in(&dir).await
-            } else {
-                Vec::new()
-            };
+            crate::custom_prompts::discover_prompts_in_dirs(&dirs).await;
 
         let event = Event {
             id: sub_id,
@@ -3521,6 +3528,7 @@ async fn spawn_review_thread(
         sandbox_policy: parent_turn_context.sandbox_policy.clone(),
         windows_sandbox_level: parent_turn_context.windows_sandbox_level,
         shell_environment_policy: parent_turn_context.shell_environment_policy.clone(),
+        exec_run_as: parent_turn_context.exec_run_as.clone(),
         cwd: parent_turn_context.cwd.clone(),
         final_output_json_schema: None,
         codex_linux_sandbox_exe: parent_turn_context.codex_linux_sandbox_exe.clone(),
@@ -6534,6 +6542,7 @@ mod tests {
             windows_sandbox_level: turn_context.windows_sandbox_level,
             justification: Some("test".to_string()),
             arg0: None,
+            run_as: None,
         };
 
         let params2 = ExecParams {
@@ -6545,6 +6554,7 @@ mod tests {
             windows_sandbox_level: turn_context.windows_sandbox_level,
             justification: params.justification.clone(),
             arg0: None,
+            run_as: None,
         };
 
         let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));

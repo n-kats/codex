@@ -25,6 +25,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use rand::Rng;
@@ -34,6 +35,7 @@ use tokio::sync::Mutex;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::sandboxing::SandboxPermissions;
+use crate::spawn::RunAsUser;
 
 mod async_watcher;
 mod errors;
@@ -41,6 +43,7 @@ mod head_tail_buffer;
 mod process;
 mod process_manager;
 
+use self::head_tail_buffer::HeadTailBuffer;
 pub(crate) use errors::UnifiedExecError;
 pub(crate) use process::UnifiedExecProcess;
 
@@ -122,23 +125,41 @@ impl ProcessStore {
 
 pub(crate) struct UnifiedExecProcessManager {
     process_store: Mutex<ProcessStore>,
+    #[cfg(unix)]
+    sudo_preflight: Mutex<Option<SudoPreflightState>>,
 }
 
 impl Default for UnifiedExecProcessManager {
     fn default() -> Self {
         Self {
             process_store: Mutex::new(ProcessStore::default()),
+            #[cfg(unix)]
+            sudo_preflight: Mutex::new(None),
         }
     }
 }
 
 struct ProcessEntry {
     process: Arc<UnifiedExecProcess>,
+    session_ref: Arc<Session>,
+    turn_ref: Arc<TurnContext>,
     call_id: String,
     process_id: String,
     command: Vec<String>,
     tty: bool,
+    cwd: PathBuf,
+    started_at: tokio::time::Instant,
+    transcript: Arc<Mutex<HeadTailBuffer>>,
+    end_emitted: Arc<AtomicBool>,
     last_used: tokio::time::Instant,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+struct SudoPreflightState {
+    run_as: RunAsUser,
+    result: Result<(), String>,
+    warned: bool,
 }
 
 pub(crate) fn clamp_yield_time(yield_time_ms: u64) -> u64 {

@@ -8,6 +8,7 @@ use crate::exec::ExecExpiration;
 use crate::sandboxing::CommandSpec;
 use crate::sandboxing::SandboxPermissions;
 use crate::shell::Shell;
+use crate::spawn::RunAsUser;
 use crate::tools::sandboxing::ToolError;
 use std::collections::HashMap;
 use std::path::Path;
@@ -23,6 +24,7 @@ pub(crate) fn build_command_spec(
     cwd: &Path,
     env: &HashMap<String, String>,
     expiration: ExecExpiration,
+    run_as: Option<RunAsUser>,
     sandbox_permissions: SandboxPermissions,
     justification: Option<String>,
 ) -> Result<CommandSpec, ToolError> {
@@ -35,6 +37,7 @@ pub(crate) fn build_command_spec(
         cwd: cwd.to_path_buf(),
         env: env.clone(),
         expiration,
+        run_as,
         sandbox_permissions,
         justification,
     })

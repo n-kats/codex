@@ -29,6 +29,7 @@ use crate::sandboxing::CommandSpec;
 use crate::sandboxing::ExecEnv;
 use crate::sandboxing::SandboxManager;
 use crate::sandboxing::SandboxPermissions;
+use crate::spawn::RunAsUser;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
 use crate::text_encoding::bytes_to_string_smart;
@@ -67,6 +68,7 @@ pub struct ExecParams {
     pub windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel,
     pub justification: Option<String>,
     pub arg0: Option<String>,
+    pub run_as: Option<RunAsUser>,
 }
 
 /// Mechanism to terminate an exec invocation before it finishes naturally.
@@ -175,6 +177,7 @@ pub async fn process_exec_tool_call(
         windows_sandbox_level,
         justification,
         arg0: _,
+        run_as,
     } = params;
 
     let (program, args) = command.split_first().ok_or_else(|| {
@@ -190,6 +193,7 @@ pub async fn process_exec_tool_call(
         cwd,
         env,
         expiration,
+        run_as,
         sandbox_permissions,
         justification,
     };
@@ -226,6 +230,7 @@ pub(crate) async fn execute_exec_env(
         sandbox_permissions,
         justification,
         arg0,
+        run_as,
     } = env;
 
     let params = ExecParams {
@@ -237,6 +242,7 @@ pub(crate) async fn execute_exec_env(
         windows_sandbox_level,
         justification,
         arg0,
+        run_as,
     };
 
     let start = Instant::now();
@@ -679,6 +685,7 @@ async fn exec(
         cwd,
         env,
         arg0,
+        run_as,
         expiration,
         windows_sandbox_level: _,
         ..
@@ -696,6 +703,7 @@ async fn exec(
         args.into(),
         arg0_ref,
         cwd,
+        run_as,
         sandbox_policy,
         StdioPolicy::RedirectForShellTool,
         env,
@@ -1041,21 +1049,39 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn kill_child_process_group_kills_grandchildren_on_timeout() -> Result<()> {
+        #[cfg(target_os = "linux")]
+        fn read_process_state(pid: i32) -> io::Result<Option<char>> {
+            let stat_path = format!("/proc/{pid}/stat");
+            let stat = match std::fs::read_to_string(stat_path) {
+                Ok(stat) => stat,
+                Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+                Err(err) => return Err(err),
+            };
+            let close = stat.rfind(") ").ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "Malformed /proc stat")
+            })?;
+            Ok(stat[close + 2..].chars().next())
+        }
+
         // On Linux/macOS, /bin/bash is typically present; on FreeBSD/OpenBSD,
         // prefer /bin/sh to avoid NotFound errors.
         #[cfg(any(target_os = "freebsd", target_os = "openbsd"))]
         let command = vec![
             "/bin/sh".to_string(),
             "-c".to_string(),
-            "sleep 60 & echo $!; sleep 60".to_string(),
+            "set +m; sleep 60 & echo $!; sleep 60".to_string(),
         ];
         #[cfg(all(unix, not(any(target_os = "freebsd", target_os = "openbsd"))))]
         let command = vec![
             "/bin/bash".to_string(),
             "-c".to_string(),
-            "sleep 60 & echo $!; sleep 60".to_string(),
+            "set +m; sleep 60 & echo $!; sleep 60".to_string(),
         ];
-        let env: HashMap<String, String> = std::env::vars().collect();
+        let mut env: HashMap<String, String> = std::env::vars().collect();
+        // Keep job control off to ensure the background process stays in the same group.
+        env.remove("BASH_ENV");
+        env.remove("ENV");
+        env.remove("SHELLOPTS");
         let params = ExecParams {
             command,
             cwd: std::env::current_dir()?,
@@ -1065,6 +1091,7 @@ mod tests {
             windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel::Disabled,
             justification: None,
             arg0: None,
+            run_as: None,
         };
 
         let output = exec(params, SandboxType::None, &SandboxPolicy::ReadOnly, None).await?;
@@ -1091,6 +1118,11 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
+        #[cfg(target_os = "linux")]
+        if !killed && matches!(read_process_state(pid)?, Some('Z')) {
+            killed = true;
+        }
+
         assert!(killed, "grandchild process with pid {pid} is still alive");
         Ok(())
     }
@@ -1111,6 +1143,7 @@ mod tests {
             windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel::Disabled,
             justification: None,
             arg0: None,
+            run_as: None,
         };
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(1_000)).await;

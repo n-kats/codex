@@ -30,6 +30,7 @@ use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::CollaborationModeListParams;
 use codex_app_server_protocol::CollaborationModeListResponse;
 use codex_app_server_protocol::CommandExecParams;
+use codex_app_server_protocol::ConfigLayerSource;
 use codex_app_server_protocol::ConversationGitInfo;
 use codex_app_server_protocol::ConversationSummary;
 use codex_app_server_protocol::DynamicToolSpec as ApiDynamicToolSpec;
@@ -245,6 +246,16 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 use uuid::Uuid;
+
+fn user_config_toml_path(config: &Config) -> Option<PathBuf> {
+    config
+        .config_layer_stack
+        .get_user_layer()
+        .and_then(|layer| match &layer.name {
+            ConfigLayerSource::User { file } => Some(file.as_path().to_path_buf()),
+            _ => None,
+        })
+}
 
 use crate::filters::compute_source_filters;
 use crate::filters::source_kind_matches;
@@ -1555,7 +1566,18 @@ impl CodexMessageProcessor {
             reasoning_effort,
         } = params;
 
+        let Some(config_path) = user_config_toml_path(&self.config) else {
+            let error = JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: "config persistence is disabled; cannot save model selection".to_string(),
+                data: None,
+            };
+            self.outgoing.send_error(request_id, error).await;
+            return;
+        };
+
         match ConfigEditsBuilder::new(&self.config.codex_home)
+            .with_config_path(config_path.as_path().to_path_buf())
             .with_profile(self.config.active_profile.as_deref())
             .set_model(model.as_deref(), reasoning_effort)
             .apply()
@@ -1610,6 +1632,7 @@ impl CodexMessageProcessor {
             windows_sandbox_level,
             justification: None,
             arg0: None,
+            run_as: None,
         };
 
         let requested_policy = params.sandbox_policy.map(|policy| policy.to_core());
@@ -4583,6 +4606,7 @@ impl CodexMessageProcessor {
                     summary: params.summary,
                     collaboration_mode: params.collaboration_mode,
                     personality: params.personality,
+                    project_doc_paths: None,
                 })
                 .await;
         }

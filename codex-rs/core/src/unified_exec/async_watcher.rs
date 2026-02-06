@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use tokio::sync::Mutex;
 use tokio::time::Duration;
@@ -112,6 +114,7 @@ pub(crate) fn spawn_exit_watcher(
     cwd: PathBuf,
     process_id: String,
     transcript: Arc<Mutex<HeadTailBuffer>>,
+    end_emitted: Arc<AtomicBool>,
     started_at: Instant,
 ) {
     let exit_token = process.cancellation_token();
@@ -120,6 +123,10 @@ pub(crate) fn spawn_exit_watcher(
     tokio::spawn(async move {
         exit_token.cancelled().await;
         output_drained.notified().await;
+
+        if end_emitted.swap(true, Ordering::SeqCst) {
+            return;
+        }
 
         let exit_code = process.exit_code().unwrap_or(-1);
         let duration = Instant::now().saturating_duration_since(started_at);

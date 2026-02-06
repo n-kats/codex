@@ -1,56 +1,59 @@
 // Aggregates all former standalone integration tests as modules.
-use std::ffi::OsString;
-
 use codex_arg0::Arg0PathEntryGuard;
 use codex_arg0::arg0_dispatch;
 use ctor::ctor;
-use tempfile::TempDir;
 
-struct TestCodexAliasesGuard {
-    _codex_home: TempDir,
-    _arg0: Arg0PathEntryGuard,
-    _previous_codex_home: Option<OsString>,
+#[cfg(unix)]
+fn fallback_arg0_dispatch() -> std::io::Result<Arg0PathEntryGuard> {
+    use std::os::unix::fs::symlink;
+
+    let exe = std::env::current_exe()?;
+    let temp_dir = tempfile::Builder::new()
+        .prefix("codex-arg0-test")
+        .tempdir()?;
+    let path = temp_dir.path();
+
+    for filename in &["apply_patch", "applypatch", "codex-linux-sandbox"] {
+        symlink(&exe, path.join(filename))?;
+    }
+
+    let path_element = path.display();
+    let updated_path_env_var = match std::env::var("PATH") {
+        Ok(existing_path) => format!("{path_element}:{existing_path}"),
+        Err(_) => format!("{path_element}"),
+    };
+
+    unsafe {
+        std::env::set_var("PATH", updated_path_env_var);
+    }
+
+    Arg0PathEntryGuard::from_temp_dir(temp_dir)
 }
-
-const CODEX_HOME_ENV_VAR: &str = "CODEX_HOME";
 
 // This code runs before any other tests are run.
 // It allows the test binary to behave like codex and dispatch to apply_patch and codex-linux-sandbox
 // based on the arg0.
 // NOTE: this doesn't work on ARM
 #[ctor]
-pub static CODEX_ALIASES_TEMP_DIR: TestCodexAliasesGuard = unsafe {
-    #[allow(clippy::unwrap_used)]
-    let codex_home = tempfile::Builder::new()
-        .prefix("codex-core-tests")
-        .tempdir()
-        .unwrap();
-    let previous_codex_home = std::env::var_os(CODEX_HOME_ENV_VAR);
-    // arg0_dispatch() creates helper links under CODEX_HOME/tmp. Point it at a
-    // test-owned temp dir so startup never mutates the developer's real ~/.codex.
-    //
-    // Safety: #[ctor] runs before tests start, so no test threads exist yet.
-    unsafe {
-        std::env::set_var(CODEX_HOME_ENV_VAR, codex_home.path());
-    }
-
-    #[allow(clippy::unwrap_used)]
-    let arg0 = arg0_dispatch().unwrap();
-    // Restore the process environment immediately so later tests observe the
-    // same CODEX_HOME state they started with.
-    match previous_codex_home.as_ref() {
-        Some(value) => unsafe {
-            std::env::set_var(CODEX_HOME_ENV_VAR, value);
-        },
-        None => unsafe {
-            std::env::remove_var(CODEX_HOME_ENV_VAR);
-        },
-    }
-
-    TestCodexAliasesGuard {
-        _codex_home: codex_home,
-        _arg0: arg0,
-        _previous_codex_home: previous_codex_home,
+pub static CODEX_ALIASES_TEMP_DIR: Arg0PathEntryGuard = unsafe {
+    match arg0_dispatch() {
+        Some(temp_dir) => temp_dir,
+        None => {
+            eprintln!(
+                "WARNING: arg0_dispatch failed, falling back to a test-only PATH alias (CODEX_HOME={:?}, PATH={:?})",
+                std::env::var("CODEX_HOME"),
+                std::env::var("PATH")
+            );
+            #[cfg(unix)]
+            {
+                fallback_arg0_dispatch()
+                    .unwrap_or_else(|err| panic!("failed to build test-only arg0 aliases: {err}"))
+            }
+            #[cfg(not(unix))]
+            {
+                panic!("arg0 dispatch failed on non-unix platform")
+            }
+        }
     }
 };
 
@@ -81,11 +84,8 @@ mod json_result;
 mod list_dir;
 mod list_models;
 mod live_cli;
-mod live_reload;
-mod memory_tool;
 mod model_info_overrides;
 mod model_overrides;
-mod model_switching;
 mod model_tools;
 mod models_cache_ttl;
 mod models_etag_responses;

@@ -40,6 +40,7 @@ where
         args,
         arg0,
         command_cwd,
+        None,
         sandbox_policy,
         stdio_policy,
         env,

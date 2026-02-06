@@ -140,7 +140,7 @@ pub(crate) async fn execute_user_shell_command(
         command: exec_command.clone(),
         cwd: cwd.clone(),
         env: create_env(
-            &turn_context.shell_environment_policy,
+            &turn_context.config.user_shell_environment_policy,
             Some(session.conversation_id),
         ),
         // TODO(zhao-oai): Now that we have ExecExpiration::Cancellation, we
@@ -148,6 +148,7 @@ pub(crate) async fn execute_user_shell_command(
         expiration: USER_SHELL_TIMEOUT_MS.into(),
         sandbox: SandboxType::None,
         windows_sandbox_level: turn_context.windows_sandbox_level,
+        run_as: turn_context.exec_run_as.clone(),
         sandbox_permissions: SandboxPermissions::UseDefault,
         justification: None,
         arg0: None,

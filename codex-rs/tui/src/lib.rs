@@ -20,12 +20,14 @@ use codex_core::auth::enforce_login_restrictions;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::ConfigToml;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_overrides;
 use codex_core::config::resolve_oss_provider;
 use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::config_loader::ConfigLoadError;
+use codex_core::config_loader::LoaderOverrides;
 use codex_core::config_loader::format_config_error_with_source;
+use codex_core::config_loader::load_config_layers_state;
 use codex_core::default_client::set_default_client_residency_requirement;
 use codex_core::find_thread_path_by_id_str;
 use codex_core::find_thread_path_by_name_str;
@@ -41,9 +43,11 @@ use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::RolloutLine;
 use codex_state::log_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_absolute_path::AbsolutePathBufGuard;
 use cwd_prompt::CwdPromptAction;
 use cwd_prompt::CwdSelection;
 use std::fs::OpenOptions;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
 use tracing::error;
@@ -123,9 +127,59 @@ pub use public_widgets::composer_input::ComposerAction;
 pub use public_widgets::composer_input::ComposerInput;
 // (tests access modules directly within the crate)
 
+pub(crate) fn user_config_toml_path(config: &Config) -> Option<PathBuf> {
+    config
+        .config_layer_stack
+        .get_user_layer()
+        .and_then(|layer| match &layer.name {
+            codex_app_server_protocol::ConfigLayerSource::User { file } => {
+                Some(file.as_path().to_path_buf())
+            }
+            _ => None,
+        })
+}
+
+fn loader_overrides_from_cli(cli: &Cli) -> std::io::Result<LoaderOverrides> {
+    let mut loader_overrides = LoaderOverrides::default();
+    if cli.no_config {
+        loader_overrides.disable_user_config = true;
+        loader_overrides.disable_project_config = true;
+    } else if let Some(path) = &cli.config_toml_file {
+        let resolved = if path.is_absolute() {
+            path.clone()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        loader_overrides.user_config_path = Some(resolved);
+    }
+    Ok(loader_overrides)
+}
+
+async fn load_config_toml_with_loader_overrides(
+    codex_home: &Path,
+    cwd: &AbsolutePathBuf,
+    cli_overrides: Vec<(String, toml::Value)>,
+    loader_overrides: LoaderOverrides,
+) -> std::io::Result<ConfigToml> {
+    let config_layer_stack = load_config_layers_state(
+        codex_home,
+        Some(cwd.clone()),
+        &cli_overrides,
+        loader_overrides,
+        CloudRequirementsLoader::default(),
+    )
+    .await?;
+    let merged_toml = config_layer_stack.effective_config();
+    let _guard = AbsolutePathBufGuard::new(codex_home);
+    merged_toml
+        .try_into()
+        .map_err(|err| std::io::Error::new(ErrorKind::InvalidData, err))
+}
+
 pub async fn run_main(
     mut cli: Cli,
     codex_linux_sandbox_exe: Option<PathBuf>,
+    _agents_md: Vec<PathBuf>,
 ) -> std::io::Result<AppExitInfo> {
     let (sandbox_mode, approval_policy) = if cli.full_auto {
         (
@@ -182,11 +236,14 @@ pub async fn run_main(
         None => AbsolutePathBuf::current_dir()?,
     };
 
+    let loader_overrides_for_toml = loader_overrides_from_cli(&cli)?;
+
     #[allow(clippy::print_stderr)]
-    let config_toml = match load_config_as_toml_with_cli_overrides(
+    let config_toml = match load_config_toml_with_loader_overrides(
         &codex_home,
         &config_cwd,
         cli_kv_overrides.clone(),
+        loader_overrides_for_toml.clone(),
     )
     .await
     {
@@ -280,6 +337,7 @@ pub async fn run_main(
     let config = load_config_or_exit(
         cli_kv_overrides.clone(),
         overrides.clone(),
+        loader_overrides_for_toml.clone(),
         cloud_requirements.clone(),
     )
     .await;
@@ -469,6 +527,7 @@ async fn run_ratatui_app(
     let should_show_onboarding =
         should_show_onboarding(login_status, &initial_config, should_show_trust_screen_flag);
 
+    let loader_overrides_for_runtime = loader_overrides_from_cli(&cli)?;
     let config = if should_show_onboarding {
         let show_login_screen = should_show_login_screen(login_status, &initial_config);
         let onboarding_result = run_onboarding_app(
@@ -510,6 +569,7 @@ async fn run_ratatui_app(
             load_config_or_exit(
                 cli_kv_overrides.clone(),
                 overrides.clone(),
+                loader_overrides_for_runtime.clone(),
                 cloud_requirements.clone(),
             )
             .await
@@ -672,6 +732,7 @@ async fn run_ratatui_app(
             load_config_or_exit_with_fallback_cwd(
                 cli_kv_overrides.clone(),
                 overrides.clone(),
+                loader_overrides_for_runtime.clone(),
                 cloud_requirements.clone(),
                 fallback_cwd,
             )
@@ -856,15 +917,23 @@ fn get_login_status(config: &Config) -> LoginStatus {
 async fn load_config_or_exit(
     cli_kv_overrides: Vec<(String, toml::Value)>,
     overrides: ConfigOverrides,
+    loader_overrides: LoaderOverrides,
     cloud_requirements: CloudRequirementsLoader,
 ) -> Config {
-    load_config_or_exit_with_fallback_cwd(cli_kv_overrides, overrides, cloud_requirements, None)
-        .await
+    load_config_or_exit_with_fallback_cwd(
+        cli_kv_overrides,
+        overrides,
+        loader_overrides,
+        cloud_requirements,
+        None,
+    )
+    .await
 }
 
 async fn load_config_or_exit_with_fallback_cwd(
     cli_kv_overrides: Vec<(String, toml::Value)>,
     overrides: ConfigOverrides,
+    loader_overrides: LoaderOverrides,
     cloud_requirements: CloudRequirementsLoader,
     fallback_cwd: Option<PathBuf>,
 ) -> Config {
@@ -872,6 +941,7 @@ async fn load_config_or_exit_with_fallback_cwd(
     match ConfigBuilder::default()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
+        .loader_overrides(loader_overrides)
         .cloud_requirements(cloud_requirements)
         .fallback_cwd(fallback_cwd)
         .build()

@@ -186,6 +186,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             &req.cwd,
             &req.env,
             ExecExpiration::DefaultTimeout,
+            ctx.turn.exec_run_as.clone(),
             req.sandbox_permissions,
             req.justification.clone(),
         )
@@ -193,6 +194,22 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
         let exec_env = attempt
             .env_for(spec)
             .map_err(|err| ToolError::Codex(err.into()))?;
+        if let Some(run_as) = exec_env.run_as.clone() {
+            if let Some(message) = self
+                .manager
+                .exec_command_sudo_worker_user_startup_warning(run_as)
+                .await
+            {
+                ctx.session
+                    .record_model_warning(
+                        format!(
+                            "exec_command requires passwordless sudo to run as the configured worker user: {message}"
+                        ),
+                        ctx.turn,
+                    )
+                    .await;
+            }
+        }
         self.manager
             .open_session_with_exec_env(&exec_env, req.tty)
             .await

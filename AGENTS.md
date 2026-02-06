@@ -152,3 +152,7 @@ These guidelines apply to app-server protocol work in `codex-rs`, especially:
   `just write-app-server-schema`
   (and `just write-app-server-schema --experimental` when experimental API fixtures are affected).
 - Validate with `cargo test -p codex-app-server-protocol`.
+
+## カスタマイズ
+
+- 必ず `CUSTOM.md` を参照し、その方針に従うこと。

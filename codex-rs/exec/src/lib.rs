@@ -25,11 +25,14 @@ use codex_core::auth::enforce_login_restrictions;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::ConfigToml;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_overrides;
 use codex_core::config::resolve_oss_provider;
+use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::config_loader::ConfigLoadError;
+use codex_core::config_loader::LoaderOverrides;
 use codex_core::config_loader::format_config_error_with_source;
+use codex_core::config_loader::load_config_layers_state;
 use codex_core::git_info::get_git_repo_root;
 use codex_core::models_manager::manager::RefreshStrategy;
 use codex_core::protocol::AskForApproval;
@@ -43,12 +46,14 @@ use codex_protocol::approvals::ElicitationAction;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_absolute_path::AbsolutePathBufGuard;
 use event_processor_with_human_output::EventProcessorWithHumanOutput;
 use event_processor_with_jsonl_output::EventProcessorWithJsonOutput;
 use serde_json::Value;
 use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::io::Read;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use supports_color::Stream;
@@ -86,7 +91,32 @@ struct ThreadEventEnvelope {
     event: Event,
 }
 
-pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()> {
+async fn load_config_toml_with_loader_overrides(
+    codex_home: &Path,
+    cwd: &AbsolutePathBuf,
+    cli_overrides: Vec<(String, toml::Value)>,
+    loader_overrides: LoaderOverrides,
+) -> std::io::Result<ConfigToml> {
+    let config_layer_stack = load_config_layers_state(
+        codex_home,
+        Some(cwd.clone()),
+        &cli_overrides,
+        loader_overrides,
+        CloudRequirementsLoader::default(),
+    )
+    .await?;
+    let merged_toml = config_layer_stack.effective_config();
+    let _guard = AbsolutePathBufGuard::new(codex_home);
+    merged_toml
+        .try_into()
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+}
+
+pub async fn run_main(
+    cli: Cli,
+    codex_linux_sandbox_exe: Option<PathBuf>,
+    _agents_md: Vec<PathBuf>,
+) -> anyhow::Result<()> {
     if let Err(err) = set_default_originator("codex_exec".to_string()) {
         tracing::warn!(?err, "Failed to set codex exec originator override {err:?}");
     }
@@ -103,13 +133,15 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         cwd,
         skip_git_repo_check,
         add_dir,
-        ephemeral,
         color,
         last_message_file,
         json: json_mode,
         sandbox_mode: sandbox_mode_cli_arg,
         prompt,
         output_schema: output_schema_path,
+        config_toml_file,
+        no_config,
+        ephemeral,
         config_overrides,
     } = cli;
 
@@ -169,11 +201,25 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         }
     };
 
+    let mut loader_overrides = LoaderOverrides::default();
+    if no_config {
+        loader_overrides.disable_user_config = true;
+        loader_overrides.disable_project_config = true;
+    } else if let Some(path) = &config_toml_file {
+        let resolved = if path.is_absolute() {
+            path.clone()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        loader_overrides.user_config_path = Some(resolved);
+    }
+
     #[allow(clippy::print_stderr)]
-    let config_toml = match load_config_as_toml_with_cli_overrides(
+    let config_toml = match load_config_toml_with_loader_overrides(
         &codex_home,
         &config_cwd,
         cli_kv_overrides.clone(),
+        loader_overrides.clone(),
     )
     .await
     {
@@ -262,6 +308,7 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     let config = ConfigBuilder::default()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
+        .loader_overrides(loader_overrides)
         .cloud_requirements(cloud_requirements)
         .build()
         .await?;
@@ -304,7 +351,6 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
             last_message_file.clone(),
         )),
     };
-
     if oss {
         // We're in the oss section, so provider_id should be Some
         // Let's handle None case gracefully though just in case

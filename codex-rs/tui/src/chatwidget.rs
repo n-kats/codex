@@ -3031,8 +3031,6 @@ impl ChatWidget {
                         mention_paths: self.bottom_pane.take_mention_paths(),
                     };
                     if self.is_session_configured() {
-                        // Submitted is only emitted when steer is enabled (Enter sends immediately).
-                        // Reset any reasoning header only when we are actually submitting a turn.
                         self.reasoning_buffer.clear();
                         self.full_reasoning_buffer.clear();
                         self.set_status_header(String::from("Working"));
@@ -3158,6 +3156,12 @@ impl ChatWidget {
                 }
                 const INIT_PROMPT: &str = include_str!("../prompt_for_init_command.md");
                 self.submit_user_message(INIT_PROMPT.to_string().into());
+            }
+            SlashCommand::CustomAgents => {
+                self.add_info_message(
+                    "Usage: /custom-agents <path> [path...] | /custom-agents clear".to_string(),
+                    None,
+                );
             }
             SlashCommand::Compact => {
                 self.clear_token_usage();
@@ -3430,6 +3434,10 @@ impl ChatWidget {
                 } else {
                     self.queue_user_message(user_message);
                 }
+            }
+            SlashCommand::CustomAgents => {
+                let message = "Custom AGENTS.md paths are no longer supported. Use AGENTS.override.md in your repo or update project docs in config.toml.";
+                self.add_info_message(message.to_string(), None);
             }
             SlashCommand::Review if !trimmed.is_empty() => {
                 let Some((prepared_args, _prepared_elements)) =
@@ -4434,6 +4442,7 @@ impl ChatWidget {
                 summary: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             }));
             tx.send(AppEvent::UpdateModel(switch_model.clone()));
             tx.send(AppEvent::UpdateReasoningEffort(Some(default_effort)));
@@ -4554,6 +4563,7 @@ impl ChatWidget {
                         collaboration_mode: None,
                         windows_sandbox_level: None,
                         personality: Some(personality),
+                        project_doc_paths: None,
                     }));
                     tx.send(AppEvent::UpdatePersonality(personality));
                     tx.send(AppEvent::PersistPersonalitySelection { personality });
@@ -4825,6 +4835,7 @@ impl ChatWidget {
                 summary: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             }));
             tx.send(AppEvent::UpdateModel(model_for_action.clone()));
             tx.send(AppEvent::UpdateReasoningEffort(effort_for_action));
@@ -4999,6 +5010,7 @@ impl ChatWidget {
                 summary: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             }));
         self.app_event_tx.send(AppEvent::UpdateModel(model.clone()));
         self.app_event_tx
@@ -5188,6 +5200,7 @@ impl ChatWidget {
                 summary: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             }));
             tx.send(AppEvent::UpdateAskForApprovalPolicy(approval));
             tx.send(AppEvent::UpdateSandboxPolicy(sandbox_clone));
