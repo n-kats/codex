@@ -136,7 +136,6 @@ use super::skill_popup::SkillPopup;
 use super::slash_commands;
 use crate::bottom_pane::paste_burst::FlushResult;
 use crate::bottom_pane::prompt_args::expand_custom_prompt;
-use crate::bottom_pane::prompt_args::expand_if_numeric_with_positional_args;
 use crate::bottom_pane::prompt_args::parse_slash_name;
 use crate::bottom_pane::prompt_args::prompt_argument_names;
 use crate::bottom_pane::prompt_args::prompt_command_with_arg_placeholders;
@@ -202,20 +201,8 @@ struct AttachedImage {
     path: PathBuf,
 }
 
-enum PromptSelectionMode {
-    Completion,
-    Submit,
-}
-
 enum PromptSelectionAction {
-    Insert {
-        text: String,
-        cursor: Option<usize>,
-    },
-    Submit {
-        text: String,
-        text_elements: Vec<TextElement>,
-    },
+    Insert { text: String, cursor: Option<usize> },
 }
 
 /// Feature flags for reusing the chat composer in other bottom-pane surfaces.
@@ -1081,19 +1068,13 @@ impl ChatComposer {
                         }
                         CommandItem::UserPrompt(idx) => {
                             if let Some(prompt) = popup.prompt(idx) {
-                                match prompt_selection_action(
-                                    prompt,
-                                    first_line,
-                                    PromptSelectionMode::Completion,
-                                    &self.textarea.text_elements(),
-                                ) {
+                                match prompt_selection_action(prompt, first_line) {
                                     PromptSelectionAction::Insert { text, cursor } => {
                                         let target = cursor.unwrap_or(text.len());
                                         // Inserted prompt text is plain input; discard any elements.
                                         self.textarea.set_text_clearing_elements(&text);
                                         cursor_target = Some(target);
                                     }
-                                    PromptSelectionAction::Submit { .. } => {}
                                 }
                             }
                         }
@@ -1118,20 +1099,12 @@ impl ChatComposer {
                         }
                         CommandItem::UserPrompt(idx) => {
                             if let Some(prompt) = popup.prompt(idx) {
-                                match prompt_selection_action(
-                                    prompt,
-                                    first_line,
-                                    PromptSelectionMode::Completion,
-                                    &self.textarea.text_elements(),
-                                ) {
+                                match prompt_selection_action(prompt, first_line) {
                                     PromptSelectionAction::Insert { text, cursor } => {
                                         let target = cursor.unwrap_or(text.len());
                                         // Inserted prompt text is plain input; discard any elements.
                                         self.textarea.set_text_clearing_elements(&text);
                                         self.textarea.set_cursor(target);
-                                        return (InputResult::None, true);
-                                    }
-                                    PromptSelectionAction::Submit { .. } => {
                                         return (InputResult::None, true);
                                     }
                                 }
@@ -3364,60 +3337,32 @@ impl ChatComposer {
     }
 }
 
-fn prompt_selection_action(
-    prompt: &CustomPrompt,
-    first_line: &str,
-    mode: PromptSelectionMode,
-    text_elements: &[TextElement],
-) -> PromptSelectionAction {
+fn prompt_selection_action(prompt: &CustomPrompt, first_line: &str) -> PromptSelectionAction {
     let named_args = prompt_argument_names(&prompt.content);
     let has_numeric = prompt_has_numeric_placeholders(&prompt.content);
 
-    match mode {
-        PromptSelectionMode::Completion => {
-            if !named_args.is_empty() {
-                let (text, cursor) =
-                    prompt_command_with_arg_placeholders(&prompt.name, &named_args);
-                return PromptSelectionAction::Insert {
-                    text,
-                    cursor: Some(cursor),
-                };
-            }
-            if has_numeric {
-                let text = format!("/{PROMPTS_CMD_PREFIX}:{} ", prompt.name);
-                return PromptSelectionAction::Insert { text, cursor: None };
-            }
-            let text = format!("/{PROMPTS_CMD_PREFIX}:{}", prompt.name);
-            PromptSelectionAction::Insert { text, cursor: None }
-        }
-        PromptSelectionMode::Submit => {
-            if !named_args.is_empty() {
-                let (text, cursor) =
-                    prompt_command_with_arg_placeholders(&prompt.name, &named_args);
-                return PromptSelectionAction::Insert {
-                    text,
-                    cursor: Some(cursor),
-                };
-            }
-            if has_numeric {
-                if let Some(expanded) =
-                    expand_if_numeric_with_positional_args(prompt, first_line, text_elements)
-                {
-                    return PromptSelectionAction::Submit {
-                        text: expanded.text,
-                        text_elements: expanded.text_elements,
-                    };
-                }
-                let text = format!("/{PROMPTS_CMD_PREFIX}:{} ", prompt.name);
-                return PromptSelectionAction::Insert { text, cursor: None };
-            }
-            PromptSelectionAction::Submit {
-                text: prompt.content.clone(),
-                // By now we know this custom prompt has no args, so no text elements to preserve.
-                text_elements: Vec::new(),
-            }
-        }
+    if !named_args.is_empty() {
+        let (text, cursor) = prompt_command_with_arg_placeholders(&prompt.name, &named_args);
+        return PromptSelectionAction::Insert {
+            text,
+            cursor: Some(cursor),
+        };
     }
+    if has_numeric {
+        // Keep typed positional args when selecting the same /prompts:<name> entry.
+        if let Some((name, _, _)) = parse_slash_name(first_line)
+            && name == format!("{PROMPTS_CMD_PREFIX}:{}", prompt.name)
+        {
+            return PromptSelectionAction::Insert {
+                text: first_line.to_string(),
+                cursor: Some(first_line.len()),
+            };
+        }
+        let text = format!("/{PROMPTS_CMD_PREFIX}:{} ", prompt.name);
+        return PromptSelectionAction::Insert { text, cursor: None };
+    }
+    let text = format!("/{PROMPTS_CMD_PREFIX}:{}", prompt.name);
+    PromptSelectionAction::Insert { text, cursor: None }
 }
 
 #[cfg(test)]
@@ -3437,6 +3382,7 @@ mod tests {
     use crate::bottom_pane::chat_composer::AttachedImage;
     use crate::bottom_pane::chat_composer::LARGE_PASTE_CHAR_THRESHOLD;
     use crate::bottom_pane::prompt_args::PromptArg;
+    use crate::bottom_pane::prompt_args::expand_if_numeric_with_positional_args;
     use crate::bottom_pane::prompt_args::extract_positional_args_for_prompt_line;
     use crate::bottom_pane::textarea::TextArea;
     use tokio::sync::mpsc::unbounded_channel;
@@ -4434,8 +4380,8 @@ mod tests {
         assert_eq!(composer.textarea.text(), "hi\nthere");
     }
 
-    /// Behavior: even if Enter suppression would normally be active for a burst, Enter should
-    /// still dispatch a built-in slash command when the first line begins with `/`.
+    /// Behavior: even if Enter suppression would normally be active for a burst, a submit key
+    /// should still dispatch a built-in slash command when the first line begins with `/`.
     #[test]
     fn slash_context_enter_ignores_paste_burst_enter_suppression() {
         use crate::slash_command::SlashCommand;
@@ -4460,7 +4406,7 @@ mod tests {
             .begin_with_retro_grabbed(String::new(), Instant::now());
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(matches!(result, InputResult::Command(SlashCommand::Diff)));
     }
 
@@ -5189,7 +5135,7 @@ mod tests {
         composer.attach_image(PathBuf::from("/tmp/plan.png"));
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         match result {
             InputResult::CommandWithArgs(cmd, args, text_elements) => {
@@ -5547,7 +5493,7 @@ mod tests {
         composer.attach_image(path.clone());
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(matches!(result, InputResult::Submitted { .. }));
 
         composer.set_text_content(String::new(), Vec::new(), Vec::new());
@@ -5741,7 +5687,7 @@ mod tests {
             .clone();
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(matches!(result, InputResult::None));
         assert_eq!(composer.pending_pastes.len(), 1);
         assert_eq!(composer.textarea.text(), format!("/unknown {placeholder}"));
@@ -6857,7 +6803,7 @@ mod tests {
     }
 
     #[test]
-    fn selecting_custom_prompt_with_positional_args_submits_numeric_expansion() {
+    fn expand_numeric_prompt_with_positional_args_produces_expected_text() {
         let prompt_text = "Header: $1\nArgs: $ARGUMENTS\n";
 
         let prompt = CustomPrompt {
@@ -6868,22 +6814,11 @@ mod tests {
             argument_hint: None,
         };
 
-        let action = prompt_selection_action(
-            &prompt,
-            "/prompts:my-prompt foo bar",
-            PromptSelectionMode::Submit,
-            &[],
-        );
-        match action {
-            PromptSelectionAction::Submit {
-                text,
-                text_elements,
-            } => {
-                assert_eq!(text, "Header: foo\nArgs: foo bar\n");
-                assert!(text_elements.is_empty());
-            }
-            _ => panic!("expected Submit action"),
-        }
+        let expanded =
+            expand_if_numeric_with_positional_args(&prompt, "/prompts:my-prompt foo bar", &[])
+                .expect("expected numeric prompt expansion");
+        assert_eq!(expanded.text, "Header: foo\nArgs: foo bar\n");
+        assert!(expanded.text_elements.is_empty());
     }
 
     #[test]
@@ -6955,7 +6890,7 @@ mod tests {
         // With no args typed, selecting the prompt inserts the command template
         // and does not submit immediately.
         assert_eq!(InputResult::None, result);
-        assert_eq!("/prompts:p ", composer.textarea.text());
+        assert_eq!("/prompts:p", composer.textarea.text());
     }
 
     #[test]

@@ -2633,7 +2633,7 @@ async fn plan_slash_command_with_args_submits_prompt_in_plan_mode() {
 
     chat.bottom_pane
         .set_composer_text("/plan build the plan".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -2798,7 +2798,7 @@ async fn collab_mode_toggle_on_applies_default_preset() {
 
     chat.bottom_pane
         .set_composer_text("before toggle".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode: None,
@@ -2812,7 +2812,7 @@ async fn collab_mode_toggle_on_applies_default_preset() {
 
     chat.bottom_pane
         .set_composer_text("after toggle".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode:

@@ -273,6 +273,7 @@ pub fn prompt_has_numeric_placeholders(content: &str) -> bool {
 
 /// Extract positional arguments from a composer first line like "/name a b" for a given prompt name.
 /// Returns empty when the command name does not match or when there are no args.
+#[cfg(test)]
 pub fn extract_positional_args_for_prompt_line(
     line: &str,
     prompt_name: &str,
@@ -313,6 +314,7 @@ pub fn extract_positional_args_for_prompt_line(
 
 /// If the prompt only uses numeric placeholders and the first line contains
 /// positional args for it, expand and return Some(expanded); otherwise None.
+#[cfg(test)]
 pub fn expand_if_numeric_with_positional_args(
     prompt: &CustomPrompt,
     first_line: &str,
