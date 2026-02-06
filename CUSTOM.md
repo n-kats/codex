@@ -65,7 +65,7 @@
 - `_docs/custom_notes/codex_home_cli_flag/README.md`: `--codex-home` / `CODEX_HOME` の上書き（ホーム切替・テスト用ホーム運用）
 - `_docs/custom_notes/additional_prompt_dirs/README.md`: `CODEX_ADDITIONAL_PROMPT_DIRS`（カスタムプロンプト探索パス）
 - `_docs/custom_notes/tui-enter-newline-ctrl-enter-send/README.md`: TUI（tui）入力キー（Enter=改行、Ctrl+Enter/Ctrl+J=送信）と関連テスト
-- `_docs/custom_notes/tui2_input_submit_behavior_tests/README.md`: TUI2（tui2）入力キーと送信挙動、`/prompts:` の引数なし挙動、関連テスト
+- `_docs/custom_notes/tui2_input_submit_behavior_tests/README.md`: （履歴）旧TUI2（tui2）入力キーと送信挙動、`/prompts:` の引数なし挙動、関連テスト（tui2は削除済み）
 - `_docs/custom_notes/update_check_custom_version_suffix/README.md`: TUI の更新チェックで、`x.y.z-custom-...` のようなカスタム版バージョン文字列も比較できるようにする
 - `_docs/custom_notes/release_versioning/README.md`: `make release` の配布物に `x.y.z-custom-yyyy-mm-dd` 形式のバージョンを付与する
 - `_docs/custom_notes/exec_command_default_login/README.md`: `!`/shell 実行の login 制御（`CODEX_USER_SHELL_LOGIN` 等）

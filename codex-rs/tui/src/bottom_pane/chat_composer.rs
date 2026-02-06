@@ -290,7 +290,7 @@ pub(crate) struct ChatComposer {
     connectors_snapshot: Option<ConnectorsSnapshot>,
     dismissed_mention_popup_token: Option<String>,
     mention_paths: HashMap<String, String>,
-    /// When enabled, `Enter` submits immediately and `Tab` requests queuing behavior.
+    /// When enabled, submission keys submit immediately and `Tab` requests queuing behavior.
     steer_enabled: bool,
     collaboration_modes_enabled: bool,
     config: ChatComposerConfig,
@@ -416,10 +416,11 @@ impl ChatComposer {
 
     /// Enables or disables "Steer" behavior for submission keys.
     ///
-    /// When steer is enabled, `Enter` produces [`InputResult::Submitted`] (send immediately) and
-    /// `Tab` produces [`InputResult::Queued`] (eligible to queue if a task is running).
-    /// When steer is disabled, `Enter` produces [`InputResult::Queued`], preserving the default
-    /// "queue while a task is running" behavior.
+    /// When steer is enabled, the submit key (`Ctrl+Enter` / `Ctrl+J`) produces
+    /// [`InputResult::Submitted`] (send immediately) and `Tab` produces [`InputResult::Queued`]
+    /// (eligible to queue if a task is running).
+    /// When steer is disabled, the submit key produces [`InputResult::Queued`], preserving the
+    /// default "queue while a task is running" behavior.
     pub fn set_steer_enabled(&mut self, enabled: bool) {
         self.steer_enabled = enabled;
     }
@@ -1108,39 +1109,7 @@ impl ChatComposer {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => {
-                // If the current line starts with a custom prompt name and includes
-                // positional args for a numeric-style template, expand and submit
-                // immediately regardless of the popup selection.
-                let mut text = self.textarea.text().to_string();
-                let mut text_elements = self.textarea.text_elements();
-                if !self.pending_pastes.is_empty() {
-                    let (expanded, expanded_elements) =
-                        Self::expand_pending_pastes(&text, text_elements, &self.pending_pastes);
-                    text = expanded;
-                    text_elements = expanded_elements;
-                }
-                let first_line = text.lines().next().unwrap_or("");
-                if let Some((name, _rest, _rest_offset)) = parse_slash_name(first_line)
-                    && let Some(prompt_name) = name.strip_prefix(&format!("{PROMPTS_CMD_PREFIX}:"))
-                    && let Some(prompt) = self.custom_prompts.iter().find(|p| p.name == prompt_name)
-                    && let Some(expanded) =
-                        expand_if_numeric_with_positional_args(prompt, first_line, &text_elements)
-                {
-                    self.prune_attached_images_for_submission(
-                        &expanded.text,
-                        &expanded.text_elements,
-                    );
-                    self.pending_pastes.clear();
-                    self.textarea.set_text_clearing_elements("");
-                    return (
-                        InputResult::Submitted {
-                            text: expanded.text,
-                            text_elements: expanded.text_elements,
-                        },
-                        true,
-                    );
-                }
-
+                let first_line = self.textarea.text().lines().next().unwrap_or("");
                 if let Some(sel) = popup.selected_item() {
                     match sel {
                         CommandItem::Builtin(cmd) => {
@@ -1152,31 +1121,17 @@ impl ChatComposer {
                                 match prompt_selection_action(
                                     prompt,
                                     first_line,
-                                    PromptSelectionMode::Submit,
+                                    PromptSelectionMode::Completion,
                                     &self.textarea.text_elements(),
                                 ) {
-                                    PromptSelectionAction::Submit {
-                                        text,
-                                        text_elements,
-                                    } => {
-                                        self.prune_attached_images_for_submission(
-                                            &text,
-                                            &text_elements,
-                                        );
-                                        self.textarea.set_text_clearing_elements("");
-                                        return (
-                                            InputResult::Submitted {
-                                                text,
-                                                text_elements,
-                                            },
-                                            true,
-                                        );
-                                    }
                                     PromptSelectionAction::Insert { text, cursor } => {
                                         let target = cursor.unwrap_or(text.len());
                                         // Inserted prompt text is plain input; discard any elements.
                                         self.textarea.set_text_clearing_elements(&text);
                                         self.textarea.set_cursor(target);
+                                        return (InputResult::None, true);
+                                    }
+                                    PromptSelectionAction::Submit { .. } => {
                                         return (InputResult::None, true);
                                     }
                                 }
@@ -1988,15 +1943,15 @@ impl ChatComposer {
         // If the first line is a bare built-in slash command (no args),
         // dispatch it even when the slash popup isn't visible. This preserves
         // the workflow: type a prefix ("/di"), press Tab to complete to
-        // "/diff ", then press Enter/Ctrl+Shift+Q to run it. Tab moves the cursor beyond
+        // "/diff ", then press Ctrl+Enter/Ctrl+J to run it. Tab moves the cursor beyond
         // the '/name' token and our caret-based heuristic hides the popup,
-        // but Enter/Ctrl+Shift+Q should still dispatch the command rather than submit
+        // but Ctrl+Enter/Ctrl+J should still dispatch the command rather than submit
         // literal text.
         if let Some(result) = self.try_dispatch_bare_slash_command() {
             return (result, true);
         }
 
-        // If we're in a paste-like burst capture, treat Enter/Ctrl+Shift+Q as part of the burst
+        // If we're in a paste-like burst capture, treat Ctrl+Enter/Ctrl+J as part of the burst
         // and accumulate it rather than submitting or inserting immediately.
         // Do not treat as paste inside a slash-command context.
         let in_slash_context = self.slash_commands_enabled()
@@ -2016,7 +1971,7 @@ impl ChatComposer {
             return (InputResult::None, true);
         }
 
-        // During a paste-like burst, treat Enter/Ctrl+Shift+Q as a newline instead of submit.
+        // During a paste-like burst, treat Ctrl+Enter/Ctrl+J as a newline instead of submit.
         if !in_slash_context
             && !self.disable_paste_burst
             && self
@@ -2297,25 +2252,6 @@ impl ChatComposer {
                     }
                 }
                 self.handle_input_basic(key_event)
-            }
-            KeyEvent {
-                code: KeyCode::Enter,
-                modifiers: KeyModifiers::NONE,
-                ..
-            } if self.steer_enabled => self.handle_submit_key(),
-            KeyEvent {
-                code: KeyCode::Enter,
-                modifiers: KeyModifiers::NONE,
-                ..
-            } if self
-                .textarea
-                .text()
-                .lines()
-                .next()
-                .unwrap_or("")
-                .starts_with('/') =>
-            {
-                self.handle_submit_key()
             }
             KeyEvent {
                 code: KeyCode::Tab,
@@ -4652,7 +4588,7 @@ mod tests {
         // Ensure composer is empty and press Enter.
         assert!(composer.textarea.text().is_empty());
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         match result {
             InputResult::None => {}
@@ -4953,7 +4889,7 @@ mod tests {
 
         // Press Enter to dispatch the selected command.
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         // When a slash command is dispatched, the composer should return a
         // Command result (not submit literal text) and clear its textarea.
@@ -4996,7 +4932,7 @@ mod tests {
             .set_text_clearing_elements("/review these changes");
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(InputResult::None, result);
         assert_eq!("/review these changes", composer.textarea.text());
@@ -5209,7 +5145,7 @@ mod tests {
         type_chars_humanlike(&mut composer, &['/', 'm', 'e', 'n', 't', 'i', 'o', 'n']);
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         match result {
             InputResult::Command(cmd) => {
@@ -6170,7 +6106,7 @@ mod tests {
         );
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert!(matches!(
             result,
@@ -6284,7 +6220,7 @@ mod tests {
         composer.attach_image(path);
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted {
                 text,
@@ -6341,7 +6277,7 @@ mod tests {
         composer.handle_paste("\"".to_string());
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted {
                 text,
@@ -6397,7 +6333,7 @@ mod tests {
         composer.attach_image(path);
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted {
                 text,
@@ -6514,7 +6450,7 @@ mod tests {
         composer.handle_paste(large_content.clone());
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted {
                 text,
@@ -6781,7 +6717,7 @@ mod tests {
         composer.handle_paste(format!("/{PROMPTS_CMD_PREFIX}:my-prompt "));
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert!(matches!(
             result,
@@ -6825,7 +6761,7 @@ mod tests {
         composer.attach_image(PathBuf::from("/tmp/unused.png"));
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert!(matches!(
             result,
@@ -6869,7 +6805,7 @@ mod tests {
         assert_eq!(composer.pending_pastes.len(), 1);
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         let expected = format!("Echo: {large_content}");
         assert!(matches!(
@@ -6907,7 +6843,7 @@ mod tests {
         composer.attach_image(PathBuf::from("/tmp/unused.png"));
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert!(matches!(
             result,

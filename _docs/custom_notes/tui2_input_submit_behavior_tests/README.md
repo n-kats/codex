@@ -1,5 +1,15 @@
 # TUI2: 送信キー変更に伴うテスト修正メモ
 
+## 注記（このノートは履歴です）
+
+このリポジトリには過去に `codex-rs/tui2` が存在していましたが、現在は削除されています。
+そのため、このノートは **当時の背景メモとして残しているだけ**で、現行の実装・テストの更新対象ではありません。
+
+現行の入力キー仕様（`Enter`=改行、`Ctrl+Enter`/`Ctrl+J`=送信）は `codex-rs/tui` 側の実装を参照してください:
+
+- `_docs/custom_notes/tui-enter-newline-ctrl-enter-send/README.md`
+- `codex-rs/tui/src/bottom_pane/chat_composer.rs`
+
 ## 目的
 
 - TUI2 の入力仕様（Enter=改行、Ctrl+Enter/Ctrl+J=送信）に合わせて、テストが誤ったキー操作前提にならないようにする。
@@ -47,4 +57,3 @@
 - `codex-rs/tui2/src/bottom_pane/chat_composer.rs`
 - `codex-rs/tui2/src/chatwidget/tests.rs`
 - `README.md` / `CUSTOM.md`（入力仕様の記述）
-

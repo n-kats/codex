@@ -1,5 +1,10 @@
 # TUI: Enter で改行 / Ctrl+Enter で送信
 
+## 注記（tui2 について）
+
+このリポジトリには過去に `codex-rs/tui2` が存在していましたが、現在は削除されています。
+そのため、入力キー仕様の実装・テスト・スナップショットの更新対象は **`codex-rs/tui` のみ**です。
+
 ## 目的
 
 - 長文入力のたびに誤送信しやすい問題を避けるため、`Enter` は改行、`Ctrl+Enter` を送信にする。
@@ -63,11 +68,7 @@
 ## 関連ファイル（今回の変更箇所）
 
 - 入力処理: `codex-rs/tui/src/bottom_pane/chat_composer.rs`
-- 入力処理: `codex-rs/tui2/src/bottom_pane/chat_composer.rs`
 - フッター表示: `codex-rs/tui/src/bottom_pane/footer.rs`
-- フッター表示: `codex-rs/tui2/src/bottom_pane/footer.rs`
 - 公開ウィジェットの説明: `codex-rs/tui/src/public_widgets/composer_input.rs`
-- 公開ウィジェットの説明: `codex-rs/tui2/src/public_widgets/composer_input.rs`
-- キー表示（TUI2）: `codex-rs/tui2/src/pager_overlay.rs` / `codex-rs/tui2/src/slash_command.rs`
-- テスト（必要に応じて）: `codex-rs/tui/src/chatwidget/tests.rs` / `codex-rs/tui2/src/bottom_pane/chat_composer.rs`
-- スナップショット: `codex-rs/tui/src/bottom_pane/snapshots/` / `codex-rs/tui2/src/bottom_pane/snapshots/`
+- テスト（必要に応じて）: `codex-rs/tui/src/chatwidget/tests.rs` / `codex-rs/tui/src/bottom_pane/chat_composer.rs`
+- スナップショット: `codex-rs/tui/src/bottom_pane/snapshots/`
