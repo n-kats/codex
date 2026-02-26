@@ -40,6 +40,7 @@ use crate::realtime_conversation::handle_close as handle_realtime_conversation_c
 use crate::realtime_conversation::handle_start as handle_realtime_conversation_start;
 use crate::realtime_conversation::handle_text as handle_realtime_conversation_text;
 use crate::rollout::session_index;
+use crate::spawn::RunAsUser;
 use crate::stream_events_utils::HandleOutputCtx;
 use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
@@ -605,6 +606,7 @@ pub(crate) struct TurnContext {
     pub(crate) network: Option<NetworkProxy>,
     pub(crate) windows_sandbox_level: WindowsSandboxLevel,
     pub(crate) shell_environment_policy: ShellEnvironmentPolicy,
+    pub(crate) exec_run_as: Option<RunAsUser>,
     pub(crate) tools_config: ToolsConfig,
     pub(crate) features: Features,
     pub(crate) ghost_snapshot: GhostSnapshotConfig,
@@ -689,6 +691,7 @@ impl TurnContext {
             network: self.network.clone(),
             windows_sandbox_level: self.windows_sandbox_level,
             shell_environment_policy: self.shell_environment_policy.clone(),
+            exec_run_as: self.exec_run_as.clone(),
             tools_config,
             features,
             ghost_snapshot: self.ghost_snapshot.clone(),
@@ -841,6 +844,9 @@ impl SessionConfiguration {
         if let Some(cwd) = updates.cwd.clone() {
             next_configuration.cwd = cwd;
         }
+        if let Some(user_instructions) = updates.user_instructions.clone() {
+            next_configuration.user_instructions = user_instructions;
+        }
         Ok(next_configuration)
     }
 }
@@ -855,6 +861,8 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
     pub(crate) final_output_json_schema: Option<Option<Value>>,
     pub(crate) personality: Option<Personality>,
+    pub(crate) user_instructions: Option<Option<String>>,
+    pub(crate) project_doc_paths: Option<Option<Vec<PathBuf>>>,
 }
 
 impl Session {
@@ -1038,6 +1046,7 @@ impl Session {
             network,
             windows_sandbox_level: session_configuration.windows_sandbox_level,
             shell_environment_policy: per_turn_config.permissions.shell_environment_policy.clone(),
+            exec_run_as: per_turn_config.exec_run_as.clone(),
             tools_config,
             features: per_turn_config.features.clone(),
             ghost_snapshot: per_turn_config.ghost_snapshot.clone(),
@@ -3683,6 +3692,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                 summary,
                 collaboration_mode,
                 personality,
+                project_doc_paths,
             } => {
                 let collaboration_mode = if let Some(collab_mode) = collaboration_mode {
                     collab_mode
@@ -3705,6 +3715,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                         collaboration_mode: Some(collaboration_mode),
                         reasoning_summary: summary,
                         personality,
+                        project_doc_paths,
                         ..Default::default()
                     },
                 )
@@ -3864,6 +3875,7 @@ mod handlers {
     use codex_rmcp_client::ElicitationResponse;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use tracing::error;
     use tracing::info;
     use tracing::warn;
 
@@ -3878,8 +3890,44 @@ mod handlers {
     pub async fn override_turn_context(
         sess: &Session,
         sub_id: String,
-        updates: SessionSettingsUpdate,
+        mut updates: SessionSettingsUpdate,
     ) {
+        if let Some(project_doc_paths) = updates.project_doc_paths.clone() {
+            let session_configuration = { sess.state.lock().await.session_configuration.clone() };
+            let mut config = Session::build_per_turn_config(&session_configuration);
+            if let Some(cwd) = updates.cwd.clone() {
+                config.cwd = cwd;
+            }
+
+            config.project_doc_paths = match project_doc_paths {
+                Some(paths) => paths
+                    .into_iter()
+                    .map(|path| {
+                        if path.is_absolute() {
+                            path
+                        } else {
+                            config.cwd.join(path)
+                        }
+                    })
+                    .collect(),
+                None => Vec::new(),
+            };
+
+            let loaded_skills = sess.services.skills_manager.skills_for_config(&config);
+            for err in &loaded_skills.errors {
+                error!(
+                    "failed to load skill {}: {}",
+                    err.path.display(),
+                    err.message
+                );
+            }
+
+            let enabled_skills = loaded_skills.allowed_skills_for_implicit_invocation();
+            let user_instructions =
+                super::get_user_instructions(&config, Some(&enabled_skills)).await;
+            updates.user_instructions = Some(user_instructions);
+        }
+
         if let Err(err) = sess.update_settings(updates).await {
             sess.send_event_raw(Event {
                 id: sub_id,
@@ -3927,6 +3975,8 @@ mod handlers {
                         reasoning_summary: summary,
                         final_output_json_schema: Some(final_output_json_schema),
                         personality,
+                        user_instructions: None,
+                        project_doc_paths: None,
                     },
                 )
             }
@@ -4166,12 +4216,19 @@ mod handlers {
     }
 
     pub async fn list_custom_prompts(sess: &Session, sub_id: String) {
+        let cwd = {
+            let state = sess.state.lock().await;
+            state.session_configuration.cwd.clone()
+        };
+
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        if let Some(dir) = crate::custom_prompts::default_prompts_dir() {
+            dirs.push(dir);
+        }
+        dirs.extend(crate::custom_prompts::additional_prompts_dirs(&cwd));
+
         let custom_prompts: Vec<CustomPrompt> =
-            if let Some(dir) = crate::custom_prompts::default_prompts_dir() {
-                crate::custom_prompts::discover_prompts_in(&dir).await
-            } else {
-                Vec::new()
-            };
+            crate::custom_prompts::discover_prompts_in_dirs(&dirs).await;
 
         let event = Event {
             id: sub_id,
@@ -4686,6 +4743,7 @@ async fn spawn_review_thread(
         network: parent_turn_context.network.clone(),
         windows_sandbox_level: parent_turn_context.windows_sandbox_level,
         shell_environment_policy: parent_turn_context.shell_environment_policy.clone(),
+        exec_run_as: parent_turn_context.exec_run_as.clone(),
         cwd: parent_turn_context.cwd.clone(),
         final_output_json_schema: None,
         codex_linux_sandbox_exe: parent_turn_context.codex_linux_sandbox_exe.clone(),
@@ -6523,6 +6581,9 @@ pub(crate) use tests::make_session_and_context_with_dynamic_tools_and_rx;
 pub(crate) use tests::make_session_and_context_with_rx;
 #[cfg(test)]
 pub(crate) use tests::make_session_configuration_for_tests;
+
+#[cfg(test)]
+mod custom_tests;
 
 #[cfg(test)]
 mod tests {
@@ -9492,6 +9553,7 @@ mod tests {
             windows_sandbox_level: turn_context.windows_sandbox_level,
             justification: Some("test".to_string()),
             arg0: None,
+            run_as: None,
         };
 
         let params2 = ExecParams {
@@ -9504,6 +9566,7 @@ mod tests {
             windows_sandbox_level: turn_context.windows_sandbox_level,
             justification: params.justification.clone(),
             arg0: None,
+            run_as: None,
         };
 
         let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));

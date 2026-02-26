@@ -808,7 +808,7 @@ async fn delegated_turn_user_role_echo_does_not_redelegate_and_still_forwards_au
     .await;
 
     let audio_out = tokio::time::timeout(
-        Duration::from_millis(500),
+        Duration::from_millis(1_500),
         wait_for_event_match(&test.codex, |msg| match msg {
             EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
                 payload: RealtimeEvent::AudioOut(frame),

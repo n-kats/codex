@@ -74,6 +74,7 @@ impl ShellHandler {
             windows_sandbox_level: turn_context.windows_sandbox_level,
             justification: params.justification.clone(),
             arg0: None,
+            run_as: turn_context.exec_run_as.clone(),
         }
     }
 }
@@ -124,6 +125,7 @@ impl ShellCommandHandler {
             windows_sandbox_level: turn_context.windows_sandbox_level,
             justification: params.justification.clone(),
             arg0: None,
+            run_as: turn_context.exec_run_as.clone(),
         })
     }
 }

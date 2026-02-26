@@ -6,6 +6,7 @@ use std::io::Result as IoResult;
 
 use codex_arg0::Arg0DispatchPaths;
 use codex_core::config::Config;
+use codex_core::config::ConfigOverrides;
 use codex_utils_cli::CliConfigOverrides;
 
 use rmcp::model::ClientNotification;
@@ -94,11 +95,14 @@ pub async fn run_main(
             format!("error parsing -c overrides: {e}"),
         )
     })?;
-    let config = Config::load_with_cli_overrides(cli_kv_overrides)
-        .await
-        .map_err(|e| {
-            std::io::Error::new(ErrorKind::InvalidData, format!("error loading config: {e}"))
-        })?;
+    let config = Config::load_with_cli_overrides_and_harness_overrides(
+        cli_kv_overrides,
+        ConfigOverrides::default(),
+    )
+    .await
+    .map_err(|e| {
+        std::io::Error::new(ErrorKind::InvalidData, format!("error loading config: {e}"))
+    })?;
 
     // Task: process incoming messages.
     let processor_handle = tokio::spawn({

@@ -1,5 +1,6 @@
 ---
 source: tui/src/history_cell.rs
+assertion_line: 3772
 expression: rendered
 ---
 • Updated Plan

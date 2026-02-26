@@ -53,7 +53,6 @@ async fn spawn_command_under_sandbox(
         sandbox_cwd,
         false,
         stdio_policy,
-        None,
         env,
     )
     .await

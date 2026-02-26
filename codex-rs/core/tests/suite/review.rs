@@ -832,6 +832,7 @@ async fn review_uses_overridden_cwd_for_base_branch_merge_base() {
             summary: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
         .await
         .unwrap();

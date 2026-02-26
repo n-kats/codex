@@ -530,6 +530,129 @@
       },
       "type": "object"
     },
+    "CustomConfigToml": {
+      "additionalProperties": false,
+      "description": "Fork-specific custom settings under `[custom]`.",
+      "properties": {
+        "assistant_shell_environment_policy": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ShellEnvironmentPolicyToml"
+            }
+          ],
+          "description": "Override the shell environment policy used by model-triggered command execution.\n\nWhen unset, falls back to `[shell_environment_policy]`."
+        },
+        "exec": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomExecToml"
+            }
+          ],
+          "default": {
+            "worker_gid": null,
+            "worker_uid": null,
+            "worker_user": null
+          }
+        },
+        "theme": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomThemeToml"
+            }
+          ],
+          "default": null,
+          "description": "Custom TUI theme overrides."
+        },
+        "user_shell_environment_policy": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ShellEnvironmentPolicyToml"
+            }
+          ],
+          "description": "Override the shell environment policy used by `!` (UserShell).\n\nWhen unset, falls back to the assistant-resolved policy."
+        }
+      },
+      "type": "object"
+    },
+    "CustomExecToml": {
+      "additionalProperties": false,
+      "description": "Base config deserialized from ~/.codex/config.toml.",
+      "properties": {
+        "worker_gid": {
+          "description": "Optional numeric override for worker GID.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "worker_uid": {
+          "description": "Optional numeric override for worker UID.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "worker_user": {
+          "description": "Run model-triggered command execution as a dedicated OS user.\n\nSee `_docs/custom_notes/command_exec_worker_user/README.md`.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeDiffToml": {
+      "additionalProperties": false,
+      "properties": {
+        "add_line_bg": {
+          "description": "Hex color (`#RRGGBB`) for added diff line backgrounds in the TUI.",
+          "type": "string"
+        },
+        "content": {
+          "description": "Enable non-syntax diff content styling.",
+          "type": "boolean"
+        },
+        "del_line_bg": {
+          "description": "Hex color (`#RRGGBB`) for deleted diff line backgrounds in the TUI.",
+          "type": "string"
+        },
+        "enabled": {
+          "description": "Enable diff color styling. When false, all diff-specific coloring is disabled.",
+          "type": "boolean"
+        },
+        "gutter": {
+          "description": "Enable line-number gutter styling.",
+          "type": "boolean"
+        },
+        "line_bg": {
+          "description": "Enable add/delete line background tint.",
+          "type": "boolean"
+        },
+        "sign": {
+          "description": "Enable `+` / `-` sign coloring.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeToml": {
+      "additionalProperties": false,
+      "properties": {
+        "diff": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomThemeDiffToml"
+            }
+          ],
+          "default": {
+            "add_line_bg": null,
+            "content": null,
+            "del_line_bg": null,
+            "enabled": null,
+            "gutter": null,
+            "line_bg": null,
+            "sign": null
+          }
+        }
+      },
+      "type": "object"
+    },
     "FeedbackConfigToml": {
       "additionalProperties": false,
       "properties": {
@@ -1591,6 +1714,15 @@
     "compact_prompt": {
       "description": "Compact prompt used for history compaction.",
       "type": "string"
+    },
+    "custom": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/CustomConfigToml"
+        }
+      ],
+      "default": null,
+      "description": "Fork-specific custom settings."
     },
     "developer_instructions": {
       "default": null,

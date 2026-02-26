@@ -29,6 +29,7 @@ use crate::sandboxing::CommandSpec;
 use crate::sandboxing::ExecRequest;
 use crate::sandboxing::SandboxManager;
 use crate::sandboxing::SandboxPermissions;
+use crate::spawn::RunAsUser;
 use crate::spawn::SpawnChildRequest;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
@@ -70,6 +71,7 @@ pub struct ExecParams {
     pub windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel,
     pub justification: Option<String>,
     pub arg0: Option<String>,
+    pub run_as: Option<RunAsUser>,
 }
 
 /// Mechanism to terminate an exec invocation before it finishes naturally.
@@ -188,6 +190,7 @@ pub async fn process_exec_tool_call(
         windows_sandbox_level,
         justification,
         arg0: _,
+        run_as,
     } = params;
     if let Some(network) = network.as_ref() {
         network.apply_to_env(&mut env);
@@ -205,6 +208,7 @@ pub async fn process_exec_tool_call(
         cwd,
         env,
         expiration,
+        run_as,
         sandbox_permissions,
         additional_permissions: None,
         justification,
@@ -244,6 +248,7 @@ pub(crate) async fn execute_exec_env(
         expiration,
         sandbox,
         windows_sandbox_level,
+        run_as,
         sandbox_permissions,
         sandbox_policy: _sandbox_policy_from_env,
         justification,
@@ -260,6 +265,7 @@ pub(crate) async fn execute_exec_env(
         windows_sandbox_level,
         justification,
         arg0,
+        run_as,
     };
 
     let start = Instant::now();
@@ -713,6 +719,7 @@ async fn exec(
         network,
         arg0,
         expiration,
+        run_as,
         windows_sandbox_level: _,
         ..
     } = params;
@@ -732,6 +739,7 @@ async fn exec(
         args: args.into(),
         arg0: arg0_ref,
         cwd,
+        run_as,
         sandbox_policy,
         // The environment already has attempt-scoped proxy settings from
         // apply_to_env_for_attempt above. Passing network here would reapply
@@ -1132,6 +1140,7 @@ mod tests {
             windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel::Disabled,
             justification: None,
             arg0: None,
+            run_as: None,
         };
 
         let output = exec(
@@ -1153,13 +1162,24 @@ mod tests {
         })?;
 
         let mut killed = false;
-        for _ in 0..20 {
+        for _ in 0..50 {
             // Use kill(pid, 0) to check if the process is alive.
             if unsafe { libc::kill(pid, 0) } == -1
                 && let Some(libc::ESRCH) = std::io::Error::last_os_error().raw_os_error()
             {
                 killed = true;
                 break;
+            }
+            #[cfg(target_os = "linux")]
+            {
+                // In containerized test environments, a killed process can linger as
+                // zombie if PID 1 does not reap quickly. Treat zombie as terminated.
+                if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                    && stat.split_whitespace().nth(2) == Some("Z")
+                {
+                    killed = true;
+                    break;
+                }
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -1185,6 +1205,7 @@ mod tests {
             windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel::Disabled,
             justification: None,
             arg0: None,
+            run_as: None,
         };
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(1_000)).await;

@@ -123,7 +123,7 @@ pub(crate) async fn execute_user_shell_command(
         &display_command,
         session_shell.as_ref(),
         turn_context.cwd.as_path(),
-        &turn_context.shell_environment_policy.r#set,
+        &turn_context.config.user_shell_environment_policy.r#set,
     );
 
     let call_id = Uuid::new_v4().to_string();
@@ -152,7 +152,7 @@ pub(crate) async fn execute_user_shell_command(
         command: exec_command.clone(),
         cwd: cwd.clone(),
         env: create_env(
-            &turn_context.shell_environment_policy,
+            &turn_context.config.user_shell_environment_policy,
             Some(session.conversation_id),
         ),
         network: turn_context.network.clone(),
@@ -161,6 +161,8 @@ pub(crate) async fn execute_user_shell_command(
         expiration: USER_SHELL_TIMEOUT_MS.into(),
         sandbox: SandboxType::None,
         windows_sandbox_level: turn_context.windows_sandbox_level,
+        // `!` is a user-initiated command and should run as the invoker user.
+        run_as: None,
         sandbox_permissions: SandboxPermissions::UseDefault,
         sandbox_policy: sandbox_policy.clone(),
         justification: None,

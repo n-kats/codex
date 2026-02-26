@@ -1,5 +1,6 @@
 use super::LoaderOverrides;
 use super::load_config_layers_state;
+use crate::config::CONFIG_TOML_FILE;
 use crate::config::ConfigBuilder;
 use crate::config::ConfigOverrides;
 use crate::config::ConfigToml;
@@ -10,13 +11,12 @@ use crate::config_loader::ConfigLayerEntry;
 use crate::config_loader::ConfigLoadError;
 use crate::config_loader::ConfigRequirements;
 use crate::config_loader::ConfigRequirementsToml;
-use crate::config_loader::ConfigRequirementsWithSources;
-use crate::config_loader::RequirementSource;
 use crate::config_loader::load_requirements_toml;
 use crate::config_loader::version_for_toml;
-use codex_config::CONFIG_TOML_FILE;
+use codex_config::ConfigRequirementsWithSources;
+use codex_config::RequirementSource;
+use codex_config::config_error_from_typed_toml;
 use codex_protocol::config_types::TrustLevel;
-use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::protocol::AskForApproval;
 #[cfg(target_os = "macos")]
 use codex_protocol::protocol::SandboxPolicy;
@@ -153,8 +153,7 @@ async fn returns_config_error_for_schema_error_in_user_config() {
     let config_error = config_error_from_io(&err);
     let _guard = codex_utils_absolute_path::AbsolutePathBufGuard::new(tmp.path());
     let expected_config_error =
-        codex_config::config_error_from_typed_toml::<ConfigToml>(&config_path, contents)
-            .expect("schema error");
+        config_error_from_typed_toml::<ConfigToml>(&config_path, contents).expect("schema error");
     assert_eq!(config_error, &expected_config_error);
 }
 
@@ -166,8 +165,8 @@ fn schema_error_points_to_feature_value() {
     std::fs::write(&config_path, contents).expect("write config");
 
     let _guard = codex_utils_absolute_path::AbsolutePathBufGuard::new(tmp.path());
-    let error = codex_config::config_error_from_typed_toml::<ConfigToml>(&config_path, contents)
-        .expect("schema error");
+    let error =
+        config_error_from_typed_toml::<ConfigToml>(&config_path, contents).expect("schema error");
 
     let value_line = contents.lines().nth(1).expect("value line");
     let value_column = value_line.find("\"true\"").expect("value") + 1;
@@ -202,9 +201,7 @@ extra = true
 
     let overrides = LoaderOverrides {
         managed_config_path: Some(managed_path),
-        #[cfg(target_os = "macos")]
-        managed_preferences_base64: None,
-        macos_managed_config_requirements_base64: None,
+        ..Default::default()
     };
 
     let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
@@ -239,11 +236,7 @@ async fn returns_empty_when_all_layers_missing() {
 
     let overrides = LoaderOverrides {
         managed_config_path: Some(managed_path),
-        #[cfg(target_os = "macos")]
-        // Force managed preferences to resolve as empty so this test does not
-        // inherit non-empty machine-specific managed state.
-        managed_preferences_base64: Some(String::new()),
-        macos_managed_config_requirements_base64: None,
+        ..Default::default()
     };
 
     let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
@@ -289,9 +282,10 @@ async fn returns_empty_when_all_layers_missing() {
         .iter()
         .filter(|layer| matches!(layer.name, super::ConfigLayerSource::System { .. }))
         .count();
+    let expected_system_layers = if cfg!(unix) { 1 } else { 0 };
     assert_eq!(
-        num_system_layers, 1,
-        "system layer should always be present"
+        num_system_layers, expected_system_layers,
+        "system layer should be present only on unix"
     );
 
     #[cfg(not(target_os = "macos"))]
@@ -328,19 +322,20 @@ flag = true
 "#,
     )
     .expect("write managed config");
-    let raw_managed_preferences = r#"
-# managed profile
+
+    let encoded = base64::prelude::BASE64_STANDARD.encode(
+        r#"
 [nested]
 value = "managed"
 flag = false
-"#;
+"#
+        .as_bytes(),
+    );
 
     let overrides = LoaderOverrides {
         managed_config_path: Some(managed_path),
-        managed_preferences_base64: Some(
-            base64::prelude::BASE64_STANDARD.encode(raw_managed_preferences.as_bytes()),
-        ),
-        macos_managed_config_requirements_base64: None,
+        managed_preferences_base64: Some(encoded),
+        ..Default::default()
     };
 
     let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
@@ -363,19 +358,6 @@ flag = false
         Some(&TomlValue::String("managed".to_string()))
     );
     assert_eq!(nested.get("flag"), Some(&TomlValue::Boolean(false)));
-    let mdm_layer = state
-        .layers_high_to_low()
-        .into_iter()
-        .find(|layer| {
-            matches!(
-                layer.name,
-                super::ConfigLayerSource::LegacyManagedConfigTomlFromMdm
-            )
-        })
-        .expect("mdm layer");
-    let raw = mdm_layer.raw_toml().expect("preserved mdm toml");
-    assert!(raw.contains("# managed profile"));
-    assert!(raw.contains("value = \"managed\""));
 }
 
 #[cfg(target_os = "macos")]
@@ -427,7 +409,7 @@ allowed_sandbox_modes = ["read-only"]
             .sandbox_policy
             .can_set(&SandboxPolicy::WorkspaceWrite {
                 writable_roots: Vec::new(),
-                read_only_access: Default::default(),
+                read_only_access: codex_protocol::protocol::ReadOnlyAccess::FullAccess,
                 network_access: false,
                 exclude_tmpdir_env_var: false,
                 exclude_slash_tmp: false,
@@ -491,7 +473,6 @@ async fn load_requirements_toml_produces_expected_constraints() -> anyhow::Resul
         &requirements_file,
         r#"
 allowed_approval_policies = ["never", "on-request"]
-allowed_web_search_modes = ["cached"]
 enforce_residency = "us"
 "#,
     )
@@ -507,13 +488,6 @@ enforce_residency = "us"
             .cloned(),
         Some(vec![AskForApproval::Never, AskForApproval::OnRequest])
     );
-    assert_eq!(
-        config_requirements_toml
-            .allowed_web_search_modes
-            .as_deref()
-            .cloned(),
-        Some(vec![crate::config_loader::WebSearchModeRequirement::Cached])
-    );
     let config_requirements: ConfigRequirements = config_requirements_toml.try_into()?;
     assert_eq!(
         config_requirements.approval_policy.value(),
@@ -526,25 +500,6 @@ enforce_residency = "us"
         config_requirements
             .approval_policy
             .can_set(&AskForApproval::OnFailure)
-            .is_err()
-    );
-    assert_eq!(
-        config_requirements.web_search_mode.value(),
-        WebSearchMode::Cached
-    );
-    config_requirements
-        .web_search_mode
-        .can_set(&WebSearchMode::Cached)?;
-    config_requirements
-        .web_search_mode
-        .can_set(&WebSearchMode::Cached)?;
-    config_requirements
-        .web_search_mode
-        .can_set(&WebSearchMode::Disabled)?;
-    assert!(
-        config_requirements
-            .web_search_mode
-            .can_set(&WebSearchMode::Live)
             .is_err()
     );
     assert_eq!(
@@ -579,11 +534,9 @@ allowed_approval_policies = ["on-request"]
             Some(ConfigRequirementsToml {
                 allowed_approval_policies: Some(vec![AskForApproval::Never]),
                 allowed_sandbox_modes: None,
-                allowed_web_search_modes: None,
                 mcp_servers: None,
                 rules: None,
                 enforce_residency: None,
-                network: None,
             })
         }),
     )
@@ -1253,10 +1206,10 @@ mod requirements_exec_policy_tests {
     use crate::config_loader::ConfigLayerStack;
     use crate::config_loader::ConfigRequirements;
     use crate::config_loader::ConfigRequirementsToml;
-    use crate::config_loader::ConfigRequirementsWithSources;
     use crate::config_loader::RequirementSource;
     use crate::exec_policy::load_exec_policy;
     use codex_app_server_protocol::ConfigLayerSource;
+    use codex_config::ConfigRequirementsWithSources;
     use codex_config::RequirementsExecPolicyDecisionToml;
     use codex_config::RequirementsExecPolicyParseError;
     use codex_config::RequirementsExecPolicyPatternTokenToml;

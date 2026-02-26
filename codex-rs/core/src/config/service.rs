@@ -880,9 +880,7 @@ personality = true
             vec![],
             LoaderOverrides {
                 managed_config_path: Some(managed_path.clone()),
-                #[cfg(target_os = "macos")]
-                managed_preferences_base64: None,
-                macos_managed_config_requirements_base64: None,
+                ..Default::default()
             },
             CloudRequirementsLoader::default(),
         );
@@ -955,9 +953,7 @@ personality = true
             vec![],
             LoaderOverrides {
                 managed_config_path: Some(managed_path.clone()),
-                #[cfg(target_os = "macos")]
-                managed_preferences_base64: None,
-                macos_managed_config_requirements_base64: None,
+                ..Default::default()
             },
             CloudRequirementsLoader::default(),
         );
@@ -1060,9 +1056,7 @@ personality = true
             vec![],
             LoaderOverrides {
                 managed_config_path: Some(managed_path.clone()),
-                #[cfg(target_os = "macos")]
-                managed_preferences_base64: None,
-                macos_managed_config_requirements_base64: None,
+                ..Default::default()
             },
             CloudRequirementsLoader::default(),
         );
@@ -1109,9 +1103,7 @@ personality = true
             cli_overrides,
             LoaderOverrides {
                 managed_config_path: Some(managed_path.clone()),
-                #[cfg(target_os = "macos")]
-                managed_preferences_base64: None,
-                macos_managed_config_requirements_base64: None,
+                ..Default::default()
             },
             CloudRequirementsLoader::default(),
         );
@@ -1167,9 +1159,7 @@ personality = true
             vec![],
             LoaderOverrides {
                 managed_config_path: Some(managed_path.clone()),
-                #[cfg(target_os = "macos")]
-                managed_preferences_base64: None,
-                macos_managed_config_requirements_base64: None,
+                ..Default::default()
             },
             CloudRequirementsLoader::default(),
         );

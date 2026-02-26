@@ -3548,6 +3548,11 @@ impl ChatWidget {
                     self.add_info_message("Plan mode unavailable right now.".to_string(), None);
                 }
             }
+            SlashCommand::CustomAgents => {
+                self.add_error_message(
+                    "Usage: /custom-agents <path> [path...] | /custom-agents clear".to_string(),
+                );
+            }
             SlashCommand::Collab => {
                 if !self.collaboration_modes_enabled() {
                     self.add_info_message(
@@ -3841,6 +3846,53 @@ impl ChatWidget {
                 } else {
                     self.queue_user_message(user_message);
                 }
+            }
+            SlashCommand::CustomAgents if !trimmed.is_empty() => {
+                let Some((prepared_args, _prepared_elements)) =
+                    self.bottom_pane.prepare_inline_args_submission(false)
+                else {
+                    return;
+                };
+
+                let trimmed = prepared_args.trim();
+                let project_doc_paths = if trimmed.eq_ignore_ascii_case("clear") {
+                    Some(None)
+                } else {
+                    let paths = trimmed
+                        .split_whitespace()
+                        .map(PathBuf::from)
+                        .map(|path| {
+                            if path.is_absolute() {
+                                path
+                            } else {
+                                self.config.cwd.join(path)
+                            }
+                        })
+                        .collect::<Vec<_>>();
+                    if paths.is_empty() {
+                        self.add_error_message(
+                            "Usage: /custom-agents <path> [path...] | /custom-agents clear"
+                                .to_string(),
+                        );
+                        return;
+                    }
+                    Some(Some(paths))
+                };
+
+                self.app_event_tx
+                    .send(AppEvent::CodexOp(Op::OverrideTurnContext {
+                        cwd: None,
+                        approval_policy: None,
+                        sandbox_policy: None,
+                        windows_sandbox_level: None,
+                        model: None,
+                        effort: None,
+                        summary: None,
+                        collaboration_mode: None,
+                        personality: None,
+                        project_doc_paths,
+                    }));
+                self.bottom_pane.drain_pending_submission_state();
             }
             SlashCommand::Review if !trimmed.is_empty() => {
                 let Some((prepared_args, _prepared_elements)) =
@@ -5122,6 +5174,7 @@ impl ChatWidget {
                 summary: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             }));
             tx.send(AppEvent::UpdateModel(switch_model_for_events.clone()));
             tx.send(AppEvent::UpdateReasoningEffort(Some(default_effort)));
@@ -5242,6 +5295,7 @@ impl ChatWidget {
                         collaboration_mode: None,
                         windows_sandbox_level: None,
                         personality: Some(personality),
+                        project_doc_paths: None,
                     }));
                     tx.send(AppEvent::UpdatePersonality(personality));
                     tx.send(AppEvent::PersistPersonalitySelection { personality });
@@ -5999,6 +6053,7 @@ impl ChatWidget {
                 summary: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             }));
             tx.send(AppEvent::UpdateAskForApprovalPolicy(approval));
             tx.send(AppEvent::UpdateSandboxPolicy(sandbox_clone));
@@ -7910,3 +7965,6 @@ pub(crate) fn show_review_commit_picker_with_entries(
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+mod custom_tests;

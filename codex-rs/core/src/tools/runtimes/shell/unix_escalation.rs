@@ -9,6 +9,7 @@ use crate::features::Feature;
 use crate::sandboxing::SandboxPermissions;
 use crate::shell::ShellType;
 use crate::skills::SkillMetadata;
+use crate::spawn::RunAsUser;
 use crate::tools::runtimes::ExecveSessionApproval;
 use crate::tools::runtimes::build_command_spec;
 use crate::tools::sandboxing::SandboxAttempt;
@@ -72,6 +73,7 @@ pub(super) async fn try_run_zsh_fork(
         &req.cwd,
         &req.env,
         req.timeout_ms.into(),
+        ctx.turn.exec_run_as.clone(),
         req.sandbox_permissions,
         req.additional_permissions.clone(),
         req.justification.clone(),
@@ -85,6 +87,7 @@ pub(super) async fn try_run_zsh_fork(
         env: sandbox_env,
         network: sandbox_network,
         expiration: _sandbox_expiration,
+        run_as,
         sandbox,
         windows_sandbox_level,
         sandbox_permissions,
@@ -107,6 +110,7 @@ pub(super) async fn try_run_zsh_fork(
         sandbox,
         env: sandbox_env,
         network: sandbox_network,
+        run_as,
         windows_sandbox_level,
         sandbox_permissions,
         justification,
@@ -559,6 +563,7 @@ struct CoreShellCommandExecutor {
     sandbox: SandboxType,
     env: HashMap<String, String>,
     network: Option<codex_network_proxy::NetworkProxy>,
+    run_as: Option<RunAsUser>,
     windows_sandbox_level: WindowsSandboxLevel,
     sandbox_permissions: SandboxPermissions,
     justification: Option<String>,
@@ -592,6 +597,7 @@ impl ShellCommandExecutor for CoreShellCommandExecutor {
                 env: exec_env,
                 network: self.network.clone(),
                 expiration: ExecExpiration::Cancellation(cancel_rx),
+                run_as: self.run_as.clone(),
                 sandbox: self.sandbox,
                 windows_sandbox_level: self.windows_sandbox_level,
                 sandbox_permissions: self.sandbox_permissions,

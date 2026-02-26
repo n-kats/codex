@@ -8,6 +8,13 @@ use tracing::trace;
 
 use crate::protocol::SandboxPolicy;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunAsUser {
+    pub uid: u32,
+    pub gid: u32,
+    pub supplementary_gids: Option<Vec<u32>>,
+}
+
 /// Experimental environment variable that will be set to some non-empty value
 /// if both of the following are true:
 ///
@@ -33,7 +40,7 @@ pub enum StdioPolicy {
 /// ensuring the args and environment variables used to create the `Command`
 /// (and `Child`) honor the configuration.
 ///
-/// For now, we take `SandboxPolicy` as a parameter to spawn_child() because
+/// For now, we take `SandboxPolicy` as a parameter to spawn_child_async because
 /// we need to determine whether to set the
 /// `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` environment variable.
 pub(crate) struct SpawnChildRequest<'a> {
@@ -41,18 +48,27 @@ pub(crate) struct SpawnChildRequest<'a> {
     pub args: Vec<String>,
     pub arg0: Option<&'a str>,
     pub cwd: PathBuf,
+    pub run_as: Option<RunAsUser>,
     pub sandbox_policy: &'a SandboxPolicy,
     pub network: Option<&'a NetworkProxy>,
     pub stdio_policy: StdioPolicy,
     pub env: HashMap<String, String>,
 }
 
+/// Spawns the appropriate child process for the ExecParams and SandboxPolicy,
+/// ensuring the args and environment variables used to create the `Command`
+/// (and `Child`) honor the configuration.
+///
+/// For now, we take `SandboxPolicy` as a parameter to spawn_child_async because
+/// we need to determine whether to set the
+/// `CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR` environment variable.
 pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io::Result<Child> {
     let SpawnChildRequest {
         program,
         args,
         arg0,
         cwd,
+        run_as,
         sandbox_policy,
         network,
         stdio_policy,
@@ -87,9 +103,40 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
         let detach_from_tty = matches!(stdio_policy, StdioPolicy::RedirectForShellTool);
         #[cfg(target_os = "linux")]
         let parent_pid = libc::getpid();
+        let run_as = run_as.map(|run_as| {
+            (
+                run_as.uid as libc::uid_t,
+                run_as.gid as libc::gid_t,
+                run_as.supplementary_gids.map(|gids| {
+                    gids.into_iter()
+                        .map(|gid| gid as libc::gid_t)
+                        .collect::<Vec<_>>()
+                }),
+            )
+        });
         cmd.pre_exec(move || {
             if detach_from_tty {
                 codex_utils_pty::process_group::detach_from_tty()?;
+            }
+
+            if let Some((uid, gid, groups)) = run_as.as_ref() {
+                if let Some(groups) = groups.as_ref() {
+                    let groups_ptr = groups.as_ptr();
+                    let groups_ptr = if groups.is_empty() {
+                        std::ptr::null()
+                    } else {
+                        groups_ptr
+                    };
+                    if libc::setgroups(groups.len(), groups_ptr) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                if libc::setgid(*gid) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setuid(*uid) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
             }
 
             // This relies on prctl(2), so it only works on Linux.

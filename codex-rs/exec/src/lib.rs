@@ -13,7 +13,6 @@ pub mod exec_events;
 pub use cli::Cli;
 pub use cli::Command;
 pub use cli::ReviewArgs;
-use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_requirements::cloud_requirements_loader;
 use codex_core::AuthManager;
 use codex_core::LMSTUDIO_OSS_PROVIDER_ID;
@@ -21,16 +20,17 @@ use codex_core::NewThread;
 use codex_core::OLLAMA_OSS_PROVIDER_ID;
 use codex_core::ThreadManager;
 use codex_core::auth::enforce_login_restrictions;
-use codex_core::check_execpolicy_for_warnings;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
+use codex_core::config::ConfigToml;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_overrides;
 use codex_core::config::resolve_oss_provider;
+use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::config_loader::ConfigLoadError;
+use codex_core::config_loader::LoaderOverrides;
 use codex_core::config_loader::format_config_error_with_source;
-use codex_core::format_exec_policy_error_with_source;
+use codex_core::config_loader::load_config_layers_state;
 use codex_core::git_info::get_git_repo_root;
 use codex_core::models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use codex_core::models_manager::manager::RefreshStrategy;
@@ -43,9 +43,9 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::ReviewTarget;
 use codex_protocol::protocol::SessionSource;
-use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_absolute_path::AbsolutePathBufGuard;
 use codex_utils_oss::ensure_oss_provider_ready;
 use codex_utils_oss::get_default_model_for_oss_provider;
 use event_processor_with_human_output::EventProcessorWithHumanOutput;
@@ -54,6 +54,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::io::Read;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use supports_color::Stream;
@@ -89,10 +90,34 @@ struct ThreadEventEnvelope {
     thread_id: codex_protocol::ThreadId,
     thread: Arc<codex_core::CodexThread>,
     event: Event,
-    suppress_output: bool,
 }
 
-pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
+async fn load_config_toml_with_loader_overrides(
+    codex_home: &Path,
+    cwd: &AbsolutePathBuf,
+    cli_overrides: Vec<(String, toml::Value)>,
+    loader_overrides: LoaderOverrides,
+) -> std::io::Result<ConfigToml> {
+    let config_layer_stack = load_config_layers_state(
+        codex_home,
+        Some(cwd.clone()),
+        &cli_overrides,
+        loader_overrides,
+        CloudRequirementsLoader::default(),
+    )
+    .await?;
+    let merged_toml = config_layer_stack.effective_config();
+    let _guard = AbsolutePathBufGuard::new(codex_home);
+    merged_toml
+        .try_into()
+        .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+}
+
+pub async fn run_main(
+    cli: Cli,
+    codex_linux_sandbox_exe: Option<PathBuf>,
+    agents_md: Vec<PathBuf>,
+) -> anyhow::Result<()> {
     if let Err(err) = set_default_originator("codex_exec".to_string()) {
         tracing::warn!(?err, "Failed to set codex exec originator override {err:?}");
     }
@@ -109,42 +134,26 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         cwd,
         skip_git_repo_check,
         add_dir,
-        ephemeral,
         color,
+        progress_cursor,
         last_message_file,
         json: json_mode,
         sandbox_mode: sandbox_mode_cli_arg,
         prompt,
         output_schema: output_schema_path,
+        config_toml_file,
+        no_config,
+        ephemeral,
         config_overrides,
-        progress_cursor,
     } = cli;
 
-    let (_stdout_with_ansi, stderr_with_ansi) = match color {
+    let (stdout_with_ansi, stderr_with_ansi) = match color {
         cli::Color::Always => (true, true),
         cli::Color::Never => (false, false),
         cli::Color::Auto => (
             supports_color::on_cached(Stream::Stdout).is_some(),
             supports_color::on_cached(Stream::Stderr).is_some(),
         ),
-    };
-    let cursor_ansi = if progress_cursor {
-        true
-    } else {
-        match color {
-            cli::Color::Never => false,
-            cli::Color::Always => true,
-            cli::Color::Auto => {
-                if stderr_with_ansi || std::io::stderr().is_terminal() {
-                    true
-                } else {
-                    match std::env::var("TERM") {
-                        Ok(term) => !term.is_empty() && term != "dumb",
-                        Err(_) => false,
-                    }
-                }
-            }
-        }
     };
 
     // Build fmt layer (existing logging) to compose with OTEL layer.
@@ -194,11 +203,25 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         }
     };
 
+    let mut loader_overrides = LoaderOverrides::default();
+    if no_config {
+        loader_overrides.disable_user_config = true;
+        loader_overrides.disable_project_config = true;
+    } else if let Some(path) = &config_toml_file {
+        let resolved = if path.is_absolute() {
+            path.clone()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        loader_overrides.user_config_path = Some(resolved);
+    }
+
     #[allow(clippy::print_stderr)]
-    let config_toml = match load_config_as_toml_with_cli_overrides(
+    let config_toml = match load_config_toml_with_loader_overrides(
         &codex_home,
         &config_cwd,
         cli_kv_overrides.clone(),
+        loader_overrides.clone(),
     )
     .await
     {
@@ -273,8 +296,8 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         sandbox_mode,
         cwd: resolved_cwd,
         model_provider: model_provider.clone(),
-        codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe.clone(),
-        main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
+        codex_linux_sandbox_exe,
+        main_execve_wrapper_exe: None,
         js_repl_node_path: None,
         js_repl_node_module_dirs: None,
         zsh_path: None,
@@ -286,28 +309,17 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         show_raw_agent_reasoning: oss.then_some(true),
         tools_web_search_request: None,
         ephemeral: ephemeral.then_some(true),
+        project_doc_paths: agents_md,
         additional_writable_roots: add_dir,
     };
 
     let config = ConfigBuilder::default()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
+        .loader_overrides(loader_overrides)
         .cloud_requirements(cloud_requirements)
         .build()
         .await?;
-
-    #[allow(clippy::print_stderr)]
-    match check_execpolicy_for_warnings(&config.config_layer_stack).await {
-        Ok(None) => {}
-        Ok(Some(err)) | Err(err) => {
-            eprintln!(
-                "Error loading rules:\n{}",
-                format_exec_policy_error_with_source(&err)
-            );
-            std::process::exit(1);
-        }
-    }
-
     set_default_client_residency_requirement(config.enforce_residency.value());
 
     if let Err(err) = enforce_login_restrictions(&config) {
@@ -342,20 +354,12 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     let mut event_processor: Box<dyn EventProcessor> = match json_mode {
         true => Box::new(EventProcessorWithJsonOutput::new(last_message_file.clone())),
         _ => Box::new(EventProcessorWithHumanOutput::create_with_ansi(
-            stderr_with_ansi,
-            cursor_ansi,
+            stdout_with_ansi,
+            progress_cursor,
             &config,
             last_message_file.clone(),
         )),
     };
-    let required_mcp_servers: HashSet<String> = config
-        .mcp_servers
-        .get()
-        .iter()
-        .filter(|(_, server)| server.enabled && server.required)
-        .map(|(name, _)| name.clone())
-        .collect();
-
     if oss {
         // We're in the oss section, so provider_id should be Some
         // Let's handle None case gracefully though just in case
@@ -495,7 +499,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
 
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<ThreadEventEnvelope>();
     let attached_threads = Arc::new(Mutex::new(HashSet::from([primary_thread_id])));
-    spawn_thread_listener(primary_thread_id, thread.clone(), tx.clone(), false);
+    spawn_thread_listener(primary_thread_id, thread.clone(), tx.clone());
 
     {
         let thread = thread.clone();
@@ -523,14 +527,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
                         match thread_manager.get_thread(thread_id).await {
                             Ok(thread) => {
                                 attached_threads.lock().await.insert(thread_id);
-                                let suppress_output =
-                                    is_agent_job_subagent(&thread.config_snapshot().await);
-                                spawn_thread_listener(
-                                    thread_id,
-                                    thread,
-                                    tx.clone(),
-                                    suppress_output,
-                                );
+                                spawn_thread_listener(thread_id, thread, tx.clone());
                             }
                             Err(err) => {
                                 warn!("failed to attach listener for thread {thread_id}: {err}")
@@ -579,25 +576,12 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     // Track whether a fatal error was reported by the server so we can
     // exit with a non-zero status for automation-friendly signaling.
     let mut error_seen = false;
-    let mut shutdown_requested = false;
     while let Some(envelope) = rx.recv().await {
         let ThreadEventEnvelope {
             thread_id,
             thread,
             event,
-            suppress_output,
         } = envelope;
-        if suppress_output && should_suppress_agent_job_event(&event.msg) {
-            continue;
-        }
-        if matches!(event.msg, EventMsg::Error(_)) {
-            error_seen = true;
-        }
-        if shutdown_requested
-            && !matches!(&event.msg, EventMsg::ShutdownComplete | EventMsg::Error(_))
-        {
-            continue;
-        }
         if let EventMsg::ElicitationRequest(ev) = &event.msg {
             // Automatically cancel elicitation requests in exec mode.
             thread
@@ -608,19 +592,8 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
                 })
                 .await?;
         }
-        if let EventMsg::McpStartupUpdate(update) = &event.msg
-            && required_mcp_servers.contains(&update.server)
-            && let codex_protocol::protocol::McpStartupStatus::Failed { error } = &update.status
-        {
+        if matches!(event.msg, EventMsg::Error(_)) {
             error_seen = true;
-            eprintln!(
-                "Required MCP server '{}' failed to initialize: {error}",
-                update.server
-            );
-            if !shutdown_requested {
-                thread.submit(Op::Shutdown).await?;
-                shutdown_requested = true;
-            }
         }
         if thread_id != primary_thread_id && matches!(&event.msg, EventMsg::TurnComplete(_)) {
             continue;
@@ -632,10 +605,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         match shutdown {
             CodexStatus::Running => continue,
             CodexStatus::InitiateShutdown => {
-                if !shutdown_requested {
-                    thread.submit(Op::Shutdown).await?;
-                    shutdown_requested = true;
-                }
+                thread.submit(Op::Shutdown).await?;
             }
             CodexStatus::Shutdown if thread_id == primary_thread_id => break,
             CodexStatus::Shutdown => continue,
@@ -653,7 +623,6 @@ fn spawn_thread_listener(
     thread_id: codex_protocol::ThreadId,
     thread: Arc<codex_core::CodexThread>,
     tx: tokio::sync::mpsc::UnboundedSender<ThreadEventEnvelope>,
-    suppress_output: bool,
 ) {
     tokio::spawn(async move {
         loop {
@@ -666,7 +635,6 @@ fn spawn_thread_listener(
                         thread_id,
                         thread: Arc::clone(&thread),
                         event,
-                        suppress_output,
                     }) {
                         error!("Error sending event: {err:?}");
                         break;
@@ -685,30 +653,6 @@ fn spawn_thread_listener(
             }
         }
     });
-}
-
-fn is_agent_job_subagent(config: &codex_core::ThreadConfigSnapshot) -> bool {
-    match &config.session_source {
-        SessionSource::SubAgent(SubAgentSource::Other(source)) => source.starts_with("agent_job:"),
-        _ => false,
-    }
-}
-
-fn should_suppress_agent_job_event(msg: &EventMsg) -> bool {
-    !matches!(
-        msg,
-        EventMsg::ExecApprovalRequest(_)
-            | EventMsg::ApplyPatchApprovalRequest(_)
-            | EventMsg::RequestUserInput(_)
-            | EventMsg::DynamicToolCallRequest(_)
-            | EventMsg::DynamicToolCallResponse(_)
-            | EventMsg::ElicitationRequest(_)
-            | EventMsg::Error(_)
-            | EventMsg::Warning(_)
-            | EventMsg::DeprecationNotice(_)
-            | EventMsg::StreamError(_)
-            | EventMsg::ShutdownComplete
-    )
 }
 
 async fn resolve_resume_path(

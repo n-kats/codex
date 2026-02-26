@@ -256,6 +256,10 @@ async fn run_command_under_sandbox(
                 .codex_linux_sandbox_exe
                 .expect("codex-linux-sandbox executable not found");
             let use_bwrap_sandbox = config.features.enabled(Feature::UseLinuxSandboxBwrap);
+            let mut env = env;
+            if let Some(network) = network.as_ref() {
+                network.apply_to_env(&mut env);
+            }
             spawn_command_under_linux_sandbox(
                 codex_linux_sandbox_exe,
                 command,
@@ -264,7 +268,6 @@ async fn run_command_under_sandbox(
                 sandbox_policy_cwd.as_path(),
                 use_bwrap_sandbox,
                 stdio_policy,
-                network.as_ref(),
                 env,
             )
             .await?

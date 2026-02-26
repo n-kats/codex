@@ -26,6 +26,8 @@ The Rust implementation is now the maintained Codex CLI and serves as the defaul
 
 Codex supports a rich set of configuration options. Note that the Rust CLI uses `config.toml` instead of `config.json`. See [`docs/config.md`](../docs/config.md) for details.
 
+This fork also adds `custom.exec.*` to run model-triggered command execution (`shell` / `shell_command` / `exec_command`) as a dedicated worker OS user on Unix (note: `exec_command` switches users via `sudo -n`; `!` stays as the invoker). For safety, `custom.exec.*` rejects `shell_environment_policy.inherit = "all"`. See [`docs/config.md`](../docs/config.md) and [`_docs/custom_notes/command_exec_worker_user/README.md`](../_docs/custom_notes/command_exec_worker_user/README.md).
+
 ### Model Context Protocol Support
 
 #### MCP client
@@ -74,7 +76,7 @@ codex debug landlock [--full-auto] [COMMAND]...
 
 ### Selecting a sandbox policy via `--sandbox`
 
-The Rust CLI exposes a dedicated `--sandbox` (`-s`) flag that lets you pick the sandbox policy **without** having to reach for the generic `-c/--config` option:
+The Rust CLI exposes a dedicated `--sandbox` (`-s`) flag that lets you pick the sandbox policy **without** having to reach for the generic `-c` option:
 
 ```shell
 # Run Codex with the default, read-only sandbox

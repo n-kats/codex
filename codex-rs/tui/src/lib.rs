@@ -7,6 +7,7 @@ use additional_dirs::add_dir_warning_message;
 use app::App;
 pub use app::AppExitInfo;
 pub use app::ExitReason;
+use codex_app_server_protocol::ConfigLayerSource;
 use codex_cloud_requirements::cloud_requirements_loader;
 use codex_core::AuthManager;
 use codex_core::CodexAuth;
@@ -226,6 +227,16 @@ pub use markdown_render::render_markdown_text;
 pub use public_widgets::composer_input::ComposerAction;
 pub use public_widgets::composer_input::ComposerInput;
 // (tests access modules directly within the crate)
+
+pub(crate) fn user_config_toml_path(config: &Config) -> Option<PathBuf> {
+    config
+        .config_layer_stack
+        .get_user_layer()
+        .and_then(|layer| match &layer.name {
+            ConfigLayerSource::User { file } => Some(file.as_path().to_path_buf()),
+            _ => None,
+        })
+}
 
 pub async fn run_main(mut cli: Cli, arg0_paths: Arg0DispatchPaths) -> std::io::Result<AppExitInfo> {
     let (sandbox_mode, approval_policy) = if cli.full_auto {

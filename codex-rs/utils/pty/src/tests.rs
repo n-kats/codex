@@ -159,6 +159,25 @@ fn process_exists(pid: i32) -> anyhow::Result<bool> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn process_is_zombie(pid: i32) -> anyhow::Result<bool> {
+    let stat_path = format!("/proc/{pid}/stat");
+    let stat = match std::fs::read_to_string(stat_path) {
+        Ok(stat) => stat,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+
+    let Some((_, rest)) = stat.rsplit_once(") ") else {
+        anyhow::bail!("unexpected /proc stat format for pid {pid}: {stat:?}");
+    };
+    let Some(state) = rest.chars().next() else {
+        anyhow::bail!("missing process state in /proc stat for pid {pid}: {stat:?}");
+    };
+
+    Ok(state == 'Z')
+}
+
 #[cfg(unix)]
 async fn wait_for_marker_pid(
     output_rx: &mut tokio::sync::broadcast::Receiver<Vec<u8>>,
@@ -202,6 +221,10 @@ async fn wait_for_process_exit(pid: i32, timeout_ms: u64) -> anyhow::Result<bool
     let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_millis(timeout_ms);
     loop {
         if !process_exists(pid)? {
+            return Ok(true);
+        }
+        #[cfg(target_os = "linux")]
+        if process_is_zombie(pid)? {
             return Ok(true);
         }
         if tokio::time::Instant::now() >= deadline {

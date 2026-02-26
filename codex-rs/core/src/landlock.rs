@@ -2,7 +2,6 @@ use crate::protocol::SandboxPolicy;
 use crate::spawn::SpawnChildRequest;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
-use codex_network_proxy::NetworkProxy;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -25,7 +24,6 @@ pub async fn spawn_command_under_linux_sandbox<P>(
     sandbox_policy_cwd: &Path,
     use_bwrap_sandbox: bool,
     stdio_policy: StdioPolicy,
-    network: Option<&NetworkProxy>,
     env: HashMap<String, String>,
 ) -> std::io::Result<Child>
 where
@@ -36,27 +34,19 @@ where
         sandbox_policy,
         sandbox_policy_cwd,
         use_bwrap_sandbox,
-        allow_network_for_proxy(false),
     );
-    let arg0 = Some("codex-linux-sandbox");
     spawn_child_async(SpawnChildRequest {
         program: codex_linux_sandbox_exe.as_ref().to_path_buf(),
         args,
-        arg0,
+        arg0: Some("codex-linux-sandbox"),
         cwd: command_cwd,
+        run_as: None,
         sandbox_policy,
-        network,
+        network: None,
         stdio_policy,
         env,
     })
     .await
-}
-
-pub(crate) fn allow_network_for_proxy(enforce_managed_network: bool) -> bool {
-    // When managed network requirements are active, request proxy-only
-    // networking from the Linux sandbox helper. Without managed requirements,
-    // preserve existing behavior.
-    enforce_managed_network
 }
 
 /// Converts the sandbox policy into the CLI invocation for `codex-linux-sandbox`.
@@ -68,7 +58,6 @@ pub(crate) fn create_linux_sandbox_command_args(
     sandbox_policy: &SandboxPolicy,
     sandbox_policy_cwd: &Path,
     use_bwrap_sandbox: bool,
-    allow_network_for_proxy: bool,
 ) -> Vec<String> {
     #[expect(clippy::expect_used)]
     let sandbox_policy_cwd = sandbox_policy_cwd
@@ -88,9 +77,6 @@ pub(crate) fn create_linux_sandbox_command_args(
     ];
     if use_bwrap_sandbox {
         linux_cmd.push("--use-bwrap-sandbox".to_string());
-    }
-    if allow_network_for_proxy {
-        linux_cmd.push("--allow-network-for-proxy".to_string());
     }
 
     // Separator so that command arguments starting with `-` are not parsed as
@@ -114,36 +100,16 @@ mod tests {
         let cwd = Path::new("/tmp");
         let policy = SandboxPolicy::new_read_only_policy();
 
-        let with_bwrap =
-            create_linux_sandbox_command_args(command.clone(), &policy, cwd, true, false);
+        let with_bwrap = create_linux_sandbox_command_args(command.clone(), &policy, cwd, true);
         assert_eq!(
             with_bwrap.contains(&"--use-bwrap-sandbox".to_string()),
             true
         );
 
-        let without_bwrap = create_linux_sandbox_command_args(command, &policy, cwd, false, false);
+        let without_bwrap = create_linux_sandbox_command_args(command, &policy, cwd, false);
         assert_eq!(
             without_bwrap.contains(&"--use-bwrap-sandbox".to_string()),
             false
         );
-    }
-
-    #[test]
-    fn proxy_flag_is_included_when_requested() {
-        let command = vec!["/bin/true".to_string()];
-        let cwd = Path::new("/tmp");
-        let policy = SandboxPolicy::new_read_only_policy();
-
-        let args = create_linux_sandbox_command_args(command, &policy, cwd, true, true);
-        assert_eq!(
-            args.contains(&"--allow-network-for-proxy".to_string()),
-            true
-        );
-    }
-
-    #[test]
-    fn proxy_network_requires_managed_requirements() {
-        assert_eq!(allow_network_for_proxy(false), false);
-        assert_eq!(allow_network_for_proxy(true), true);
     }
 }

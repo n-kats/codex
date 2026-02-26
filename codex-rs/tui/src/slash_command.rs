@@ -29,6 +29,8 @@ pub enum SlashCommand {
     Init,
     Compact,
     Plan,
+    #[strum(serialize = "custom-agents")]
+    CustomAgents,
     Collab,
     Agent,
     // Undo,
@@ -78,6 +80,7 @@ impl SlashCommand {
             SlashCommand::Copy => "copy the latest Codex output to your clipboard",
             SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
+            SlashCommand::CustomAgents => "switch project AGENTS.md for this session",
             SlashCommand::Status => "show current session configuration and token usage",
             SlashCommand::DebugConfig => "show config layers and requirement sources for debugging",
             SlashCommand::Statusline => "configure which items appear in the status line",
@@ -120,6 +123,7 @@ impl SlashCommand {
             SlashCommand::Review
                 | SlashCommand::Rename
                 | SlashCommand::Plan
+                | SlashCommand::CustomAgents
                 | SlashCommand::SandboxReadRoot
         )
     }
@@ -142,6 +146,7 @@ impl SlashCommand {
             | SlashCommand::Experimental
             | SlashCommand::Review
             | SlashCommand::Plan
+            | SlashCommand::CustomAgents
             | SlashCommand::Clear
             | SlashCommand::Logout
             | SlashCommand::MemoryDrop

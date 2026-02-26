@@ -10,6 +10,7 @@ use crate::sandboxing::CommandSpec;
 use crate::sandboxing::SandboxPermissions;
 use crate::shell::Shell;
 use crate::skills::SkillMetadata;
+use crate::spawn::RunAsUser;
 use crate::tools::sandboxing::ToolError;
 use codex_protocol::models::PermissionProfile;
 use std::collections::HashMap;
@@ -34,6 +35,7 @@ pub(crate) fn build_command_spec(
     cwd: &Path,
     env: &HashMap<String, String>,
     expiration: ExecExpiration,
+    run_as: Option<RunAsUser>,
     sandbox_permissions: SandboxPermissions,
     additional_permissions: Option<PermissionProfile>,
     justification: Option<String>,
@@ -47,6 +49,7 @@ pub(crate) fn build_command_spec(
         cwd: cwd.to_path_buf(),
         env: env.clone(),
         expiration,
+        run_as,
         sandbox_permissions,
         additional_permissions,
         justification,

@@ -190,6 +190,10 @@ pub async fn read_project_docs(config: &Config) -> std::io::Result<Option<String
 /// directory (inclusive). Symlinks are allowed. When `project_doc_max_bytes`
 /// is zero, returns an empty list.
 pub fn discover_project_doc_paths(config: &Config) -> std::io::Result<Vec<PathBuf>> {
+    if !config.project_doc_paths.is_empty() {
+        return Ok(config.project_doc_paths.clone());
+    }
+
     let mut dir = config.cwd.clone();
     if let Ok(canon) = normalize_path(&dir) {
         dir = canon;
@@ -292,6 +296,9 @@ fn candidate_filenames<'a>(config: &'a Config) -> Vec<&'a str> {
     }
     names
 }
+
+#[cfg(test)]
+mod custom_tests;
 
 #[cfg(test)]
 mod tests {
