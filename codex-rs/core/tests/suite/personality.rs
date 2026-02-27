@@ -644,6 +644,7 @@ async fn ignores_remote_personality_if_remote_models_disabled() -> anyhow::Resul
         }),
         input_modalities: default_input_modalities(),
         supports_reasoning_summaries: false,
+        default_reasoning_summary: ReasoningSummary::Auto,
         support_verbosity: false,
         default_verbosity: None,
         apply_patch_tool_type: None,
@@ -691,7 +692,7 @@ async fn ignores_remote_personality_if_remote_models_disabled() -> anyhow::Resul
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
             model: remote_slug.to_string(),
             effort: test.config.model_reasoning_effort,
-            summary: ReasoningSummary::Auto,
+            summary: None,
             collaboration_mode: None,
             personality: None,
         })

@@ -708,6 +708,7 @@ impl CoreShellCommandExecutor {
                     cwd: workdir.to_path_buf(),
                     env,
                     expiration: ExecExpiration::DefaultTimeout,
+                    run_as: self.run_as.clone(),
                     sandbox_permissions: if additional_permissions.is_some() {
                         SandboxPermissions::WithAdditionalPermissions
                     } else {

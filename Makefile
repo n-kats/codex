@@ -62,7 +62,7 @@ docker-build:
 	@docker build $(if $(CODEX_DOCKER_PLATFORM),--platform $(CODEX_DOCKER_PLATFORM),) -t "$(CODEX_DOCKER_IMAGE_NAME)" -f "$(DOCKER_DIR)/Dockerfile" "$(ROOT_DIR)"
 
 clean: docker-build
-	$(call run_docker,cd "$(CODEX_RS_DIR_DOCKER)" && if [ -d target ]; then find target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; else mkdir -p target; fi)
+	$(call run_docker,if [ -d "$$CARGO_TARGET_DIR" ]; then find "$$CARGO_TARGET_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; else mkdir -p "$$CARGO_TARGET_DIR"; fi; cd "$(CODEX_RS_DIR_DOCKER)" && if [ -d target ]; then find target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; else mkdir -p target; fi)
 
 define run_test_logged
 	@mkdir -p "$(TMP_DIR)"; \
@@ -128,7 +128,7 @@ help:
 		"  make update-fixtures  # Regenerate config schema + accept snapshots" \
 		"  make all              # Run format + test-all" \
 		"  make almost           # Run format + test-almost" \
-		"  make clean            # Remove Rust build artifacts (codex-rs/target)"
+		"  make clean            # Remove Rust build artifacts (mounted CARGO_TARGET_DIR + codex-rs/target)"
 
 # Formatting
 fmt: cache-dir docker-build
