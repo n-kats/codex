@@ -4472,7 +4472,7 @@ mod tests {
         });
 
         app.chat_widget
-            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         let mut saw_rollback = false;
         let mut submitted_items: Option<Vec<UserInput>> = None;

@@ -13,6 +13,13 @@
   - `clear/off/none/auto/default` は auto-discovery に戻す
   - パス指定時は存在/種別チェック後に `OverrideTurnContext` で反映
 
+## 追記（2026-02-27 回帰修正）
+
+- `codex`（interactive）経路で `--agents-md` 引数が `run_interactive_tui` で破棄されていたため、TUI `run_main` まで配線を復元した。
+- `codex-rs/tui/src/lib.rs` の `ConfigOverrides` に `project_doc_paths: agents_md` を再設定し、interactive 起動時にも明示 AGENTS パスが反映されるようにした。
+- `codex-rs/tui/src/main.rs` は API 変更に合わせて `run_main(..., Vec::new())` を渡すよう更新した。
+- 回帰防止として `cli/src/custom_tests.rs` に `custom__agents_md__interactive起動時にtuiへ引き継がれる` を追加し、interactive 起動時の引き継ぎを検証する。
+
 ## 対象範囲（非対象も）
 
 - 対象:

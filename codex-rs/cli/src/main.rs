@@ -1005,7 +1005,7 @@ fn prepend_config_flags(
 async fn run_interactive_tui(
     mut interactive: TuiCli,
     arg0_paths: Arg0DispatchPaths,
-    _agents_md: Vec<PathBuf>,
+    agents_md: Vec<PathBuf>,
 ) -> std::io::Result<AppExitInfo> {
     if let Some(prompt) = interactive.prompt.take() {
         // Normalize CRLF/CR to LF so CLI-provided text can't leak `\r` into TUI state.
@@ -1030,7 +1030,56 @@ async fn run_interactive_tui(
         }
     }
 
-    codex_tui::run_main(interactive, arg0_paths).await
+    run_codex_tui_main(interactive, arg0_paths, agents_md).await
+}
+
+#[cfg(not(test))]
+async fn run_codex_tui_main(
+    interactive: TuiCli,
+    arg0_paths: Arg0DispatchPaths,
+    agents_md: Vec<PathBuf>,
+) -> std::io::Result<AppExitInfo> {
+    codex_tui::run_main(interactive, arg0_paths, agents_md).await
+}
+
+#[cfg(test)]
+static INTERACTIVE_TUI_AGENTS_MD_CAPTURE: std::sync::LazyLock<
+    std::sync::Mutex<Option<Vec<PathBuf>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+#[cfg(test)]
+fn clear_interactive_tui_agents_md_capture_for_test() {
+    if let Ok(mut captured) = INTERACTIVE_TUI_AGENTS_MD_CAPTURE.lock() {
+        *captured = None;
+    }
+}
+
+#[cfg(test)]
+fn take_interactive_tui_agents_md_capture_for_test() -> Option<Vec<PathBuf>> {
+    INTERACTIVE_TUI_AGENTS_MD_CAPTURE
+        .lock()
+        .ok()
+        .and_then(|mut captured| captured.take())
+}
+
+#[cfg(test)]
+async fn run_codex_tui_main(
+    interactive: TuiCli,
+    arg0_paths: Arg0DispatchPaths,
+    agents_md: Vec<PathBuf>,
+) -> std::io::Result<AppExitInfo> {
+    let _ = interactive;
+    let _ = arg0_paths;
+    if let Ok(mut captured) = INTERACTIVE_TUI_AGENTS_MD_CAPTURE.lock() {
+        *captured = Some(agents_md);
+    }
+    Ok(AppExitInfo {
+        token_usage: codex_protocol::protocol::TokenUsage::default(),
+        thread_id: None,
+        thread_name: None,
+        update_action: None,
+        exit_reason: ExitReason::UserRequested,
+    })
 }
 
 fn confirm(prompt: &str) -> std::io::Result<bool> {

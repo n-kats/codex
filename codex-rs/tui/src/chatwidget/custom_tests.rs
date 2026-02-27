@@ -6,7 +6,6 @@ use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
 use pretty_assertions::assert_eq;
-use tempfile::tempdir;
 use tokio::sync::mpsc::error::TryRecvError;
 
 fn next_override_turn_context_event(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>) -> Op {
@@ -28,11 +27,6 @@ fn next_override_turn_context_event(rx: &mut tokio::sync::mpsc::UnboundedReceive
 async fn custom__custom_agents__slash_custom_agents_指定パスをsessionのproject_doc_pathsへ反映する()
 {
     let (mut chat, _app_event_tx, mut rx, _op_rx) = make_chatwidget_manual_with_sender().await;
-    let tempdir = tempdir().expect("tempdir");
-    let custom_doc = tempdir.path().join("docs").join("AGENTS.override.md");
-    std::fs::create_dir_all(custom_doc.parent().expect("parent")).expect("create docs dir");
-    std::fs::write(&custom_doc, "custom").expect("write custom doc");
-    chat.config.cwd = tempdir.path().to_path_buf();
 
     chat.bottom_pane.set_composer_text(
         "/custom-agents docs/AGENTS.override.md".to_string(),
@@ -54,7 +48,7 @@ async fn custom__custom_agents__slash_custom_agents_指定パスをsessionのpro
             summary: None,
             collaboration_mode: None,
             personality: None,
-            project_doc_paths: Some(Some(vec![custom_doc])),
+            project_doc_paths: Some(Some(vec!["docs/AGENTS.override.md".into()])),
         }
     );
 }

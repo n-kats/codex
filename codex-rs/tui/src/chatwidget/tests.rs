@@ -581,7 +581,7 @@ async fn submission_preserves_text_elements_and_local_images() {
 
     chat.bottom_pane
         .set_composer_text(text.clone(), text_elements.clone(), local_images.clone());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -667,7 +667,7 @@ async fn submission_with_remote_and_local_images_keeps_local_placeholder_numberi
     chat.bottom_pane
         .set_composer_text(text.clone(), text_elements.clone(), local_images.clone());
     assert_eq!(chat.bottom_pane.composer_text(), "[Image #2] submit mixed");
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -750,7 +750,7 @@ async fn enter_with_only_remote_images_submits_user_turn() {
     chat.set_remote_image_urls(vec![remote_url.clone()]);
     assert_eq!(chat.bottom_pane.composer_text(), "");
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let (items, summary) = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, summary, .. } => (items, summary),
@@ -851,7 +851,7 @@ async fn enter_with_only_remote_images_does_not_submit_when_modal_is_active() {
     chat.set_remote_image_urls(vec![remote_url.clone()]);
 
     chat.open_review_popup();
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_eq!(chat.remote_image_urls(), vec![remote_url]);
     assert_no_submit_op(&mut op_rx);
@@ -890,7 +890,7 @@ async fn enter_with_only_remote_images_does_not_submit_when_input_disabled() {
     chat.bottom_pane
         .set_composer_input_enabled(false, Some("Input disabled for test.".to_string()));
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_eq!(chat.remote_image_urls(), vec![remote_url]);
     assert_no_submit_op(&mut op_rx);
@@ -962,7 +962,7 @@ async fn submission_prefers_selected_duplicate_skill_path() {
             path: user_skill_path.to_string_lossy().into_owned(),
         }],
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -1252,7 +1252,7 @@ async fn interrupted_turn_restore_keeps_active_mode_for_resubmission() {
     assert!(chat.queued_user_messages.is_empty());
     assert_eq!(chat.active_collaboration_mode_kind(), expected_mode);
 
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
@@ -2204,7 +2204,7 @@ async fn plan_implementation_popup_yes_emits_submit_message_event() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
     chat.open_plan_implementation_prompt();
 
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let event = rx.try_recv().expect("expected AppEvent");
     let AppEvent::SubmitUserMessageWithMode {
@@ -2259,7 +2259,7 @@ async fn reasoning_selection_in_plan_mode_opens_scope_prompt_event() {
     let preset = get_available_model(&chat, "gpt-5.1-codex-max");
     chat.open_reasoning_popup(preset);
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let event = rx.try_recv().expect("expected AppEvent");
     assert_matches!(
@@ -2287,7 +2287,7 @@ async fn reasoning_selection_in_plan_mode_without_effort_change_does_not_open_sc
 
     let preset = get_available_model(&chat, "gpt-5.1-codex-max");
     chat.open_reasoning_popup(preset);
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
@@ -2324,7 +2324,7 @@ async fn reasoning_selection_in_plan_mode_matching_plan_effort_but_different_glo
 
     let preset = get_available_model(&chat, "gpt-5.1-codex-max");
     chat.open_reasoning_popup(preset);
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let event = rx.try_recv().expect("expected AppEvent");
     assert_matches!(
@@ -2372,7 +2372,7 @@ async fn reasoning_selection_in_plan_mode_model_switch_does_not_open_scope_promp
 
     let preset = get_available_model(&chat, "gpt-5");
     chat.open_reasoning_popup(preset);
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
@@ -2399,7 +2399,7 @@ async fn plan_reasoning_scope_popup_all_modes_persists_global_and_plan_override(
     );
 
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
@@ -2463,7 +2463,7 @@ async fn plan_reasoning_scope_popup_plan_only_does_not_update_all_modes_reasonin
         Some(ReasoningEffortConfig::High),
     );
 
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
@@ -3126,7 +3126,7 @@ async fn empty_enter_during_task_does_not_queue() {
     chat.bottom_pane.set_task_running(true);
 
     // Press Enter with an empty composer.
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     // Ensure nothing was queued.
     assert!(chat.queued_user_messages.is_empty());
@@ -3247,7 +3247,7 @@ async fn enqueueing_history_prompt_multiple_times_is_stable() {
     // Submit an initial prompt to seed history.
     chat.bottom_pane
         .set_composer_text("repeat me".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     // Simulate an active task so further submissions are queued.
     chat.bottom_pane.set_task_running(true);
@@ -3453,7 +3453,7 @@ async fn enter_queues_while_plan_stream_is_active() {
 
     chat.bottom_pane
         .set_composer_text("queued submission".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
     assert_eq!(chat.queued_user_messages.len(), 1);
@@ -3478,7 +3478,7 @@ async fn steer_enter_queues_while_final_answer_stream_is_active() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_eq!(chat.queued_user_messages.len(), 1);
     assert_eq!(
@@ -3508,10 +3508,10 @@ async fn steer_enter_during_final_stream_preserves_follow_up_prompts_in_order() 
 
     chat.bottom_pane
         .set_composer_text("first follow-up".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     chat.bottom_pane
         .set_composer_text("second follow-up".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_eq!(chat.queued_user_messages.len(), 2);
     assert_eq!(
@@ -3576,7 +3576,7 @@ async fn enter_submits_when_plan_stream_is_not_active() {
 
     chat.bottom_pane
         .set_composer_text("submitted immediately".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert!(chat.queued_user_messages.is_empty());
     match next_submit_op(&mut op_rx) {
@@ -4209,7 +4209,7 @@ async fn review_popup_custom_prompt_action_sends_event() {
     chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     // Activate
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     // Drain events and ensure we saw the OpenReviewCustomPrompt request
     let mut found = false;
@@ -4346,7 +4346,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
         "expected collaboration picker: {popup}"
     );
 
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     let selected_mask = match rx.try_recv() {
         Ok(AppEvent::UpdateCollaborationMode(mask)) => mask,
         other => panic!("expected UpdateCollaborationMode event, got {other:?}"),
@@ -4355,7 +4355,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode:
@@ -4373,7 +4373,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
 
     chat.bottom_pane
         .set_composer_text("follow up".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode:
@@ -4436,7 +4436,7 @@ async fn plan_slash_command_with_args_submits_prompt_in_plan_mode() {
 
     chat.bottom_pane
         .set_composer_text("/plan build the plan".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -4605,7 +4605,7 @@ async fn collab_mode_is_sent_after_enabling() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode:
@@ -4629,7 +4629,7 @@ async fn collab_mode_applies_default_preset() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode:
@@ -4659,7 +4659,7 @@ async fn user_turn_includes_personality_from_config() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             personality: Some(Personality::Friendly),
@@ -5162,7 +5162,7 @@ async fn custom_prompt_submit_sends_review_op() {
     chat.show_review_custom_prompt();
     // Paste prompt text via ChatWidget handler, then submit
     chat.handle_paste("  please audit dependencies  ".to_string());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     // Expect AppEvent::CodexOp(Op::Review { .. }) with trimmed prompt
     let evt = rx.try_recv().expect("expected one app event");
@@ -5189,7 +5189,7 @@ async fn custom_prompt_enter_empty_does_not_send() {
 
     chat.show_review_custom_prompt();
     // Enter without any text
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     // No AppEvent::CodexOp should be sent
     assert!(rx.try_recv().is_err(), "no app event should be sent");
@@ -5941,7 +5941,7 @@ async fn experimental_features_toggle_saves_on_exit() {
         "expected no updates until saving the popup"
     );
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let mut updates = None;
     while let Ok(event) = rx.try_recv() {
@@ -6503,7 +6503,7 @@ async fn approvals_popup_navigation_skips_disabled() {
     assert!(rx.try_recv().is_err(), "no history should be emitted");
 
     // Press Enter; selection should land on an enabled preset and dispatch updates.
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     let mut app_events = Vec::new();
     while let Ok(ev) = rx.try_recv() {
         app_events.push(ev);
@@ -6544,7 +6544,7 @@ async fn permissions_selection_emits_history_cell_when_selection_changes() {
 
     chat.open_permissions_popup();
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let cells = drain_insert_history(&mut rx);
     assert_eq!(
@@ -6573,7 +6573,7 @@ async fn permissions_selection_history_snapshot_after_mode_switch() {
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     #[cfg(target_os = "windows")]
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let cells = drain_insert_history(&mut rx);
     assert_eq!(cells.len(), 1, "expected one mode-switch history cell");
@@ -6605,7 +6605,7 @@ async fn permissions_selection_history_snapshot_full_access_to_default() {
 
     chat.open_permissions_popup();
     chat.handle_key_event(KeyEvent::from(KeyCode::Up));
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let cells = drain_insert_history(&mut rx);
     assert_eq!(cells.len(), 1, "expected one mode-switch history cell");
@@ -6641,7 +6641,7 @@ async fn permissions_selection_emits_history_cell_when_current_is_selected() {
         .expect("set sandbox policy");
 
     chat.open_permissions_popup();
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let cells = drain_insert_history(&mut rx);
     assert_eq!(
@@ -6670,7 +6670,7 @@ async fn permissions_full_access_history_cell_emitted_only_after_confirmation() 
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
     #[cfg(target_os = "windows")]
     chat.handle_key_event(KeyEvent::from(KeyCode::Down));
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let mut open_confirmation_event = None;
     let mut cells_before_confirmation = Vec::new();
@@ -6704,7 +6704,7 @@ async fn permissions_full_access_history_cell_emitted_only_after_confirmation() 
         "expected full access confirmation popup, got: {popup}"
     );
 
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     let cells_after_confirmation = drain_insert_history(&mut rx);
     let total_history_cells = cells_before_confirmation.len() + cells_after_confirmation.len();
     assert_eq!(

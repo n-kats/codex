@@ -238,7 +238,11 @@ pub(crate) fn user_config_toml_path(config: &Config) -> Option<PathBuf> {
         })
 }
 
-pub async fn run_main(mut cli: Cli, arg0_paths: Arg0DispatchPaths) -> std::io::Result<AppExitInfo> {
+pub async fn run_main(
+    mut cli: Cli,
+    arg0_paths: Arg0DispatchPaths,
+    agents_md: Vec<PathBuf>,
+) -> std::io::Result<AppExitInfo> {
     let (sandbox_mode, approval_policy) = if cli.full_auto {
         (
             Some(SandboxMode::WorkspaceWrite),
@@ -390,6 +394,7 @@ pub async fn run_main(mut cli: Cli, arg0_paths: Arg0DispatchPaths) -> std::io::R
         codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe.clone(),
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
         show_raw_agent_reasoning: cli.oss.then_some(true),
+        project_doc_paths: agents_md,
         additional_writable_roots: additional_dirs,
         ..Default::default()
     };

@@ -3892,6 +3892,7 @@ mod handlers {
         sub_id: String,
         mut updates: SessionSettingsUpdate,
     ) {
+        let mut should_reinject_full_context_on_next_turn = false;
         if let Some(project_doc_paths) = updates.project_doc_paths.clone() {
             let session_configuration = { sess.state.lock().await.session_configuration.clone() };
             let mut config = Session::build_per_turn_config(&session_configuration);
@@ -3900,16 +3901,52 @@ mod handlers {
             }
 
             config.project_doc_paths = match project_doc_paths {
-                Some(paths) => paths
-                    .into_iter()
-                    .map(|path| {
-                        if path.is_absolute() {
+                Some(paths) => {
+                    let mut resolved_paths = Vec::with_capacity(paths.len());
+                    for path in paths {
+                        let resolved_path = if path.is_absolute() {
                             path
                         } else {
                             config.cwd.join(path)
+                        };
+
+                        let metadata = match std::fs::symlink_metadata(&resolved_path) {
+                            Ok(metadata) => metadata,
+                            Err(err) => {
+                                sess.send_event_raw(Event {
+                                    id: sub_id.clone(),
+                                    msg: EventMsg::Error(ErrorEvent {
+                                        message: format!(
+                                            "invalid /custom-agents path {}: {err}",
+                                            resolved_path.display()
+                                        ),
+                                        codex_error_info: Some(CodexErrorInfo::BadRequest),
+                                    }),
+                                })
+                                .await;
+                                return;
+                            }
+                        };
+                        let file_type = metadata.file_type();
+                        if !(file_type.is_file() || file_type.is_symlink()) {
+                            sess.send_event_raw(Event {
+                                id: sub_id.clone(),
+                                msg: EventMsg::Error(ErrorEvent {
+                                    message: format!(
+                                        "invalid /custom-agents path (not a file): {}",
+                                        resolved_path.display()
+                                    ),
+                                    codex_error_info: Some(CodexErrorInfo::BadRequest),
+                                }),
+                            })
+                            .await;
+                            return;
                         }
-                    })
-                    .collect(),
+
+                        resolved_paths.push(resolved_path);
+                    }
+                    resolved_paths
+                }
                 None => Vec::new(),
             };
 
@@ -3926,6 +3963,7 @@ mod handlers {
             let user_instructions =
                 super::get_user_instructions(&config, Some(&enabled_skills)).await;
             updates.user_instructions = Some(user_instructions);
+            should_reinject_full_context_on_next_turn = true;
         }
 
         if let Err(err) = sess.update_settings(updates).await {
@@ -3937,6 +3975,11 @@ mod handlers {
                 }),
             })
             .await;
+        } else if should_reinject_full_context_on_next_turn {
+            // `project_doc_paths` changes affect contextual user instructions. Clear
+            // the baseline so the next regular turn re-injects full context.
+            let mut state = sess.state.lock().await;
+            state.set_reference_context_item(None);
         }
     }
 

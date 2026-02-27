@@ -56,7 +56,24 @@
 - `codex-rs/tui/src/diff_render/custom_tests.rs`
   - `custom__差分テーマ色__*`
 
+## つまずきと対処（2026-02-27）
+
+- 症状
+  - `make almost` の `core` 統合テストで `suite::compact_resume_fork::compact_resume_and_fork_preserve_model_history_view` が `timeout waiting for event` で失敗。
+  - 同時にログに `Shell snapshot validation failed: Failed to execute bash (os error 2)` が出る。
+- 原因
+  - `codex-rs/core/tests/suite/compact_resume_fork.rs` の `start_test_conversation()` が `TestCodex.cwd`（`Arc<TempDir>`）を返しておらず、関数終了時に `cwd` が削除される。
+  - その後の shell snapshot 検証で `Command::current_dir(cwd)` が存在しないディレクトリを参照し、`os error 2` になる。
+- 対処
+  - `start_test_conversation()` の戻り値に `Arc<TempDir>`（`cwd` ガード）を追加し、呼び出し側で `_cwd` として保持する。
+  - 対象: `compact_resume_and_fork_preserve_model_history_view` / `compact_resume_after_second_compaction_preserves_history`。
+- 確認観点（手元環境で実行）
+  - `cd codex-rs && cargo test -p codex-core --test all suite::compact_resume_fork::compact_resume_and_fork_preserve_model_history_view`
+  - `cd codex-rs && cargo test -p codex-core --test all suite::compact_resume_fork::compact_resume_after_second_compaction_preserves_history`
+  - shell snapshot の `Failed to execute bash (os error 2)` が再発しないことを確認する。
+
 ## 関連ファイル一覧
 
 - `_docs/custom_notes/rebase_rules/README.md`
 - `CUSTOM.md`
+- `codex-rs/core/tests/suite/compact_resume_fork.rs`

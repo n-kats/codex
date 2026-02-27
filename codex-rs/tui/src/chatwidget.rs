@@ -3861,13 +3861,6 @@ impl ChatWidget {
                     let paths = trimmed
                         .split_whitespace()
                         .map(PathBuf::from)
-                        .map(|path| {
-                            if path.is_absolute() {
-                                path
-                            } else {
-                                self.config.cwd.join(path)
-                            }
-                        })
                         .collect::<Vec<_>>();
                     if paths.is_empty() {
                         self.add_error_message(

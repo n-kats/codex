@@ -17,16 +17,30 @@
 - 送信に関わるテスト入力を `Ctrl+Enter` / `Ctrl+J` に更新した（UI スナップショット更新が必要になる場合あり）。
 - `/` コマンドの実行も「送信」扱い（`Ctrl+Enter` / `Ctrl+J`）に統一する。
 
+## 追記（2026-02-27 回帰修正）
+
+- upstream 取り込み後の回帰で `Enter` が再び送信になっていたため、`chat_composer` のキー分岐を再修正した。
+- あわせてフッター表示を `Ctrl+Enter`（端末非対応時は `Ctrl+J`）送信 / `Enter` 改行に戻した。
+- `docs/tui-chat-composer.md` の説明文も現行仕様に合わせて更新した。
+- 回帰防止として、`chat_composer` に次のキー仕様テストを追加した。
+  - `enter_inserts_newline_without_submitting`
+  - `ctrl_enter_submits_message`
+  - `ctrl_j_submits_message`
+- 既存テストの追従として、`request_user_input` の回答確定テスト入力を `Enter` から `Ctrl+Enter` に更新した。
+- フッターの collaboration mode ありスナップショット（`footer_shortcuts_collaboration_modes_enabled`）を現行表示に更新した。
+- 例外として `/custom-agents <path...>` は無修飾 `Enter` でも実行できるようにした（通常メッセージの Enter 改行は維持）。
+
 ## 対象範囲
 
 - 対象: 入力欄の「送信」操作（通常のメッセージ送信、`/` コマンドの dispatch、`/prompts:*` の実行）。
-- 非対象: ポップアップ表示中の `Enter`（候補の選択/確定などの UI 操作）は従来どおり。
+- 対象: 選択系ポップアップ（ListSelection / file / mention）と review custom prompt view でも `Ctrl+Enter` を受理する。
+- 非対象: `Enter` の従来動作（候補選択/確定など）は維持する。`Ctrl+Enter` は追加で受理する互換キー扱い。
 
 ## 注意点
 
 - 端末によっては `Ctrl+Enter` を区別できない場合がある（環境依存）。その場合は送信できない可能性があるため、実端末で動作確認する。
 - `Ctrl+Enter` が効かない端末では `Ctrl+J` で送信できる（`Enter` は改行のまま）。
-- ポップアップ（候補選択など）の `Enter` は従来どおり選択に使う（改行にはならないことがある）。
+- ポップアップ（候補選択など）は `Enter` でも `Ctrl+Enter` でも選択/確定できる。
 - 実装後に `dead_code` 警告が出た場合は、使われなくなったフラグ/分岐（例: 以前の `Shift+Enter` ヒント）を削除し、テスト・スナップショットも合わせて更新する。
 
 ## 実装メモ

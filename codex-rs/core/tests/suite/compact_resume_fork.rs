@@ -150,7 +150,7 @@ async fn compact_resume_and_fork_preserve_model_history_view() {
     let request_log = mount_initial_flow(&server).await;
     let expected_model = "gpt-5.1-codex";
     // 2. Start a new conversation and drive it through the compact/resume/fork steps.
-    let (_home, config, manager, base) =
+    let (_home, _cwd, config, manager, base) =
         start_test_conversation(&server, Some(expected_model)).await;
 
     user_turn(&base, "hello world").await;
@@ -306,7 +306,7 @@ async fn compact_resume_after_second_compaction_preserves_history() {
     request_log.extend(mount_second_compact_flow(&server).await);
 
     // 2. Drive the conversation through compact -> resume -> fork -> compact -> resume.
-    let (_home, config, manager, base) = start_test_conversation(&server, None).await;
+    let (_home, _cwd, config, manager, base) = start_test_conversation(&server, None).await;
 
     user_turn(&base, "hello world").await;
     compact_conversation(&base).await;
@@ -522,7 +522,13 @@ async fn mount_second_compact_flow(server: &MockServer) -> Vec<ResponseMock> {
 async fn start_test_conversation(
     server: &MockServer,
     model: Option<&str>,
-) -> (Arc<TempDir>, Config, Arc<ThreadManager>, Arc<CodexThread>) {
+) -> (
+    Arc<TempDir>,
+    Arc<TempDir>,
+    Config,
+    Arc<ThreadManager>,
+    Arc<CodexThread>,
+) {
     let base_url = format!("{}/v1", server.uri());
     let model = model.map(str::to_string);
     let mut builder = test_codex().with_config(move |config| {
@@ -534,7 +540,13 @@ async fn start_test_conversation(
         }
     });
     let test = builder.build(server).await.expect("create conversation");
-    (test.home, test.config, test.thread_manager, test.codex)
+    (
+        test.home,
+        test.cwd,
+        test.config,
+        test.thread_manager,
+        test.codex,
+    )
 }
 
 async fn user_turn(conversation: &Arc<CodexThread>, text: &str) {
