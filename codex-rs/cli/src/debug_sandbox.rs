@@ -268,6 +268,7 @@ async fn run_command_under_sandbox(
                 sandbox_policy_cwd.as_path(),
                 use_bwrap_sandbox,
                 stdio_policy,
+                network.as_ref(),
                 env,
             )
             .await?

@@ -11,6 +11,7 @@ use crate::exec::ExecToolCallOutput;
 use crate::exec::SandboxType;
 use crate::exec::StdoutStream;
 use crate::exec::execute_exec_env;
+use crate::landlock::allow_network_for_proxy;
 use crate::landlock::create_linux_sandbox_command_args;
 use crate::protocol::SandboxPolicy;
 #[cfg(target_os = "macos")]
@@ -354,8 +355,6 @@ impl SandboxManager {
             use_linux_sandbox_bwrap,
             windows_sandbox_level,
         } = request;
-        #[cfg(not(target_os = "macos"))]
-        let _ = enforce_managed_network;
         let effective_policy =
             if let Some(additional_permissions) = spec.additional_permissions.take() {
                 sandbox_policy_with_additional_permissions(policy, &additional_permissions)?
@@ -403,6 +402,7 @@ impl SandboxManager {
                     &effective_policy,
                     sandbox_policy_cwd,
                     use_linux_sandbox_bwrap,
+                    allow_network_for_proxy(enforce_managed_network),
                 );
                 let mut full_command = Vec::with_capacity(1 + args.len());
                 full_command.push(exe.to_string_lossy().to_string());
