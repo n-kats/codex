@@ -14,6 +14,7 @@ RUN apt-get update && \
     clang libssl-dev libcap-dev libseccomp-dev musl-tools \
     bash coreutils findutils \
     iputils-ping netcat-openbsd openssh-client wget \
+    sudo \
     just && \
     rm -rf /var/lib/apt/lists/*
 
@@ -34,6 +35,10 @@ RUN chmod -R a+rwx /usr/local/rustup /usr/local/cargo
 RUN if ! getent group assistant >/dev/null; then groupadd -g 1500 assistant; fi && \
     if ! id -u assistant >/dev/null 2>&1; then useradd -m -u 1500 -g 1500 -s /bin/bash assistant; fi && \
     usermod -aG ubuntu assistant
+
+# Allow the default container user to switch to the assistant worker user without a password.
+RUN echo "ubuntu ALL=(assistant:assistant) NOPASSWD: ALL" > /etc/sudoers.d/codex-worker-user && \
+    chmod 0440 /etc/sudoers.d/codex-worker-user
 
 USER ubuntu
 WORKDIR /workspace

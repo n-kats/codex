@@ -7,12 +7,12 @@ SHELL := /bin/bash
 	docker-build \
 	fmt \
 	build \
-	run-tui test-tui \
+	run-tui run-tui-test test-tui \
 	test-custom list-custom-tests \
 	update-fixtures \
 	lint-arg0 test-arg0 fix-arg0 \
 	lint-cli test-cli fix-cli \
-	clean build-linux-sandbox test-core test-all test-almost all almost \
+	clean clean-dry-run build-linux-sandbox test-core test-all test-almost all almost \
 	write-config-schema \
 	verify-all-custom verify-codex-home-cli-flag verify-tui-enter-newline-ctrl-enter-send verify-additional-prompt-dirs-env verify-exec-command-default-login verify-linux-default-shell verify-command-exec-worker-user
 
@@ -35,6 +35,7 @@ CODEX_DOCKER_IMAGE_NAME ?= codex-dev
 CODEX_DOCKER_PLATFORM ?=
 CODEX_DOCKER_CACHE_DIR ?= $(CACHE_DIR)/docker
 DOCKER_RUN := $(ROOT_DIR)/scripts/docker_run.sh
+RUN_TUI_CONFIG ?= sample_config.toml
 
 SKIP_ALMOST_TESTS ?= \
 	view_image_tool_attaches_local_image \
@@ -62,7 +63,15 @@ docker-build:
 	@docker build $(if $(CODEX_DOCKER_PLATFORM),--platform $(CODEX_DOCKER_PLATFORM),) -t "$(CODEX_DOCKER_IMAGE_NAME)" -f "$(DOCKER_DIR)/Dockerfile" "$(ROOT_DIR)"
 
 clean: docker-build
-	$(call run_docker,if [ -d "$$CARGO_TARGET_DIR" ]; then find "$$CARGO_TARGET_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; else mkdir -p "$$CARGO_TARGET_DIR"; fi; cd "$(CODEX_RS_DIR_DOCKER)" && if [ -d target ]; then find target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; else mkdir -p target; fi)
+	@# Make runs recipes with `-u` (nounset). Set a placeholder so the host shell expands
+	@# `$CARGO_TARGET_DIR` into `${CARGO_TARGET_DIR}`, leaving the real expansion for the container.
+	@export CARGO_TARGET_DIR='$${CARGO_TARGET_DIR}'; \
+	$(call run_docker,if [ -d "$$CARGO_TARGET_DIR" ]; then shopt -s dotglob nullglob; rm -rf -- "$$CARGO_TARGET_DIR"/*; shopt -u dotglob nullglob; else mkdir -p "$$CARGO_TARGET_DIR"; fi; cd "$(CODEX_RS_DIR_DOCKER)" && if [ -d target ]; then shopt -s dotglob nullglob; rm -rf -- target/*; shopt -u dotglob nullglob; else mkdir -p target; fi)
+
+clean-dry-run: docker-build
+	@# Print the directories and entries that `make clean` would remove.
+	@export CARGO_TARGET_DIR='$${CARGO_TARGET_DIR}'; \
+	$(call run_docker,echo "CARGO_TARGET_DIR=$$CARGO_TARGET_DIR"; if [ -d "$$CARGO_TARGET_DIR" ]; then echo "[would remove] $$CARGO_TARGET_DIR/*"; find "$$CARGO_TARGET_DIR" -mindepth 1 -maxdepth 1 -print | sort; else echo "[missing] $$CARGO_TARGET_DIR"; fi; cd "$(CODEX_RS_DIR_DOCKER)" && echo "WORKSPACE_TARGET=$$(pwd)/target" && if [ -d target ]; then echo "[would remove] $$(pwd)/target/*"; find target -mindepth 1 -maxdepth 1 -print | sort; else echo "[missing] $$(pwd)/target"; fi)
 
 define run_test_logged
 	@mkdir -p "$(TMP_DIR)"; \
@@ -108,6 +117,8 @@ help:
 		"  make docker-build     # Build the Docker image for build/test" \
 		"  make fmt              # Format Rust" \
 		"  make build            # Build codex (CLI entrypoint)" \
+		"  make run-tui          # Run codex TUI (uses RUN_TUI_CONFIG)" \
+		"  make run-tui-test     # Alias for run-tui" \
 		"  make release          # Build Linux release tarball into ./_release" \
 		"" \
 		"  make verify-all-custom# Run all custom verifications (no auto-fix)" \
@@ -124,11 +135,12 @@ help:
 		"  make list-custom-tests# List custom__ test names from Rust sources" \
 		"  make test-core        # Run codex-core tests (builds linux sandbox first on Linux)" \
 		"  make test-all         # Run full Rust test suite (all features)" \
-		"  make test-almost      # Run tests skipping known flaky cases" \
+		"  make test-almost      # Run tests skipping known flaky cases (default features)" \
 		"  make update-fixtures  # Regenerate config schema + accept snapshots" \
 		"  make all              # Run format + test-all" \
 		"  make almost           # Run format + test-almost" \
-		"  make clean            # Remove Rust build artifacts (mounted CARGO_TARGET_DIR + codex-rs/target)"
+		"  make clean            # Remove Rust build artifacts (mounted CARGO_TARGET_DIR + codex-rs/target)" \
+		"  make clean-dry-run    # Print what clean would remove"
 
 # Formatting
 fmt: cache-dir docker-build
@@ -185,7 +197,8 @@ all:
 	$(call run_targets_continue_logged,all,fmt test-all)
 
 test-almost: build-linux-sandbox docker-build
-	$(call run_test_logged,test_almost,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test --all-features -- $(foreach test,$(SKIP_ALMOST_TESTS),--skip $(test)))
+	@# `--all-features` tends to blow up the build matrix and `target/` size; keep `test-all` for that.
+	$(call run_test_logged,test_almost,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -- $(foreach test,$(SKIP_ALMOST_TESTS),--skip $(test)))
 
 almost:
 	$(call run_targets_continue_logged,almost,fmt test-almost)
@@ -221,7 +234,10 @@ verify-command-exec-worker-user: cache-dir docker-build
 
 # TUI helpers
 run-tui: cache-dir docker-build
-	$(call run_docker,cd "$(CODEX_RS_DIR_DOCKER)" && cargo run -p codex-cli --bin codex)
+	$(call run_docker,cd "$(CODEX_RS_DIR_DOCKER)" && cargo run -p codex-cli --bin codex -- --config "$(ROOT_DIR_DOCKER)/$(RUN_TUI_CONFIG)")
+
+run-tui-test: docker-build
+	@$(MAKE) --no-print-directory run-tui
 
 test-tui: cache-dir docker-build
 	$(call run_test_logged,test_tui,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui)

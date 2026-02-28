@@ -270,6 +270,95 @@ async fn pty_python_repl_emits_output_and_exits() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(unix)]
+async fn pipe_run_as_current_user_works() -> anyhow::Result<()> {
+    // Sanity-check the run_as plumbing without requiring elevated privileges.
+    let uid = unsafe { libc::geteuid() } as u32;
+    let gid = unsafe { libc::getegid() } as u32;
+
+    let spawned = crate::pipe::spawn_process_no_stdin_with_run_as(
+        "id",
+        &["-u".to_string()],
+        Path::new("."),
+        &HashMap::new(),
+        &None,
+        Some(crate::RunAsUser {
+            uid,
+            gid,
+            supplementary_gids: None,
+        }),
+    )
+    .await?;
+
+    let (collected, exit_code) =
+        collect_output_until_exit(spawned.output_rx, spawned.exit_rx, 2_000).await;
+    assert_eq!(exit_code, 0);
+    assert_eq!(String::from_utf8_lossy(&collected).trim(), uid.to_string());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(unix)]
+async fn pipe_run_as_different_user_switches_uid_when_permitted() -> anyhow::Result<()> {
+    // Best-effort coverage: only assert user switching when the environment permits it.
+    let worker_user = "assistant";
+    let (worker_uid, worker_gid) = {
+        let Ok(c_user) = std::ffi::CString::new(worker_user) else {
+            return Ok(());
+        };
+        // SAFETY: libc call, CString provides NUL-terminated pointer.
+        let pw = unsafe { libc::getpwnam(c_user.as_ptr()) };
+        if pw.is_null() {
+            return Ok(());
+        }
+        // SAFETY: pw is non-null and points to a passwd struct.
+        unsafe { ((*pw).pw_uid as u32, (*pw).pw_gid as u32) }
+    };
+
+    let invoker_uid = unsafe { libc::geteuid() } as u32;
+    if worker_uid == invoker_uid {
+        return Ok(());
+    }
+
+    let spawned = match crate::pipe::spawn_process_no_stdin_with_run_as(
+        "id",
+        &["-u".to_string()],
+        Path::new("."),
+        &HashMap::new(),
+        &None,
+        Some(crate::RunAsUser {
+            uid: worker_uid,
+            gid: worker_gid,
+            supplementary_gids: None,
+        }),
+    )
+    .await
+    {
+        Ok(spawned) => spawned,
+        Err(err) => {
+            let is_perm = err
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::PermissionDenied);
+            if is_perm {
+                return Ok(());
+            }
+            return Err(err);
+        }
+    };
+
+    let (collected, exit_code) =
+        collect_output_until_exit(spawned.output_rx, spawned.exit_rx, 2_000).await;
+    assert_eq!(exit_code, 0);
+    assert_eq!(
+        String::from_utf8_lossy(&collected).trim(),
+        worker_uid.to_string()
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pipe_process_round_trips_stdin() -> anyhow::Result<()> {
     let Some(python) = find_python() else {
         eprintln!("python not found; skipping pipe_process_round_trips_stdin");

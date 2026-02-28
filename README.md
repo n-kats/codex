@@ -56,6 +56,7 @@ sudo setcap cap_setuid,cap_setgid=ep "$(command -v codex)"
 
 注意:
 - capability は「ファイル」に付くため、バイナリを入れ替える（アップグレード/再インストール）と消えます。更新後は `setcap` をやり直してください。
+- `setcap` が使えない環境（例: rootless Docker の overlayfs など）では、`sudo -n -u "#UID" -g "#GID" -- env -i ...` へのフォールバックで動かせます（必要に応じて `/tmp/codex-argv0/<argv0>` の symlink 経由で argv0 を維持します）。
 
 ### 5) 設定例（config.toml）
 

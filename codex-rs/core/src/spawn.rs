@@ -8,6 +8,32 @@ use tracing::trace;
 
 use crate::protocol::SandboxPolicy;
 
+#[cfg(unix)]
+fn ensure_argv0_symlink(program: &str, arg0: &str) -> std::io::Result<PathBuf> {
+    let arg0 = std::path::Path::new(arg0)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| std::io::Error::other("arg0 must be a valid UTF-8 file name"))?;
+    if arg0.is_empty() {
+        return Err(std::io::Error::other("arg0 must be non-empty"));
+    }
+
+    let dir = PathBuf::from("/tmp/codex-argv0");
+    std::fs::create_dir_all(&dir)?;
+    let link_path = dir.join(arg0);
+
+    if let Ok(target) = std::fs::read_link(&link_path) {
+        if target == std::path::Path::new(program) {
+            return Ok(link_path);
+        }
+    }
+    // Best-effort cleanup if a previous run left behind a stale link/file.
+    let _ = std::fs::remove_file(&link_path);
+
+    std::os::unix::fs::symlink(program, &link_path)?;
+    Ok(link_path)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RunAsUser {
     pub uid: u32,
@@ -79,6 +105,11 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
         "spawn_child_async: {program:?} {args:?} {arg0:?} {cwd:?} {sandbox_policy:?} {stdio_policy:?} {env:?}"
     );
 
+    let run_as_for_retry = run_as.clone();
+    let arg0_for_retry = arg0.map(String::from);
+    let program_for_retry = program.to_string_lossy().to_string();
+    let args_for_retry = args.clone();
+    let cwd_for_retry = cwd.clone();
     let mut cmd = Command::new(&program);
     #[cfg(unix)]
     cmd.arg0(arg0.map_or_else(|| program.to_string_lossy().to_string(), String::from));
@@ -87,6 +118,8 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
     if let Some(network) = network {
         network.apply_to_env(&mut env);
     }
+    let env_for_retry = env.clone();
+
     cmd.env_clear();
     cmd.envs(env);
 
@@ -168,5 +201,109 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
         }
     }
 
-    cmd.kill_on_drop(true).spawn()
+    cmd.kill_on_drop(true);
+    match cmd.spawn() {
+        Ok(child) => Ok(child),
+        Err(err) => {
+            #[cfg(unix)]
+            {
+                if let Some(run_as) = run_as_for_retry
+                    && unsafe { libc::geteuid() } != 0
+                    && (err.kind() == std::io::ErrorKind::PermissionDenied
+                        || err.raw_os_error() == Some(libc::EPERM))
+                {
+                    let Some(sudo_program) = ["/usr/bin/sudo", "/bin/sudo"]
+                        .into_iter()
+                        .find(|path| std::path::Path::new(path).exists())
+                    else {
+                        return Err(err);
+                    };
+                    let Some(env_program) = ["/usr/bin/env", "/bin/env"]
+                        .into_iter()
+                        .find(|path| std::path::Path::new(path).exists())
+                    else {
+                        return Err(err);
+                    };
+
+                    let uid = format!("#{}", run_as.uid);
+                    let gid = format!("#{}", run_as.gid);
+
+                    let program_for_retry = if let Some(arg0) = arg0_for_retry.as_deref() {
+                        ensure_argv0_symlink(program_for_retry.as_str(), arg0)?
+                            .to_string_lossy()
+                            .to_string()
+                    } else {
+                        program_for_retry
+                    };
+
+                    let mut sudo_cmd = Command::new(sudo_program);
+                    sudo_cmd.args([
+                        "-n",
+                        "-u",
+                        uid.as_str(),
+                        "-g",
+                        gid.as_str(),
+                        "--",
+                        env_program,
+                    ]);
+                    sudo_cmd.arg("-i");
+
+                    let mut env_kv: Vec<_> = env_for_retry.iter().collect();
+                    env_kv.sort_by_key(|(key, _)| *key);
+                    for (key, value) in env_kv {
+                        sudo_cmd.arg(format!("{key}={value}"));
+                    }
+                    if !sandbox_policy.has_full_network_access() {
+                        sudo_cmd.arg(format!("{CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR}=1"));
+                    }
+                    sudo_cmd.arg(program_for_retry);
+                    sudo_cmd.args(args_for_retry);
+
+                    sudo_cmd.current_dir(&cwd_for_retry);
+                    sudo_cmd.env_clear();
+
+                    unsafe {
+                        let detach_from_tty =
+                            matches!(stdio_policy, StdioPolicy::RedirectForShellTool);
+                        #[cfg(target_os = "linux")]
+                        let parent_pid = libc::getpid();
+                        sudo_cmd.pre_exec(move || {
+                            if detach_from_tty {
+                                codex_utils_pty::process_group::detach_from_tty()?;
+                            }
+
+                            #[cfg(target_os = "linux")]
+                            {
+                                codex_utils_pty::process_group::set_parent_death_signal(
+                                    parent_pid,
+                                )?;
+                            }
+                            Ok(())
+                        });
+                    }
+
+                    match stdio_policy {
+                        StdioPolicy::RedirectForShellTool => {
+                            sudo_cmd.stdin(Stdio::null());
+                            sudo_cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+                        }
+                        StdioPolicy::Inherit => {
+                            sudo_cmd
+                                .stdin(Stdio::inherit())
+                                .stdout(Stdio::inherit())
+                                .stderr(Stdio::inherit());
+                        }
+                    }
+
+                    sudo_cmd.kill_on_drop(true).spawn()
+                } else {
+                    Err(err)
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                Err(err)
+            }
+        }
+    }
 }

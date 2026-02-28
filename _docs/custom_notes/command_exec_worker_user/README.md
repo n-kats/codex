@@ -65,6 +65,7 @@
 - ホスト（非 root）で `custom.exec.worker_user` を使う場合、Codex が child process 側で `setgroups/setgid/setuid` を行う必要があるため、運用上は以下のいずれかが必要になる。
   - `codex` 実体バイナリに file capability を付与（例: `setcap cap_setuid,cap_setgid=ep $(which codex)`）
   - systemd の `AmbientCapabilities=` 等で起動時に capabilities を付与（ファイルに `setcap` したくない場合）
+  - `setcap` が使えない環境（例: rootless Docker の overlayfs など）では、`sudo -n -u "#UID" -g "#GID" -- env -i ...` へのフォールバックで動かせる（`sudoers` の許可が必要 / 必要に応じて `/tmp/codex-argv0/<argv0>` の symlink 経由で argv0 を維持する）
   - root で起動する（推奨しない）
 - `.env` 等の secrets は作業ツリー（AI が触るディレクトリ）に置かないことが最も確実。
   - シンボリックリンクで secrets を指す運用は、`chmod -R` 等の誤操作や参照境界が複雑化しやすい点に注意する。
@@ -78,7 +79,7 @@
 - `make test-core` で既存のコマンド実行系テストが通ること
 - `custom.exec.worker_uid/gid` を設定して、`shell` / `shell_command` / `exec_command`（unified exec）で spawn が worker UID/GID になること
   - 例: `id -u` / `id -g` を実行して期待値になること
-- `exec_command`（PTY ベース）は `sudo -n -u "#UID" -g "#GID"` で worker に切り替えるため、invoker がパスワードなしでその `sudo` を実行できる必要がある（満たせない場合は `exec_command` が失敗してよい）
+- `exec_command` は worker user 指定時に `sudo -n -u "#UID" -g "#GID"` で worker に切り替えるため、invoker がパスワードなしでその `sudo` を実行できる必要がある（満たせない場合は `exec_command` が失敗してよい）
   - 起動直後（turn 作成時）に `sudo -n ... id -u` の事前確認を行い、満たせない場合は早めに Warning を出す（後から `exec_command` で落ちるのを避ける）
 - Docker bind mount あり/なしで worker 実行が機能すること（必要なら UID/GID をホスト側に合わせる）
 

@@ -693,11 +693,33 @@ pub async fn load_config_as_toml_with_cli_overrides(
     cwd: &AbsolutePathBuf,
     cli_overrides: Vec<(String, TomlValue)>,
 ) -> std::io::Result<ConfigToml> {
+    load_config_as_toml_with_cli_overrides_and_loader_overrides(
+        codex_home,
+        cwd,
+        cli_overrides,
+        LoaderOverrides::default(),
+    )
+    .await
+}
+
+/// DEPRECATED: Use [Config::load_with_cli_overrides()] instead because working
+/// with [ConfigToml] directly means that [ConfigRequirements] have not been
+/// applied yet, which risks failing to enforce required constraints.
+///
+/// This overload exists so clients like the TUI can honor CLI config-layer
+/// overrides such as `--config` / `--no-config` without re-implementing the
+/// layer-loading logic.
+pub async fn load_config_as_toml_with_cli_overrides_and_loader_overrides(
+    codex_home: &Path,
+    cwd: &AbsolutePathBuf,
+    cli_overrides: Vec<(String, TomlValue)>,
+    loader_overrides: LoaderOverrides,
+) -> std::io::Result<ConfigToml> {
     let config_layer_stack = load_config_layers_state(
         codex_home,
         Some(cwd.clone()),
         &cli_overrides,
-        LoaderOverrides::default(),
+        loader_overrides,
         CloudRequirementsLoader::default(),
     )
     .await?;
@@ -2179,6 +2201,31 @@ impl Config {
             .and_then(|theme| theme.diff.content)
             .unwrap_or(true);
         let exec_run_as = resolve_exec_run_as(cfg.custom.as_ref())?;
+        if cfg.custom.as_ref().is_some_and(|custom| {
+            custom.exec.worker_user.is_some()
+                || custom.exec.worker_uid.is_some()
+                || custom.exec.worker_gid.is_some()
+        }) {
+            let (worker_user, worker_uid, worker_gid) = cfg
+                .custom
+                .as_ref()
+                .map(|custom| {
+                    (
+                        custom.exec.worker_user.as_deref(),
+                        custom.exec.worker_uid,
+                        custom.exec.worker_gid,
+                    )
+                })
+                .unwrap_or((None, None, None));
+            tracing::info!(
+                worker_user,
+                worker_uid,
+                worker_gid,
+                ?exec_run_as,
+                shell_inherit = ?assistant_shell_environment_policy.inherit,
+                "custom.exec resolved",
+            );
+        }
         if exec_run_as.is_some()
             && assistant_shell_environment_policy.inherit == ShellEnvironmentPolicyInherit::All
         {
