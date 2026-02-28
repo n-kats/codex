@@ -42,6 +42,30 @@ SKIP_ALMOST_TESTS ?= \
 	approval_matrix_covers_all_modes \
 	drop_kills_wrapper_process_group
 
+# Speed-first overrides for non-release Rust targets (disable: `make CARGO_FAST_BUILD=0 ...`).
+CARGO_FAST_BUILD ?= 1
+CARGO_FAST_DEBUG ?= 1
+CARGO_FAST_CODEGEN_UNITS ?= 16
+CARGO_FAST_LTO ?= off
+CARGO_FAST_INCREMENTAL ?= true
+CARGO_FAST_OPT_LEVEL ?= 0
+
+ifeq ($(CARGO_FAST_BUILD),1)
+CARGO_NON_RELEASE_EXPORTS := \
+	export CARGO_PROFILE_DEV_DEBUG=$(CARGO_FAST_DEBUG); \
+	export CARGO_PROFILE_TEST_DEBUG=$(CARGO_FAST_DEBUG); \
+	export CARGO_PROFILE_DEV_CODEGEN_UNITS=$(CARGO_FAST_CODEGEN_UNITS); \
+	export CARGO_PROFILE_TEST_CODEGEN_UNITS=$(CARGO_FAST_CODEGEN_UNITS); \
+	export CARGO_PROFILE_DEV_LTO=$(CARGO_FAST_LTO); \
+	export CARGO_PROFILE_TEST_LTO=$(CARGO_FAST_LTO); \
+	export CARGO_PROFILE_DEV_INCREMENTAL=$(CARGO_FAST_INCREMENTAL); \
+	export CARGO_PROFILE_TEST_INCREMENTAL=$(CARGO_FAST_INCREMENTAL); \
+	export CARGO_PROFILE_DEV_OPT_LEVEL=$(CARGO_FAST_OPT_LEVEL); \
+	export CARGO_PROFILE_TEST_OPT_LEVEL=$(CARGO_FAST_OPT_LEVEL);
+else
+CARGO_NON_RELEASE_EXPORTS :=
+endif
+
 cache-dir:
 	@mkdir -p "$(CODEX_HOME)"
 
@@ -112,6 +136,7 @@ help:
 		"  (Docker target dir: set CODEX_DOCKER_TARGET_DIR in .env)" \
 		"  (Test targets also tee logs to $$PWD/_tmp/*_test_result.txt)" \
 		"  (Test targets default CODEX_SHELL_STARTUP_FILES=clean; override with 'make CODEX_SHELL_STARTUP_FILES=default ...')" \
+		"  (Non-release Rust builds are speed-first by default; disable with 'make CARGO_FAST_BUILD=0 ...')" \
 		"" \
 		"  make fetch            # git fetch --all + fork-origin tags" \
 		"  make docker-build     # Build the Docker image for build/test" \
@@ -147,7 +172,7 @@ fmt: cache-dir docker-build
 	$(call run_test_logged,fmt,cd "$(CODEX_RS_DIR_DOCKER)" && cargo +nightly fmt)
 
 write-config-schema: cache-dir docker-build
-	$(call run_test_logged,write_config_schema,cd "$(CODEX_RS_DIR_DOCKER)" && cargo run -p codex-core --bin codex-write-config-schema)
+	$(call run_test_logged,write_config_schema,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo run -p codex-core --bin codex-write-config-schema)
 
 update-fixtures: cache-dir docker-build
 	@# One command to update generated artifacts that are committed to the repo.
@@ -156,49 +181,49 @@ update-fixtures: cache-dir docker-build
 
 # Build
 build: cache-dir docker-build
-	$(call run_test_logged,build_cli,cd "$(CODEX_RS_DIR_DOCKER)" && cargo build -p codex-cli --bin codex)
+	$(call run_test_logged,build_cli,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo build -p codex-cli --bin codex)
 
 release: cache-dir tmp-dir release-dir docker-build
 	$(call run_test_logged,release,/bin/bash "$(ROOT_DIR_DOCKER)/scripts/release_linux.sh" "$(ROOT_DIR_DOCKER)" "$(CODEX_RS_DIR_DOCKER)" "$(RELEASE_DIR_DOCKER)")
 
 # Lint / test helpers (no auto-fix)
 lint-arg0: cache-dir docker-build
-	$(call run_docker,cd "$(CODEX_RS_DIR_DOCKER)" && cargo clippy -p codex-arg0 --all-features --tests)
+	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo clippy -p codex-arg0 --all-features --tests)
 
 test-arg0: cache-dir docker-build
-	$(call run_docker,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-arg0 --lib)
+	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-arg0 --lib)
 
 fix-arg0: cache-dir docker-build
-	$(call run_docker,cd "$(CODEX_RS_DIR_DOCKER)" && just fix -p codex-arg0)
+	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && just fix -p codex-arg0)
 
 lint-cli: cache-dir docker-build
-	$(call run_docker,cd "$(CODEX_RS_DIR_DOCKER)" && cargo clippy -p codex-cli --all-features --tests)
+	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo clippy -p codex-cli --all-features --tests)
 
 test-cli: cache-dir docker-build
-	$(call run_docker,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-cli --bin codex)
+	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-cli --bin codex)
 
 fix-cli: cache-dir docker-build
-	$(call run_docker,cd "$(CODEX_RS_DIR_DOCKER)" && just fix -p codex-cli)
+	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && just fix -p codex-cli)
 
 build-linux-sandbox: cache-dir docker-build
 	@# Some test suites expect `codex-linux-sandbox` to exist as a standalone binary.
 	@# `cargo test -p codex-core` does not necessarily build it, so build it explicitly on Linux.
 	@if [ "$$(uname -s)" = "Linux" ]; then \
-		$(call run_docker,cd "$(CODEX_RS_DIR_DOCKER)" && cargo build -p codex-linux-sandbox); \
+		$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo build -p codex-linux-sandbox); \
 	fi
 
 test-core: build-linux-sandbox docker-build
-	$(call run_test_logged,test_core,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core)
+	$(call run_test_logged,test_core,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core)
 
 test-all: build-linux-sandbox docker-build
-	$(call run_test_logged,test_all,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test --all-features)
+	$(call run_test_logged,test_all,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test --all-features)
 
 all:
 	$(call run_targets_continue_logged,all,fmt test-all)
 
 test-almost: build-linux-sandbox docker-build
 	@# `--all-features` tends to blow up the build matrix and `target/` size; keep `test-all` for that.
-	$(call run_test_logged,test_almost,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -- $(foreach test,$(SKIP_ALMOST_TESTS),--skip $(test)))
+	$(call run_test_logged,test_almost,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -- $(foreach test,$(SKIP_ALMOST_TESTS),--skip $(test)))
 
 almost:
 	$(call run_targets_continue_logged,almost,fmt test-almost)
@@ -211,39 +236,39 @@ verify-codex-home-cli-flag:
 	$(call run_targets_continue_logged,verify_codex_home_cli_flag,fmt lint-arg0 test-arg0 lint-cli test-cli)
 
 verify-tui-enter-newline-ctrl-enter-send: cache-dir docker-build
-	$(call run_test_logged,verify_tui_enter_newline,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib enter_inserts_newline_instead_of_submitting)
-	$(call run_test_logged,verify_tui_ctrl_enter_send,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib ctrl_enter_submits_single_line_text)
-	$(call run_test_logged,verify_tui_slash_tab_ctrl_enter,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib slash_tab_then_ctrl_enter_dispatches_builtin_command)
+	$(call run_test_logged,verify_tui_enter_newline,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib enter_inserts_newline_instead_of_submitting)
+	$(call run_test_logged,verify_tui_ctrl_enter_send,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib ctrl_enter_submits_single_line_text)
+	$(call run_test_logged,verify_tui_slash_tab_ctrl_enter,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib slash_tab_then_ctrl_enter_dispatches_builtin_command)
 
 verify-additional-prompt-dirs-env: cache-dir docker-build
-	$(call run_test_logged,verify_additional_prompt_dirs_parse,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib custom__追加プロンプトディレクトリ__カンマ区切りと相対パスを解決できる)
-	$(call run_test_logged,verify_additional_prompt_dirs_discover,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib custom__追加プロンプトディレクトリ__同名は後勝ちで名前順に並ぶ)
+	$(call run_test_logged,verify_additional_prompt_dirs_parse,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib custom__追加プロンプトディレクトリ__カンマ区切りと相対パスを解決できる)
+	$(call run_test_logged,verify_additional_prompt_dirs_discover,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib custom__追加プロンプトディレクトリ__同名は後勝ちで名前順に並ぶ)
 
 verify-exec-command-default-login: build-linux-sandbox docker-build
-	$(call run_test_logged,verify_exec_command_default_login,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-app-server --test all suite::v2::turn_start::command_execution_notifications_include_process_id)
+	$(call run_test_logged,verify_exec_command_default_login,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-app-server --test all suite::v2::turn_start::command_execution_notifications_include_process_id)
 
 verify-linux-default-shell: cache-dir docker-build
-	$(call run_test_logged,verify_linux_shell_detect_zsh,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell::tests::test_current_shell_detects_zsh)
-	$(call run_test_logged,verify_linux_bash_snapshot_sections,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell_snapshot::tests::linux_bash_snapshot_includes_sections)
-	$(call run_test_logged,verify_linux_sh_snapshot_sections,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell_snapshot::tests::linux_sh_snapshot_includes_sections)
-	$(call run_test_logged,verify_linux_snapshot_file_lifecycle,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell_snapshot::tests::try_new_creates_and_deletes_snapshot_file)
+	$(call run_test_logged,verify_linux_shell_detect_zsh,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell::tests::test_current_shell_detects_zsh)
+	$(call run_test_logged,verify_linux_bash_snapshot_sections,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell_snapshot::tests::linux_bash_snapshot_includes_sections)
+	$(call run_test_logged,verify_linux_sh_snapshot_sections,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell_snapshot::tests::linux_sh_snapshot_includes_sections)
+	$(call run_test_logged,verify_linux_snapshot_file_lifecycle,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell_snapshot::tests::try_new_creates_and_deletes_snapshot_file)
 
 verify-command-exec-worker-user: cache-dir docker-build
-	$(call run_test_logged,verify_command_exec_worker_user,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib config::custom_exec_tests)
-	$(call run_test_logged,verify_command_exec_worker_user_exec_command_sudo,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib prepare_pty_command_)
+	$(call run_test_logged,verify_command_exec_worker_user,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib config::custom_exec_tests)
+	$(call run_test_logged,verify_command_exec_worker_user_exec_command_sudo,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib prepare_pty_command_)
 
 # TUI helpers
 run-tui: cache-dir docker-build
-	$(call run_docker,cd "$(CODEX_RS_DIR_DOCKER)" && cargo run -p codex-cli --bin codex -- --config "$(ROOT_DIR_DOCKER)/$(RUN_TUI_CONFIG)")
+	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo run -p codex-cli --bin codex -- --config "$(ROOT_DIR_DOCKER)/$(RUN_TUI_CONFIG)")
 
 run-tui-test: docker-build
 	@$(MAKE) --no-print-directory run-tui
 
 test-tui: cache-dir docker-build
-	$(call run_test_logged,test_tui,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui)
+	$(call run_test_logged,test_tui,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui)
 
 test-custom: build-linux-sandbox docker-build
-	$(call run_test_logged,test_custom,cd "$(CODEX_RS_DIR_DOCKER)" && cargo test custom__)
+	$(call run_test_logged,test_custom,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test custom__)
 
 list-custom-tests: tmp-dir
 	@log_file="$(TMP_DIR)/list_custom_tests_test_result.txt"; \

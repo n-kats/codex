@@ -2201,31 +2201,6 @@ impl Config {
             .and_then(|theme| theme.diff.content)
             .unwrap_or(true);
         let exec_run_as = resolve_exec_run_as(cfg.custom.as_ref())?;
-        if cfg.custom.as_ref().is_some_and(|custom| {
-            custom.exec.worker_user.is_some()
-                || custom.exec.worker_uid.is_some()
-                || custom.exec.worker_gid.is_some()
-        }) {
-            let (worker_user, worker_uid, worker_gid) = cfg
-                .custom
-                .as_ref()
-                .map(|custom| {
-                    (
-                        custom.exec.worker_user.as_deref(),
-                        custom.exec.worker_uid,
-                        custom.exec.worker_gid,
-                    )
-                })
-                .unwrap_or((None, None, None));
-            tracing::info!(
-                worker_user,
-                worker_uid,
-                worker_gid,
-                ?exec_run_as,
-                shell_inherit = ?assistant_shell_environment_policy.inherit,
-                "custom.exec resolved",
-            );
-        }
         if exec_run_as.is_some()
             && assistant_shell_environment_policy.inherit == ShellEnvironmentPolicyInherit::All
         {

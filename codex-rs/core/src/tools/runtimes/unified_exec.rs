@@ -198,12 +198,6 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
         let exec_env = attempt
             .env_for(spec, req.network.as_ref())
             .map_err(|err| ToolError::Codex(err.into()))?;
-        if ctx.turn.exec_run_as.is_some() && exec_env.run_as.is_none() {
-            tracing::warn!(
-                ?ctx.turn.exec_run_as,
-                "run_as was configured for exec_command but did not reach the exec environment",
-            );
-        }
         if let Some(run_as) = exec_env.run_as.clone() {
             if let Some(message) = self
                 .manager
