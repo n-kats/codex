@@ -1,8 +1,11 @@
 use codex_protocol::custom_prompts::CustomPrompt;
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 use tokio::fs;
+
+const CODEX_ADDITIONAL_PROMPT_DIRS_ENV_VAR: &str = "CODEX_ADDITIONAL_PROMPT_DIRS";
 
 /// Return the default prompts directory: `$CODEX_HOME/prompts`.
 /// If `CODEX_HOME` cannot be resolved, returns `None`.
@@ -16,6 +19,47 @@ pub fn default_prompts_dir() -> Option<PathBuf> {
 /// Non-files are ignored. If the directory does not exist or cannot be read, returns empty.
 pub async fn discover_prompts_in(dir: &Path) -> Vec<CustomPrompt> {
     discover_prompts_in_excluding(dir, &HashSet::new()).await
+}
+
+/// Parse `CODEX_ADDITIONAL_PROMPT_DIRS` using `cwd` as the base for relative paths.
+///
+/// The variable uses comma-separated paths. Empty segments are ignored.
+pub fn additional_prompts_dirs(cwd: &Path) -> Vec<PathBuf> {
+    let Ok(raw) = std::env::var(CODEX_ADDITIONAL_PROMPT_DIRS_ENV_VAR) else {
+        return Vec::new();
+    };
+    parse_additional_prompts_dirs(&raw, cwd)
+}
+
+fn parse_additional_prompts_dirs(raw: &str, cwd: &Path) -> Vec<PathBuf> {
+    raw.split(',')
+        .filter_map(|segment| {
+            let trimmed = segment.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let path = PathBuf::from(trimmed);
+            Some(if path.is_absolute() {
+                path
+            } else {
+                cwd.join(path)
+            })
+        })
+        .collect()
+}
+
+/// Discover prompts across multiple directories.
+///
+/// If multiple directories contain a prompt with the same name, the later directory wins.
+/// Results are sorted by prompt name.
+pub async fn discover_prompts_in_dirs(dirs: &[PathBuf]) -> Vec<CustomPrompt> {
+    let mut merged: BTreeMap<String, CustomPrompt> = BTreeMap::new();
+    for dir in dirs {
+        for prompt in discover_prompts_in(dir).await {
+            merged.insert(prompt.name.clone(), prompt);
+        }
+    }
+    merged.into_values().collect()
 }
 
 /// Discover prompt files in the given directory, excluding any with names in `exclude`.
@@ -143,6 +187,9 @@ fn parse_frontmatter(content: &str) -> (Option<String>, Option<String>, String) 
     };
     (desc, hint, body)
 }
+
+#[cfg(test)]
+mod custom_tests;
 
 #[cfg(test)]
 mod tests {

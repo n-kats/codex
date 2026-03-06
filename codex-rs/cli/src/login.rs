@@ -5,6 +5,8 @@ use codex_core::auth::CLIENT_ID;
 use codex_core::auth::login_with_api_key;
 use codex_core::auth::logout;
 use codex_core::config::Config;
+use codex_core::config::ConfigBuilder;
+use codex_core::config_loader::LoaderOverrides;
 use codex_login::ServerOptions;
 use codex_login::run_device_code_login;
 use codex_login::run_login_server;
@@ -44,8 +46,12 @@ pub async fn login_with_chatgpt(
     server.block_until_done().await
 }
 
-pub async fn run_login_with_chatgpt(cli_config_overrides: CliConfigOverrides) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+pub async fn run_login_with_chatgpt(
+    cli_config_overrides: CliConfigOverrides,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
+) -> ! {
+    let config = load_config_or_exit(cli_config_overrides, config_toml_file, no_config).await;
 
     if matches!(config.forced_login_method, Some(ForcedLoginMethod::Api)) {
         eprintln!("{CHATGPT_LOGIN_DISABLED_MESSAGE}");
@@ -75,8 +81,10 @@ pub async fn run_login_with_chatgpt(cli_config_overrides: CliConfigOverrides) ->
 pub async fn run_login_with_api_key(
     cli_config_overrides: CliConfigOverrides,
     api_key: String,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
 ) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+    let config = load_config_or_exit(cli_config_overrides, config_toml_file, no_config).await;
 
     if matches!(config.forced_login_method, Some(ForcedLoginMethod::Chatgpt)) {
         eprintln!("{API_KEY_LOGIN_DISABLED_MESSAGE}");
@@ -126,13 +134,14 @@ pub fn read_api_key_from_stdin() -> String {
     api_key
 }
 
-/// Login using the OAuth device code flow.
 pub async fn run_login_with_device_code(
     cli_config_overrides: CliConfigOverrides,
     issuer_base_url: Option<String>,
     client_id: Option<String>,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
 ) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+    let config = load_config_or_exit(cli_config_overrides, config_toml_file, no_config).await;
     if matches!(config.forced_login_method, Some(ForcedLoginMethod::Api)) {
         eprintln!("{CHATGPT_LOGIN_DISABLED_MESSAGE}");
         std::process::exit(1);
@@ -167,8 +176,10 @@ pub async fn run_login_with_device_code_fallback_to_browser(
     cli_config_overrides: CliConfigOverrides,
     issuer_base_url: Option<String>,
     client_id: Option<String>,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
 ) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+    let config = load_config_or_exit(cli_config_overrides, config_toml_file, no_config).await;
     if matches!(config.forced_login_method, Some(ForcedLoginMethod::Api)) {
         eprintln!("{CHATGPT_LOGIN_DISABLED_MESSAGE}");
         std::process::exit(1);
@@ -220,9 +231,12 @@ pub async fn run_login_with_device_code_fallback_to_browser(
         }
     }
 }
-
-pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+pub async fn run_login_status(
+    cli_config_overrides: CliConfigOverrides,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
+) -> ! {
+    let config = load_config_or_exit(cli_config_overrides, config_toml_file, no_config).await;
 
     match CodexAuth::from_auth_storage(&config.codex_home, config.cli_auth_credentials_store_mode) {
         Ok(Some(auth)) => match auth.auth_mode() {
@@ -252,8 +266,12 @@ pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
     }
 }
 
-pub async fn run_logout(cli_config_overrides: CliConfigOverrides) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+pub async fn run_logout(
+    cli_config_overrides: CliConfigOverrides,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
+) -> ! {
+    let config = load_config_or_exit(cli_config_overrides, config_toml_file, no_config).await;
 
     match logout(&config.codex_home, config.cli_auth_credentials_store_mode) {
         Ok(true) => {
@@ -271,7 +289,11 @@ pub async fn run_logout(cli_config_overrides: CliConfigOverrides) -> ! {
     }
 }
 
-async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config {
+async fn load_config_or_exit(
+    cli_config_overrides: CliConfigOverrides,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
+) -> Config {
     let cli_overrides = match cli_config_overrides.parse_overrides() {
         Ok(v) => v,
         Err(e) => {
@@ -280,7 +302,27 @@ async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config
         }
     };
 
-    match Config::load_with_cli_overrides(cli_overrides).await {
+    let mut loader_overrides = LoaderOverrides::default();
+    if no_config {
+        loader_overrides.disable_user_config = true;
+        loader_overrides.disable_project_config = true;
+    } else if let Some(path) = config_toml_file {
+        let resolved = if path.is_absolute() {
+            path
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(path)
+        };
+        loader_overrides.user_config_path = Some(resolved);
+    }
+
+    match ConfigBuilder::default()
+        .cli_overrides(cli_overrides)
+        .loader_overrides(loader_overrides)
+        .build()
+        .await
+    {
         Ok(config) => config,
         Err(e) => {
             eprintln!("Error loading configuration: {e}");

@@ -2562,6 +2562,7 @@ impl App {
                                         service_tier: None,
                                         collaboration_mode: None,
                                         personality: None,
+                                        project_doc_paths: None,
                                     },
                                 ));
                                 self.app_event_tx.send(
@@ -2585,6 +2586,7 @@ impl App {
                                         service_tier: None,
                                         collaboration_mode: None,
                                         personality: None,
+                                        project_doc_paths: None,
                                     },
                                 ));
                                 self.app_event_tx
@@ -2898,6 +2900,7 @@ impl App {
                                 service_tier: None,
                                 collaboration_mode: None,
                                 personality: None,
+                                project_doc_paths: None,
                             }));
                     }
                 }
@@ -4130,7 +4133,7 @@ mod tests {
         app.chat_widget
             .apply_external_edit("queued follow-up".to_string());
         app.chat_widget
-            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         let input_state = app
             .chat_widget
             .capture_thread_input_state()
@@ -4211,7 +4214,7 @@ mod tests {
         app.chat_widget
             .apply_external_edit("queued follow-up".to_string());
         app.chat_widget
-            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         let input_state = app
             .chat_widget
             .capture_thread_input_state()
@@ -4291,7 +4294,7 @@ mod tests {
         app.chat_widget
             .apply_external_edit("queued follow-up".to_string());
         app.chat_widget
-            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         let input_state = app
             .chat_widget
             .capture_thread_input_state()
@@ -4365,7 +4368,7 @@ mod tests {
         app.chat_widget
             .apply_external_edit("queued follow-up".to_string());
         app.chat_widget
-            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         let input_state = app
             .chat_widget
             .capture_thread_input_state()
@@ -4490,7 +4493,7 @@ mod tests {
         assert_eq!(app.chat_widget.composer_text_with_pending(), large);
 
         app.chat_widget
-            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         match next_user_turn_op(&mut new_op_rx) {
             Op::UserTurn { items, .. } => assert_eq!(
@@ -4572,7 +4575,7 @@ mod tests {
             true,
         );
         app.chat_widget
-            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         match next_user_turn_op(&mut new_op_rx) {
             Op::UserTurn {
@@ -4726,7 +4729,7 @@ mod tests {
         app.chat_widget
             .apply_external_edit("queued follow-up".to_string());
         app.chat_widget
-            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         let input_state = app
             .chat_widget
             .capture_thread_input_state()
@@ -5993,7 +5996,7 @@ mod tests {
         });
 
         app.chat_widget
-            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         let mut saw_rollback = false;
         let mut submitted_items: Option<Vec<UserInput>> = None;

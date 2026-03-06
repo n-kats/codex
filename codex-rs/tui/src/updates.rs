@@ -121,7 +121,7 @@ async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
 }
 
 fn is_newer(latest: &str, current: &str) -> Option<bool> {
-    match (parse_version(latest), parse_version(current)) {
+    match (parse_latest_version(latest), parse_current_version(current)) {
         (Some(l), Some(c)) => Some(l > c),
         _ => None,
     }
@@ -169,13 +169,36 @@ pub async fn dismiss_version(config: &Config, version: &str) -> anyhow::Result<(
     Ok(())
 }
 
-fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut iter = v.trim().split('.');
+fn parse_latest_version(v: &str) -> Option<(u64, u64, u64)> {
+    let trimmed = v.trim();
+    let base = trimmed.split('+').next().unwrap_or(trimmed);
+    if base.contains('-') {
+        return None;
+    }
+
+    let mut iter = base.split('.');
     let maj = iter.next()?.parse::<u64>().ok()?;
     let min = iter.next()?.parse::<u64>().ok()?;
     let pat = iter.next()?.parse::<u64>().ok()?;
     Some((maj, min, pat))
 }
+
+fn parse_current_version(v: &str) -> Option<(u64, u64, u64)> {
+    let trimmed = v.trim();
+    let base = trimmed
+        .split(|ch| ch == '-' || ch == '+')
+        .next()
+        .unwrap_or(trimmed);
+
+    let mut iter = base.split('.');
+    let maj = iter.next()?.parse::<u64>().ok()?;
+    let min = iter.next()?.parse::<u64>().ok()?;
+    let pat = iter.next()?.parse::<u64>().ok()?;
+    Some((maj, min, pat))
+}
+
+#[cfg(test)]
+mod custom_tests;
 
 #[cfg(test)]
 mod tests {
@@ -225,7 +248,7 @@ mod tests {
 
     #[test]
     fn whitespace_is_ignored() {
-        assert_eq!(parse_version(" 1.2.3 \n"), Some((1, 2, 3)));
+        assert_eq!(parse_latest_version(" 1.2.3 \n"), Some((1, 2, 3)));
         assert_eq!(is_newer(" 1.2.3 ", "1.2.2"), Some(true));
     }
 }

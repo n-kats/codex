@@ -1,9 +1,6 @@
 use codex_core::AuthManager;
 use codex_core::config::Config;
-#[cfg(target_os = "windows")]
-use codex_core::windows_sandbox::WindowsSandboxLevelExt;
-#[cfg(target_os = "windows")]
-use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_core::git_info::get_git_repo_root;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -112,18 +109,19 @@ impl OnboardingScreen {
                 animations_enabled: config.animations,
             }))
         }
-        #[cfg(target_os = "windows")]
-        let show_windows_create_sandbox_hint =
-            WindowsSandboxLevel::from_config(&config) == WindowsSandboxLevel::Disabled;
-        #[cfg(not(target_os = "windows"))]
-        let show_windows_create_sandbox_hint = false;
-        let highlighted = TrustDirectorySelection::Trust;
+        let is_git_repo = get_git_repo_root(&cwd).is_some();
+        let highlighted = if is_git_repo {
+            TrustDirectorySelection::Trust
+        } else {
+            // Default to not trusting the directory if it's not a git repo.
+            TrustDirectorySelection::DontTrust
+        };
         if show_trust_screen {
             steps.push(Step::TrustDirectory(TrustDirectoryWidget {
                 cwd,
                 codex_home,
-                show_windows_create_sandbox_hint,
-                should_quit: false,
+                config_toml_file: crate::user_config_toml_path(&config),
+                is_git_repo,
                 selection: None,
                 highlighted,
                 error: None,
@@ -255,16 +253,6 @@ impl KeyboardHandler for OnboardingScreen {
             }
             if let Some(active_step) = self.current_steps_mut().into_iter().last() {
                 active_step.handle_key_event(key_event);
-            }
-            if self.steps.iter().any(|step| {
-                if let Step::TrustDirectory(widget) = step {
-                    widget.should_quit()
-                } else {
-                    false
-                }
-            }) {
-                self.should_exit = true;
-                self.is_done = true;
             }
         }
         self.request_frame.schedule_frame();

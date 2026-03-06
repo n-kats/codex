@@ -18,6 +18,7 @@ use crate::metrics::names::WEBSOCKET_EVENT_DURATION_METRIC;
 use crate::metrics::names::WEBSOCKET_REQUEST_COUNT_METRIC;
 use crate::metrics::names::WEBSOCKET_REQUEST_DURATION_METRIC;
 use crate::sanitize_metric_tag_value;
+use crate::traceparent_context_from_env;
 use chrono::SecondsFormat;
 use chrono::Utc;
 use codex_api::ApiError;
@@ -38,10 +39,12 @@ use reqwest::Response;
 use std::borrow::Cow;
 use std::fmt::Display;
 use std::future::Future;
+use std::sync::RwLock;
 use std::time::Duration;
 use std::time::Instant;
 use tokio::time::error::Elapsed;
 use tracing::Span;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 pub use crate::OtelEventMetadata;
 pub use crate::OtelManager;
@@ -165,9 +168,33 @@ impl OtelManager {
                 app_version: env!("CARGO_PKG_VERSION"),
                 terminal_type,
             },
+            session_parent_context: std::sync::Arc::new(RwLock::new(None)),
             metrics: crate::metrics::global(),
             metrics_use_metadata_tags: true,
         }
+    }
+
+    pub fn apply_traceparent_parent(&self, span: &Span) {
+        let session_parent_context = self
+            .session_parent_context
+            .read()
+            .ok()
+            .and_then(|guard| (*guard).clone());
+        if let Some(context) = session_parent_context {
+            let _ = span.set_parent(context);
+            return;
+        }
+
+        if let Some(context) = traceparent_context_from_env() {
+            let _ = span.set_parent(context);
+        }
+    }
+
+    pub fn attach_session_parent(&self, span: &Span) {
+        let Ok(mut guard) = self.session_parent_context.write() else {
+            return;
+        };
+        *guard = Some(span.context());
     }
 
     pub fn record_responses(&self, handle_responses_span: &Span, event: &ResponseEvent) {

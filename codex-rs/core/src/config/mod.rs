@@ -19,6 +19,7 @@ use crate::config::types::OtelExporterKind;
 use crate::config::types::PluginConfig;
 use crate::config::types::SandboxWorkspaceWrite;
 use crate::config::types::ShellEnvironmentPolicy;
+use crate::config::types::ShellEnvironmentPolicyInherit;
 use crate::config::types::ShellEnvironmentPolicyToml;
 use crate::config::types::SkillsConfig;
 use crate::config::types::Tui;
@@ -52,6 +53,7 @@ use crate::project_doc::LOCAL_PROJECT_DOC_FILENAME;
 use crate::protocol::AskForApproval;
 use crate::protocol::ReadOnlyAccess;
 use crate::protocol::SandboxPolicy;
+use crate::spawn::RunAsUser;
 use crate::unified_exec::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
@@ -214,6 +216,15 @@ pub struct Config {
     /// Effective permission configuration for shell tool execution.
     pub permissions: Permissions,
 
+    /// Fork-specific: resolved run-as user for model-triggered command execution.
+    ///
+    /// When `Some`, shell-like tool calls (`shell` / `shell_command` / `exec_command`)
+    /// are executed as this OS user (Unix only).
+    pub exec_run_as: Option<RunAsUser>,
+
+    /// Fork-specific: resolved shell environment policy for `!` (UserShell).
+    pub user_shell_environment_policy: ShellEnvironmentPolicy,
+
     /// enforce_residency means web traffic cannot be routed outside of a
     /// particular geography. HTTP clients should direct their requests
     /// using backend-specific headers or URLs to enforce this.
@@ -308,6 +319,21 @@ pub struct Config {
     /// Syntax highlighting theme override (kebab-case name).
     pub tui_theme: Option<String>,
 
+    /// Optional custom diff background color for added lines (RGB).
+    pub custom_diff_add_line_bg: Option<(u8, u8, u8)>,
+    /// Optional custom diff background color for deleted lines (RGB).
+    pub custom_diff_del_line_bg: Option<(u8, u8, u8)>,
+    /// Enable diff-specific color styling in the TUI.
+    pub custom_diff_enabled: bool,
+    /// Enable add/delete line background tint in the TUI diff renderer.
+    pub custom_diff_line_bg_enabled: bool,
+    /// Enable line-number gutter styling in the TUI diff renderer.
+    pub custom_diff_gutter_enabled: bool,
+    /// Enable `+`/`-` sign coloring in the TUI diff renderer.
+    pub custom_diff_sign_enabled: bool,
+    /// Enable non-syntax diff content styling in the TUI diff renderer.
+    pub custom_diff_content_enabled: bool,
+
     /// The directory that should be treated as the current working directory
     /// for the session. All relative paths inside the business-logic layer are
     /// resolved against this path.
@@ -351,6 +377,12 @@ pub struct Config {
 
     /// Additional filenames to try when looking for project-level docs.
     pub project_doc_fallback_filenames: Vec<String>,
+
+    /// Explicit project doc file paths to use instead of auto-discovery.
+    ///
+    /// When non-empty, Codex reads these files in order and does not scan for
+    /// `AGENTS.md` along the project root to cwd path.
+    pub project_doc_paths: Vec<PathBuf>,
 
     /// Token budget applied when storing tool/function outputs in the context manager.
     pub tool_output_token_limit: Option<usize>,
@@ -678,11 +710,33 @@ pub async fn load_config_as_toml_with_cli_overrides(
     cwd: &AbsolutePathBuf,
     cli_overrides: Vec<(String, TomlValue)>,
 ) -> std::io::Result<ConfigToml> {
+    load_config_as_toml_with_cli_overrides_and_loader_overrides(
+        codex_home,
+        cwd,
+        cli_overrides,
+        LoaderOverrides::default(),
+    )
+    .await
+}
+
+/// DEPRECATED: Use [Config::load_with_cli_overrides()] instead because working
+/// with [ConfigToml] directly means that [ConfigRequirements] have not been
+/// applied yet, which risks failing to enforce required constraints.
+///
+/// This overload exists so clients like the TUI can honor CLI config-layer
+/// overrides such as `--config` / `--no-config` without re-implementing the
+/// layer-loading logic.
+pub async fn load_config_as_toml_with_cli_overrides_and_loader_overrides(
+    codex_home: &Path,
+    cwd: &AbsolutePathBuf,
+    cli_overrides: Vec<(String, TomlValue)>,
+    loader_overrides: LoaderOverrides,
+) -> std::io::Result<ConfigToml> {
     let config_layer_stack = load_config_layers_state(
         codex_home,
         Some(cwd.clone()),
         &cli_overrides,
-        LoaderOverrides::default(),
+        loader_overrides,
         CloudRequirementsLoader::default(),
     )
     .await?;
@@ -1011,6 +1065,212 @@ pub fn set_default_oss_provider(codex_home: &Path, provider: &str) -> std::io::R
 /// Base config deserialized from ~/.codex/config.toml.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
+pub struct CustomExecToml {
+    /// Run model-triggered command execution as a dedicated OS user.
+    ///
+    /// See `_docs/custom_notes/command_exec_worker_user/README.md`.
+    pub worker_user: Option<String>,
+    /// Optional numeric override for worker UID.
+    pub worker_uid: Option<u32>,
+    /// Optional numeric override for worker GID.
+    pub worker_gid: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CustomThemeDiffToml {
+    /// Enable diff color styling. When false, all diff-specific coloring is disabled.
+    pub enabled: Option<bool>,
+    /// Enable add/delete line background tint.
+    pub line_bg: Option<bool>,
+    /// Enable line-number gutter styling.
+    pub gutter: Option<bool>,
+    /// Enable `+` / `-` sign coloring.
+    pub sign: Option<bool>,
+    /// Enable non-syntax diff content styling.
+    pub content: Option<bool>,
+    /// Hex color (`#RRGGBB`) for added diff line backgrounds in the TUI.
+    pub add_line_bg: Option<String>,
+    /// Hex color (`#RRGGBB`) for deleted diff line backgrounds in the TUI.
+    pub del_line_bg: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CustomThemeToml {
+    #[serde(default)]
+    pub diff: CustomThemeDiffToml,
+}
+
+/// Fork-specific custom settings under `[custom]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CustomConfigToml {
+    #[serde(default)]
+    pub exec: CustomExecToml,
+
+    /// Override the shell environment policy used by model-triggered command execution.
+    ///
+    /// When unset, falls back to `[shell_environment_policy]`.
+    pub assistant_shell_environment_policy: Option<ShellEnvironmentPolicyToml>,
+
+    /// Override the shell environment policy used by `!` (UserShell).
+    ///
+    /// When unset, falls back to the assistant-resolved policy.
+    pub user_shell_environment_policy: Option<ShellEnvironmentPolicyToml>,
+
+    /// Custom TUI theme overrides.
+    #[serde(default)]
+    pub theme: Option<CustomThemeToml>,
+}
+
+fn resolve_exec_run_as(custom: Option<&CustomConfigToml>) -> std::io::Result<Option<RunAsUser>> {
+    let Some(custom) = custom else {
+        return Ok(None);
+    };
+
+    let worker_user = custom
+        .exec
+        .worker_user
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let worker_uid = custom.exec.worker_uid;
+    let worker_gid = custom.exec.worker_gid;
+
+    if worker_uid.is_some() != worker_gid.is_some() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "custom.exec.worker_uid and custom.exec.worker_gid must be set together",
+        ));
+    }
+
+    #[cfg(not(unix))]
+    {
+        if worker_user.is_some() || worker_uid.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "custom.exec is only supported on Unix targets",
+            ));
+        }
+        return Ok(None);
+    }
+
+    #[cfg(unix)]
+    {
+        let resolved_from_user = worker_user.map(lookup_run_as_user_by_name).transpose()?;
+
+        match (resolved_from_user, worker_uid, worker_gid) {
+            (None, None, None) => Ok(None),
+            (None, Some(uid), Some(gid)) => Ok(Some(RunAsUser {
+                uid,
+                gid,
+                supplementary_gids: None,
+            })),
+            (Some(resolved), None, None) => Ok(Some(resolved)),
+            (Some(resolved), Some(uid), Some(gid)) => {
+                if resolved.uid != uid || resolved.gid != gid {
+                    let resolved_uid = resolved.uid;
+                    let resolved_gid = resolved.gid;
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!(
+                            "custom.exec.worker_user resolves to uid/gid {resolved_uid}/{resolved_gid} but custom.exec.worker_uid/gid is {uid}/{gid}"
+                        ),
+                    ));
+                }
+                Ok(Some(resolved))
+            }
+            (None, Some(_), None)
+            | (None, None, Some(_))
+            | (Some(_), Some(_), None)
+            | (Some(_), None, Some(_)) => Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "custom.exec.worker_uid and custom.exec.worker_gid must be set together",
+            )),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn lookup_run_as_user_by_name(user: &str) -> std::io::Result<RunAsUser> {
+    use std::ffi::CString;
+
+    let c_user = CString::new(user).map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("custom.exec.worker_user is not a valid C string: {err}"),
+        )
+    })?;
+
+    let pw = unsafe { libc::getpwnam(c_user.as_ptr()) };
+    if pw.is_null() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("custom.exec.worker_user `{user}` not found"),
+        ));
+    }
+    let uid = unsafe { (*pw).pw_uid as u32 };
+    let gid = unsafe { (*pw).pw_gid as u32 };
+
+    let supplementary_gids = Some(lookup_supplementary_gids(user, gid)?);
+    Ok(RunAsUser {
+        uid,
+        gid,
+        supplementary_gids,
+    })
+}
+
+#[cfg(unix)]
+fn lookup_supplementary_gids(user: &str, gid: u32) -> std::io::Result<Vec<u32>> {
+    use std::ffi::CString;
+
+    let c_user = CString::new(user).map_err(|err| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("custom.exec.worker_user is not a valid C string: {err}"),
+        )
+    })?;
+
+    let mut groups: Vec<libc::gid_t> = vec![0; 16];
+    let mut ngroups: libc::c_int = groups.len() as libc::c_int;
+    let mut rv = unsafe {
+        libc::getgrouplist(
+            c_user.as_ptr(),
+            gid as libc::gid_t,
+            groups.as_mut_ptr(),
+            &mut ngroups,
+        )
+    };
+
+    if rv == -1 {
+        let needed = ngroups.max(0) as usize;
+        groups.resize(needed.max(16), 0);
+        ngroups = groups.len() as libc::c_int;
+        rv = unsafe {
+            libc::getgrouplist(
+                c_user.as_ptr(),
+                gid as libc::gid_t,
+                groups.as_mut_ptr(),
+                &mut ngroups,
+            )
+        };
+    }
+
+    if rv == -1 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("failed to resolve supplementary groups for custom.exec.worker_user `{user}`"),
+        ));
+    }
+
+    let count = (ngroups.max(0) as usize).min(groups.len());
+    Ok(groups.into_iter().take(count).map(|g| g as u32).collect())
+}
+
+/// Base config deserialized from ~/.codex/config.toml.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
 pub struct ConfigToml {
     /// Optional override of model selection.
     pub model: Option<String>,
@@ -1051,6 +1311,10 @@ pub struct ConfigToml {
     /// Nested permissions settings.
     #[serde(default)]
     pub permissions: Option<PermissionsToml>,
+
+    /// Fork-specific custom settings.
+    #[serde(default)]
+    pub custom: Option<CustomConfigToml>,
 
     /// Optional external command to spawn for end-user notifications.
     #[serde(default)]
@@ -1590,6 +1854,8 @@ pub struct ConfigOverrides {
     pub show_raw_agent_reasoning: Option<bool>,
     pub tools_web_search_request: Option<bool>,
     pub ephemeral: Option<bool>,
+    /// Explicit project doc paths to use instead of auto-discovery.
+    pub project_doc_paths: Vec<PathBuf>,
     /// Additional directories that should be treated as writable roots for this session.
     pub additional_writable_roots: Vec<PathBuf>,
 }
@@ -1638,6 +1904,64 @@ fn resolve_web_search_mode(
         return Some(WebSearchMode::Live);
     }
     None
+}
+
+fn resolve_project_doc_paths(paths: &[PathBuf], cwd: &PathBuf) -> std::io::Result<Vec<PathBuf>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut resolved = Vec::with_capacity(paths.len());
+    for path in paths {
+        let path = if path.is_absolute() {
+            path.clone()
+        } else {
+            cwd.join(path)
+        };
+
+        let md = std::fs::symlink_metadata(&path).map_err(|e| {
+            std::io::Error::new(
+                e.kind(),
+                format!("project doc path {}: {e}", path.display()),
+            )
+        })?;
+        let ft = md.file_type();
+        if !(ft.is_file() || ft.is_symlink()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("project doc path is not a file: {}", path.display()),
+            ));
+        }
+        resolved.push(path);
+    }
+
+    Ok(resolved)
+}
+
+fn parse_hex_rgb(value: &str, field_name: &str) -> std::io::Result<(u8, u8, u8)> {
+    let trimmed = value.trim();
+    let hex = trimmed.strip_prefix('#').unwrap_or(trimmed);
+    if hex.len() != 6 || !hex.as_bytes().iter().all(|b| b.is_ascii_hexdigit()) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{field_name} must be a hex color like #RRGGBB"),
+        ));
+    }
+
+    let parse_channel = |range: std::ops::Range<usize>| -> std::io::Result<u8> {
+        u8::from_str_radix(&hex[range], 16).map_err(|err| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{field_name} contains invalid hex digits: {err}"),
+            )
+        })
+    };
+
+    Ok((
+        parse_channel(0..2)?,
+        parse_channel(2..4)?,
+        parse_channel(4..6)?,
+    ))
 }
 
 pub(crate) fn resolve_web_search_mode_for_turn(
@@ -1733,6 +2057,7 @@ impl Config {
             show_raw_agent_reasoning,
             tools_web_search_request: override_tools_web_search_request,
             ephemeral,
+            project_doc_paths,
             additional_writable_roots,
         } = overrides;
 
@@ -1782,6 +2107,7 @@ impl Config {
                 }
             }
         };
+        let project_doc_paths = resolve_project_doc_paths(&project_doc_paths, &resolved_cwd)?;
         let additional_writable_roots: Vec<AbsolutePathBuf> = additional_writable_roots
             .into_iter()
             .map(|path| AbsolutePathBuf::resolve_path_against_base(path, &resolved_cwd))
@@ -1874,7 +2200,74 @@ impl Config {
             })?
             .clone();
 
-        let shell_environment_policy = cfg.shell_environment_policy.into();
+        let base_shell_environment_policy: ShellEnvironmentPolicy =
+            cfg.shell_environment_policy.into();
+        let assistant_shell_environment_policy = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.assistant_shell_environment_policy.clone())
+            .map(Into::into)
+            .unwrap_or_else(|| base_shell_environment_policy.clone());
+        let user_shell_environment_policy = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.user_shell_environment_policy.clone())
+            .map(Into::into)
+            .unwrap_or_else(|| assistant_shell_environment_policy.clone());
+        let custom_diff_add_line_bg = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.add_line_bg.as_deref())
+            .map(|value| parse_hex_rgb(value, "custom.theme.diff.add_line_bg"))
+            .transpose()?;
+        let custom_diff_del_line_bg = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.del_line_bg.as_deref())
+            .map(|value| parse_hex_rgb(value, "custom.theme.diff.del_line_bg"))
+            .transpose()?;
+        let custom_diff_enabled = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.enabled)
+            .unwrap_or(true);
+        let custom_diff_line_bg_enabled = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.line_bg)
+            .unwrap_or(true);
+        let custom_diff_gutter_enabled = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.gutter)
+            .unwrap_or(true);
+        let custom_diff_sign_enabled = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.sign)
+            .unwrap_or(true);
+        let custom_diff_content_enabled = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.content)
+            .unwrap_or(true);
+        let exec_run_as = resolve_exec_run_as(cfg.custom.as_ref())?;
+        if exec_run_as.is_some()
+            && assistant_shell_environment_policy.inherit == ShellEnvironmentPolicyInherit::All
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "custom.exec is set, but shell_environment_policy.inherit = \"all\" is unsafe; set inherit = \"core\" or \"none\" (and/or use include_only).",
+            ));
+        }
+
         let allow_login_shell = cfg.allow_login_shell.unwrap_or(true);
 
         let history = cfg.history.unwrap_or_default();
@@ -2150,10 +2543,12 @@ impl Config {
                 sandbox_policy: constrained_sandbox_policy.value,
                 network,
                 allow_login_shell,
-                shell_environment_policy,
+                shell_environment_policy: assistant_shell_environment_policy,
                 windows_sandbox_mode,
                 macos_seatbelt_profile_extensions: None,
             },
+            exec_run_as,
+            user_shell_environment_policy,
             enforce_residency: enforce_residency.value,
             did_user_set_custom_approval_policy_or_sandbox_mode,
             notify: cfg.notify,
@@ -2187,6 +2582,7 @@ impl Config {
                     }
                 })
                 .collect(),
+            project_doc_paths,
             tool_output_token_limit: cfg.tool_output_token_limit,
             agent_max_threads,
             agent_max_depth,
@@ -2287,6 +2683,13 @@ impl Config {
                 .unwrap_or_default(),
             tui_status_line: cfg.tui.as_ref().and_then(|t| t.status_line.clone()),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
+            custom_diff_add_line_bg,
+            custom_diff_del_line_bg,
+            custom_diff_enabled,
+            custom_diff_line_bg_enabled,
+            custom_diff_gutter_enabled,
+            custom_diff_sign_enabled,
+            custom_diff_content_enabled,
             otel: {
                 let t: OtelConfigToml = cfg.otel.unwrap_or_default();
                 let log_user_prompt = t.log_user_prompt.unwrap_or(false);
@@ -2509,6 +2912,9 @@ pub fn find_codex_home() -> std::io::Result<PathBuf> {
 pub fn log_dir(cfg: &Config) -> std::io::Result<PathBuf> {
     Ok(cfg.log_dir.clone())
 }
+
+#[cfg(test)]
+mod custom_tests;
 
 #[cfg(test)]
 mod tests {
@@ -3643,6 +4049,9 @@ profile = "project"
 
         let overrides = LoaderOverrides {
             managed_config_path: Some(managed_path.clone()),
+            user_config_path: None,
+            disable_user_config: false,
+            disable_project_config: false,
             #[cfg(target_os = "macos")]
             managed_preferences_base64: None,
             macos_managed_config_requirements_base64: None,
@@ -3774,6 +4183,9 @@ profile = "project"
 
         let overrides = LoaderOverrides {
             managed_config_path: Some(managed_path),
+            user_config_path: None,
+            disable_user_config: false,
+            disable_project_config: false,
             #[cfg(target_os = "macos")]
             managed_preferences_base64: None,
             macos_managed_config_requirements_base64: None,
@@ -5194,6 +5606,8 @@ model_verbosity = "high"
                     windows_sandbox_mode: None,
                     macos_seatbelt_profile_extensions: None,
                 },
+                exec_run_as: None,
+                user_shell_environment_policy: ShellEnvironmentPolicy::default(),
                 enforce_residency: Constrained::allow_any(None),
                 did_user_set_custom_approval_policy_or_sandbox_mode: true,
                 user_instructions: None,
@@ -5207,6 +5621,7 @@ model_verbosity = "high"
                 model_providers: fixture.model_provider_map.clone(),
                 project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
                 project_doc_fallback_filenames: Vec::new(),
+                project_doc_paths: Vec::new(),
                 tool_output_token_limit: None,
                 agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
                 agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
@@ -5269,6 +5684,13 @@ model_verbosity = "high"
                 tui_alternate_screen: AltScreenMode::Auto,
                 tui_status_line: None,
                 tui_theme: None,
+                custom_diff_add_line_bg: None,
+                custom_diff_del_line_bg: None,
+                custom_diff_enabled: true,
+                custom_diff_line_bg_enabled: true,
+                custom_diff_gutter_enabled: true,
+                custom_diff_sign_enabled: true,
+                custom_diff_content_enabled: true,
                 otel: OtelConfig::default(),
             },
             o3_profile_config
@@ -5324,6 +5746,8 @@ model_verbosity = "high"
                 windows_sandbox_mode: None,
                 macos_seatbelt_profile_extensions: None,
             },
+            exec_run_as: None,
+            user_shell_environment_policy: ShellEnvironmentPolicy::default(),
             enforce_residency: Constrained::allow_any(None),
             did_user_set_custom_approval_policy_or_sandbox_mode: true,
             user_instructions: None,
@@ -5337,6 +5761,7 @@ model_verbosity = "high"
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
             project_doc_fallback_filenames: Vec::new(),
+            project_doc_paths: Vec::new(),
             tool_output_token_limit: None,
             agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
             agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
@@ -5399,6 +5824,13 @@ model_verbosity = "high"
             tui_alternate_screen: AltScreenMode::Auto,
             tui_status_line: None,
             tui_theme: None,
+            custom_diff_add_line_bg: None,
+            custom_diff_del_line_bg: None,
+            custom_diff_enabled: true,
+            custom_diff_line_bg_enabled: true,
+            custom_diff_gutter_enabled: true,
+            custom_diff_sign_enabled: true,
+            custom_diff_content_enabled: true,
             otel: OtelConfig::default(),
         };
 
@@ -5452,6 +5884,8 @@ model_verbosity = "high"
                 windows_sandbox_mode: None,
                 macos_seatbelt_profile_extensions: None,
             },
+            exec_run_as: None,
+            user_shell_environment_policy: ShellEnvironmentPolicy::default(),
             enforce_residency: Constrained::allow_any(None),
             did_user_set_custom_approval_policy_or_sandbox_mode: true,
             user_instructions: None,
@@ -5465,6 +5899,7 @@ model_verbosity = "high"
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
             project_doc_fallback_filenames: Vec::new(),
+            project_doc_paths: Vec::new(),
             tool_output_token_limit: None,
             agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
             agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
@@ -5527,6 +5962,13 @@ model_verbosity = "high"
             tui_alternate_screen: AltScreenMode::Auto,
             tui_status_line: None,
             tui_theme: None,
+            custom_diff_add_line_bg: None,
+            custom_diff_del_line_bg: None,
+            custom_diff_enabled: true,
+            custom_diff_line_bg_enabled: true,
+            custom_diff_gutter_enabled: true,
+            custom_diff_sign_enabled: true,
+            custom_diff_content_enabled: true,
             otel: OtelConfig::default(),
         };
 
@@ -5566,6 +6008,8 @@ model_verbosity = "high"
                 windows_sandbox_mode: None,
                 macos_seatbelt_profile_extensions: None,
             },
+            exec_run_as: None,
+            user_shell_environment_policy: ShellEnvironmentPolicy::default(),
             enforce_residency: Constrained::allow_any(None),
             did_user_set_custom_approval_policy_or_sandbox_mode: true,
             user_instructions: None,
@@ -5579,6 +6023,7 @@ model_verbosity = "high"
             model_providers: fixture.model_provider_map.clone(),
             project_doc_max_bytes: PROJECT_DOC_MAX_BYTES,
             project_doc_fallback_filenames: Vec::new(),
+            project_doc_paths: Vec::new(),
             tool_output_token_limit: None,
             agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
             agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
@@ -5641,6 +6086,13 @@ model_verbosity = "high"
             tui_alternate_screen: AltScreenMode::Auto,
             tui_status_line: None,
             tui_theme: None,
+            custom_diff_add_line_bg: None,
+            custom_diff_del_line_bg: None,
+            custom_diff_enabled: true,
+            custom_diff_line_bg_enabled: true,
+            custom_diff_gutter_enabled: true,
+            custom_diff_sign_enabled: true,
+            custom_diff_content_enabled: true,
             otel: OtelConfig::default(),
         };
 

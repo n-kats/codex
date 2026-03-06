@@ -44,6 +44,7 @@ where
         args,
         arg0,
         cwd: command_cwd,
+        run_as: None,
         sandbox_policy,
         network,
         stdio_policy,

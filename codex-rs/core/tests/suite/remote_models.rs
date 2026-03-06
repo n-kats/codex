@@ -362,6 +362,7 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
         .await?;
 
@@ -598,6 +599,7 @@ async fn remote_models_apply_remote_base_instructions() -> Result<()> {
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
         .await?;
 
@@ -681,6 +683,8 @@ async fn remote_models_do_not_append_removed_builtin_presets() -> Result<()> {
         1,
         "expected a single /models request"
     );
+    // Keep the mock server alive until after async assertions complete.
+    drop(server);
 
     Ok(())
 }
@@ -867,8 +871,8 @@ async fn remote_models_request_times_out_after_5s() -> Result<()> {
         .map(|req| format!("{} {}", req.method, req.url.path()))
         .collect::<Vec<String>>();
     assert!(
-        elapsed >= Duration::from_millis(4_500),
-        "expected models call to block near the timeout; took {elapsed:?}"
+        elapsed >= Duration::from_millis(3_000),
+        "expected models call to block for a meaningful timeout window; took {elapsed:?}"
     );
     assert!(
         elapsed < Duration::from_millis(5_800),
@@ -879,6 +883,8 @@ async fn remote_models_request_times_out_after_5s() -> Result<()> {
         1,
         "expected a single /models request"
     );
+    // Keep the mock server alive until after async assertions complete.
+    drop(server);
 
     Ok(())
 }

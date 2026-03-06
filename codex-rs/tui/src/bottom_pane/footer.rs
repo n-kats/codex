@@ -687,6 +687,7 @@ fn esc_hint_line(esc_backtrack_hint: bool) -> Line<'static> {
 fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
     let mut commands = Line::from("");
     let mut shell_commands = Line::from("");
+    let mut send_message = Line::from("");
     let mut newline = Line::from("");
     let mut queue_message_tab = Line::from("");
     let mut file_paths = Line::from("");
@@ -702,6 +703,7 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
             match descriptor.id {
                 ShortcutId::Commands => commands = text,
                 ShortcutId::ShellCommands => shell_commands = text,
+                ShortcutId::SendMessage => send_message = text,
                 ShortcutId::InsertNewline => newline = text,
                 ShortcutId::QueueMessageTab => queue_message_tab = text,
                 ShortcutId::FilePaths => file_paths = text,
@@ -718,6 +720,7 @@ fn shortcut_overlay_lines(state: ShortcutsState) -> Vec<Line<'static>> {
     let mut ordered = vec![
         commands,
         shell_commands,
+        send_message,
         newline,
         queue_message_tab,
         file_paths,
@@ -800,6 +803,7 @@ pub(crate) fn context_window_line(percent: Option<i64>, used_tokens: Option<i64>
 enum ShortcutId {
     Commands,
     ShellCommands,
+    SendMessage,
     InsertNewline,
     QueueMessageTab,
     FilePaths,
@@ -897,10 +901,10 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
         label: " for shell commands",
     },
     ShortcutDescriptor {
-        id: ShortcutId::InsertNewline,
+        id: ShortcutId::SendMessage,
         bindings: &[
             ShortcutBinding {
-                key: key_hint::shift(KeyCode::Enter),
+                key: key_hint::ctrl(KeyCode::Enter),
                 condition: DisplayCondition::WhenShiftEnterHint,
             },
             ShortcutBinding {
@@ -908,6 +912,15 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
                 condition: DisplayCondition::WhenNotShiftEnterHint,
             },
         ],
+        prefix: "",
+        label: " to send",
+    },
+    ShortcutDescriptor {
+        id: ShortcutId::InsertNewline,
+        bindings: &[ShortcutBinding {
+            key: key_hint::plain(KeyCode::Enter),
+            condition: DisplayCondition::Always,
+        }],
         prefix: "",
         label: " for newline",
     },

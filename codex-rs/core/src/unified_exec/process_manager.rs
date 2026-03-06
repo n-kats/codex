@@ -2,10 +2,13 @@ use rand::Rng;
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::path::Path;
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use tokio::process::Command;
 use tokio::sync::Notify;
 use tokio::sync::mpsc;
 use tokio::time::Duration;
@@ -16,6 +19,7 @@ use crate::exec_env::create_env;
 use crate::exec_policy::ExecApprovalRequest;
 use crate::protocol::ExecCommandSource;
 use crate::sandboxing::ExecRequest;
+use crate::spawn::RunAsUser;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::events::ToolEventStage;
@@ -91,6 +95,180 @@ fn apply_unified_exec_env(mut env: HashMap<String, String>) -> HashMap<String, S
     env
 }
 
+#[cfg(unix)]
+fn unix_preferred_executable_path(preferred: &[&str], fallback: &str) -> String {
+    for candidate in preferred {
+        if Path::new(candidate).exists() {
+            return (*candidate).to_string();
+        }
+    }
+    fallback.to_string()
+}
+
+#[cfg(unix)]
+async fn sudo_preflight_check(run_as: &RunAsUser) -> Result<(), String> {
+    let sudo_program = unix_preferred_executable_path(
+        &["/usr/bin/sudo", "/bin/sudo", "/usr/local/bin/sudo"],
+        "sudo",
+    );
+    let env_program =
+        unix_preferred_executable_path(&["/usr/bin/env", "/bin/env", "/usr/local/bin/env"], "env");
+    let id_program =
+        unix_preferred_executable_path(&["/usr/bin/id", "/bin/id", "/usr/local/bin/id"], "id");
+
+    let uid = format!("#{}", run_as.uid);
+    let gid = format!("#{}", run_as.gid);
+    let output = Command::new(&sudo_program)
+        .args([
+            "-n",
+            "-u",
+            uid.as_str(),
+            "-g",
+            gid.as_str(),
+            "--",
+            env_program.as_str(),
+            "-i",
+            id_program.as_str(),
+            "-u",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|err| format!("failed to run `{sudo_program}`: {err}"))?;
+
+    if !output.status.success() {
+        let code = output.status.code();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        return Err(format!(
+            "`{sudo_program} -n -u '{uid}' -g '{gid}' -- {env_program} -i {id_program} -u` failed (exit={code:?}) stderr={stderr:?}"
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let parsed_uid = stdout.parse::<u32>().map_err(|err| {
+        format!("failed to parse `{sudo_program} ... id -u` output `{stdout}`: {err}")
+    })?;
+    if parsed_uid != run_as.uid {
+        return Err(format!(
+            "`{sudo_program} ... id -u` returned {stdout:?} (expected {})",
+            run_as.uid
+        ));
+    }
+
+    Ok(())
+}
+
+struct PreparedPtyCommand {
+    program: String,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+    arg0: Option<String>,
+    run_as: Option<codex_utils_pty::RunAsUser>,
+}
+
+#[cfg(unix)]
+fn ensure_argv0_symlink(program: &str, arg0: &str) -> std::io::Result<String> {
+    let arg0 = std::path::Path::new(arg0)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| std::io::Error::other("arg0 must be a valid UTF-8 file name"))?;
+    if arg0.is_empty() {
+        return Err(std::io::Error::other("arg0 must be non-empty"));
+    }
+
+    let dir = std::path::PathBuf::from("/tmp/codex-argv0");
+    std::fs::create_dir_all(&dir)?;
+    let link_path = dir.join(arg0);
+
+    if let Ok(target) = std::fs::read_link(&link_path) {
+        if target == std::path::Path::new(program) {
+            return Ok(link_path.to_string_lossy().to_string());
+        }
+    }
+    let _ = std::fs::remove_file(&link_path);
+    std::os::unix::fs::symlink(program, &link_path)?;
+    Ok(link_path.to_string_lossy().to_string())
+}
+
+#[cfg(unix)]
+fn prepare_pty_command(
+    exec_env: &ExecRequest,
+    _tty: bool,
+) -> Result<PreparedPtyCommand, UnifiedExecError> {
+    let (program, args) = exec_env
+        .command
+        .split_first()
+        .ok_or(UnifiedExecError::MissingCommandLine)?;
+
+    let Some(run_as) = exec_env.run_as.as_ref() else {
+        return Ok(PreparedPtyCommand {
+            program: program.to_string(),
+            args: args.to_vec(),
+            env: exec_env.env.clone(),
+            arg0: exec_env.arg0.clone(),
+            run_as: None,
+        });
+    };
+
+    let sudo_program = unix_preferred_executable_path(
+        &["/usr/bin/sudo", "/bin/sudo", "/usr/local/bin/sudo"],
+        "sudo",
+    );
+    let env_program =
+        unix_preferred_executable_path(&["/usr/bin/env", "/bin/env", "/usr/local/bin/env"], "env");
+
+    // `sudo` resets most of the environment by default, so we pass the desired
+    // environment explicitly via `env -i KEY=VALUE ...`.
+    let mut sudo_args = vec![
+        "-n".to_string(),
+        "-u".to_string(),
+        format!("#{}", run_as.uid),
+        "-g".to_string(),
+        format!("#{}", run_as.gid),
+        "--".to_string(),
+        env_program,
+        "-i".to_string(),
+    ];
+
+    let mut env_kv: Vec<_> = exec_env.env.iter().collect();
+    env_kv.sort_by_key(|(key, _)| *key);
+    sudo_args.extend(
+        env_kv
+            .into_iter()
+            .map(|(key, value)| format!("{key}={value}")),
+    );
+
+    sudo_args.push(program.to_string());
+    sudo_args.extend(args.iter().cloned());
+
+    Ok(PreparedPtyCommand {
+        program: sudo_program,
+        args: sudo_args,
+        env: HashMap::new(),
+        arg0: None,
+        run_as: None,
+    })
+}
+
+#[cfg(not(unix))]
+fn prepare_pty_command(
+    exec_env: &ExecRequest,
+    _tty: bool,
+) -> Result<PreparedPtyCommand, UnifiedExecError> {
+    let (program, args) = exec_env
+        .command
+        .split_first()
+        .ok_or(UnifiedExecError::MissingCommandLine)?;
+    Ok(PreparedPtyCommand {
+        program: program.to_string(),
+        args: args.to_vec(),
+        env: exec_env.env.clone(),
+        arg0: exec_env.arg0.clone(),
+        run_as: None,
+    })
+}
+
 struct PreparedProcessHandles {
     writer_tx: mpsc::Sender<Vec<u8>>,
     output_buffer: OutputBuffer,
@@ -104,6 +282,108 @@ struct PreparedProcessHandles {
 }
 
 impl UnifiedExecProcessManager {
+    #[cfg(unix)]
+    async fn cached_exec_command_sudo_preflight(&self, run_as: RunAsUser) -> Result<(), String> {
+        {
+            let guard = self.sudo_preflight.lock().await;
+            if let Some(state) = guard.as_ref().filter(|state| {
+                state.run_as.uid == run_as.uid
+                    && state.run_as.gid == run_as.gid
+                    && state.run_as.supplementary_gids == run_as.supplementary_gids
+            }) {
+                return state.result.clone();
+            }
+        }
+
+        let result = sudo_preflight_check(&run_as).await;
+        let mut guard = self.sudo_preflight.lock().await;
+        let warned = guard
+            .as_ref()
+            .filter(|state| {
+                state.run_as.uid == run_as.uid
+                    && state.run_as.gid == run_as.gid
+                    && state.run_as.supplementary_gids == run_as.supplementary_gids
+            })
+            .is_some_and(|state| state.warned);
+        guard.replace(super::SudoPreflightState {
+            run_as,
+            result: result.clone(),
+            warned,
+        });
+        result
+    }
+
+    #[cfg(not(unix))]
+    async fn cached_exec_command_sudo_preflight(&self, _run_as: RunAsUser) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub(crate) async fn preflight_exec_command_sudo_worker_user(
+        &self,
+        run_as: RunAsUser,
+    ) -> Result<(), UnifiedExecError> {
+        self.cached_exec_command_sudo_preflight(run_as)
+            .await
+            .map_err(|err| {
+                UnifiedExecError::create_process(format!(
+                    "exec_command requires passwordless sudo to run as the configured worker user: {err}"
+                ))
+            })
+    }
+
+    #[cfg(unix)]
+    pub(crate) async fn exec_command_sudo_worker_user_startup_warning(
+        &self,
+        run_as: RunAsUser,
+    ) -> Option<String> {
+        {
+            let mut guard = self.sudo_preflight.lock().await;
+            if let Some(state) = guard.as_mut().filter(|state| {
+                state.run_as.uid == run_as.uid
+                    && state.run_as.gid == run_as.gid
+                    && state.run_as.supplementary_gids == run_as.supplementary_gids
+            }) {
+                if state.warned {
+                    return None;
+                }
+                if let Err(err) = state.result.as_ref() {
+                    state.warned = true;
+                    return Some(err.clone());
+                }
+                return None;
+            }
+        }
+
+        match sudo_preflight_check(&run_as).await {
+            Ok(()) => {
+                let mut guard = self.sudo_preflight.lock().await;
+                guard.replace(super::SudoPreflightState {
+                    run_as,
+                    result: Ok(()),
+                    warned: false,
+                });
+                None
+            }
+            Err(err) => {
+                let mut guard = self.sudo_preflight.lock().await;
+                guard.replace(super::SudoPreflightState {
+                    run_as,
+                    result: Err(err.clone()),
+                    warned: true,
+                });
+                Some(err)
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) async fn exec_command_sudo_worker_user_startup_warning(
+        &self,
+        _run_as: RunAsUser,
+    ) -> Option<String> {
+        None
+    }
+
     pub(crate) async fn allocate_process_id(&self) -> String {
         loop {
             let mut store = self.process_store.lock().await;
@@ -531,27 +811,66 @@ impl UnifiedExecProcessManager {
         tty: bool,
         mut spawn_lifecycle: SpawnLifecycleHandle,
     ) -> Result<UnifiedExecProcess, UnifiedExecError> {
-        let (program, args) = env
-            .command
-            .split_first()
-            .ok_or(UnifiedExecError::MissingCommandLine)?;
+        let mut env_override = None;
+        #[cfg(unix)]
+        {
+            if env.run_as.is_some()
+                && let Some(arg0) = env.arg0.as_deref()
+                && let Some((program, _)) = env.command.split_first()
+            {
+                let program_name = std::path::Path::new(program).file_name();
+                let arg0_name = std::path::Path::new(arg0).file_name();
+                if program_name != arg0_name {
+                    let link_program = ensure_argv0_symlink(program, arg0).map_err(|err| {
+                        UnifiedExecError::create_process(format!(
+                            "failed to create argv0 symlink for arg0 `{arg0}`: {err}"
+                        ))
+                    })?;
+                    let mut command = env.command.clone();
+                    command[0] = link_program;
+                    env_override = Some(ExecRequest {
+                        command,
+                        cwd: env.cwd.clone(),
+                        env: env.env.clone(),
+                        network: env.network.clone(),
+                        expiration: env.expiration.clone(),
+                        sandbox: env.sandbox,
+                        windows_sandbox_level: env.windows_sandbox_level,
+                        run_as: env.run_as.clone(),
+                        sandbox_permissions: env.sandbox_permissions.clone(),
+                        sandbox_policy: env.sandbox_policy.clone(),
+                        justification: env.justification.clone(),
+                        arg0: None,
+                    });
+                }
+            }
+        }
+        let env = env_override.as_ref().unwrap_or(env);
+
+        #[cfg(unix)]
+        if let Some(run_as) = env.run_as.clone() {
+            self.preflight_exec_command_sudo_worker_user(run_as).await?;
+        }
+
+        let prepared = prepare_pty_command(env, tty)?;
 
         let spawn_result = if tty {
             codex_utils_pty::pty::spawn_process(
-                program,
-                args,
+                prepared.program.as_str(),
+                prepared.args.as_slice(),
                 env.cwd.as_path(),
-                &env.env,
-                &env.arg0,
+                &prepared.env,
+                &prepared.arg0,
             )
             .await
         } else {
-            codex_utils_pty::pipe::spawn_process_no_stdin(
-                program,
-                args,
+            codex_utils_pty::pipe::spawn_process_no_stdin_with_run_as(
+                prepared.program.as_str(),
+                prepared.args.as_slice(),
                 env.cwd.as_path(),
-                &env.env,
-                &env.arg0,
+                &prepared.env,
+                &prepared.arg0,
+                prepared.run_as.clone(),
             )
             .await
         };
@@ -779,9 +1098,120 @@ enum ProcessStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::exec::ExecExpiration;
+    use crate::exec::SandboxType;
+    use crate::protocol::SandboxPolicy;
+    use codex_protocol::config_types::WindowsSandboxLevel;
     use pretty_assertions::assert_eq;
     use tokio::time::Duration;
     use tokio::time::Instant;
+
+    #[test]
+    #[cfg(unix)]
+    fn prepare_pty_command_run_as_without_tty_wraps_with_sudo() {
+        let exec_env = ExecRequest {
+            command: vec!["id".to_string(), "-u".to_string()],
+            cwd: PathBuf::from("."),
+            env: HashMap::from([("FOO".to_string(), "bar".to_string())]),
+            network: None,
+            expiration: ExecExpiration::DefaultTimeout,
+            sandbox: SandboxType::None,
+            windows_sandbox_level: WindowsSandboxLevel::Disabled,
+            run_as: Some(RunAsUser {
+                uid: 1500,
+                gid: 1500,
+                supplementary_gids: Some(vec![1500]),
+            }),
+            sandbox_permissions: Default::default(),
+            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            justification: None,
+            arg0: None,
+        };
+
+        let prepared = prepare_pty_command(&exec_env, false).expect("prepare");
+
+        assert!(
+            prepared.program.ends_with("sudo"),
+            "program={}",
+            prepared.program
+        );
+        assert_eq!(prepared.env, HashMap::new());
+        assert_eq!(prepared.arg0, None);
+        assert_eq!(prepared.run_as, None);
+        assert_eq!(prepared.args.first().map(String::as_str), Some("-n"));
+        assert_eq!(prepared.args.last().map(String::as_str), Some("-u"));
+        assert_eq!(
+            prepared.args.iter().rev().nth(1).map(String::as_str),
+            Some("id")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn prepare_pty_command_run_as_with_tty_wraps_with_sudo() {
+        let exec_env = ExecRequest {
+            command: vec!["id".to_string(), "-u".to_string()],
+            cwd: PathBuf::from("."),
+            env: HashMap::from([("FOO".to_string(), "bar".to_string())]),
+            network: None,
+            expiration: ExecExpiration::DefaultTimeout,
+            sandbox: SandboxType::None,
+            windows_sandbox_level: WindowsSandboxLevel::Disabled,
+            run_as: Some(RunAsUser {
+                uid: 1500,
+                gid: 1500,
+                supplementary_gids: Some(vec![1500]),
+            }),
+            sandbox_permissions: Default::default(),
+            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            justification: None,
+            arg0: None,
+        };
+
+        let prepared = prepare_pty_command(&exec_env, true).expect("prepare");
+
+        assert!(
+            prepared.program.ends_with("sudo"),
+            "program={}",
+            prepared.program
+        );
+        assert_eq!(prepared.env, HashMap::new());
+        assert_eq!(prepared.arg0, None);
+        assert_eq!(prepared.run_as, None);
+        assert_eq!(prepared.args.first().map(String::as_str), Some("-n"));
+        assert_eq!(prepared.args.last().map(String::as_str), Some("-u"));
+        assert_eq!(
+            prepared.args.iter().rev().nth(1).map(String::as_str),
+            Some("id")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn prepare_pty_command_run_as_does_not_use_env_argv0_flags() {
+        let exec_env = ExecRequest {
+            command: vec!["/bin/echo".to_string(), "ok".to_string()],
+            cwd: PathBuf::from("."),
+            env: HashMap::new(),
+            network: None,
+            expiration: ExecExpiration::DefaultTimeout,
+            sandbox: SandboxType::None,
+            windows_sandbox_level: WindowsSandboxLevel::Disabled,
+            run_as: Some(RunAsUser {
+                uid: 1500,
+                gid: 1500,
+                supplementary_gids: None,
+            }),
+            sandbox_permissions: Default::default(),
+            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            justification: None,
+            arg0: Some("codex-linux-sandbox".to_string()),
+        };
+
+        let prepared = prepare_pty_command(&exec_env, false).expect("prepare");
+        assert_eq!(prepared.args.contains(&"-a".to_string()), false);
+        assert_eq!(prepared.args.contains(&"--argv0".to_string()), false);
+    }
 
     #[test]
     fn unified_exec_env_injects_defaults() {

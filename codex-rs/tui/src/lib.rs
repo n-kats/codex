@@ -7,6 +7,7 @@ use additional_dirs::add_dir_warning_message;
 use app::App;
 pub use app::AppExitInfo;
 pub use app::ExitReason;
+use codex_app_server_protocol::ConfigLayerSource;
 use codex_cloud_requirements::cloud_requirements_loader;
 use codex_core::AuthManager;
 use codex_core::CodexAuth;
@@ -20,10 +21,11 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_overrides;
+use codex_core::config::load_config_as_toml_with_cli_overrides_and_loader_overrides;
 use codex_core::config::resolve_oss_provider;
 use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::config_loader::ConfigLoadError;
+use codex_core::config_loader::LoaderOverrides;
 use codex_core::config_loader::format_config_error_with_source;
 use codex_core::default_client::set_default_client_residency_requirement;
 use codex_core::find_thread_path_by_id_str;
@@ -227,7 +229,21 @@ pub use public_widgets::composer_input::ComposerAction;
 pub use public_widgets::composer_input::ComposerInput;
 // (tests access modules directly within the crate)
 
-pub async fn run_main(mut cli: Cli, arg0_paths: Arg0DispatchPaths) -> std::io::Result<AppExitInfo> {
+pub(crate) fn user_config_toml_path(config: &Config) -> Option<PathBuf> {
+    config
+        .config_layer_stack
+        .get_user_layer()
+        .and_then(|layer| match &layer.name {
+            ConfigLayerSource::User { file } => Some(file.as_path().to_path_buf()),
+            _ => None,
+        })
+}
+
+pub async fn run_main(
+    mut cli: Cli,
+    arg0_paths: Arg0DispatchPaths,
+    agents_md: Vec<PathBuf>,
+) -> std::io::Result<AppExitInfo> {
     let (sandbox_mode, approval_policy) = if cli.full_auto {
         (
             Some(SandboxMode::WorkspaceWrite),
@@ -283,11 +299,14 @@ pub async fn run_main(mut cli: Cli, arg0_paths: Arg0DispatchPaths) -> std::io::R
         None => AbsolutePathBuf::current_dir()?,
     };
 
+    let loader_overrides = loader_overrides_from_cli(&cli)?;
+
     #[allow(clippy::print_stderr)]
-    let config_toml = match load_config_as_toml_with_cli_overrides(
+    let config_toml = match load_config_as_toml_with_cli_overrides_and_loader_overrides(
         &codex_home,
         &config_cwd,
         cli_kv_overrides.clone(),
+        loader_overrides.clone(),
     )
     .await
     {
@@ -379,6 +398,7 @@ pub async fn run_main(mut cli: Cli, arg0_paths: Arg0DispatchPaths) -> std::io::R
         codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe.clone(),
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
         show_raw_agent_reasoning: cli.oss.then_some(true),
+        project_doc_paths: agents_md,
         additional_writable_roots: additional_dirs,
         ..Default::default()
     };
@@ -387,8 +407,11 @@ pub async fn run_main(mut cli: Cli, arg0_paths: Arg0DispatchPaths) -> std::io::R
         cli_kv_overrides.clone(),
         overrides.clone(),
         cloud_requirements.clone(),
+        codex_home.clone(),
+        loader_overrides.clone(),
     )
     .await;
+    apply_custom_diff_palette_override(&config);
 
     #[allow(clippy::print_stderr)]
     match check_execpolicy_for_warnings(&config.config_layer_stack).await {
@@ -541,6 +564,9 @@ async fn run_ratatui_app(
 
     tooltips::announcement::prewarm();
 
+    let loader_overrides = loader_overrides_from_cli(&cli)?;
+    let codex_home = initial_config.codex_home.clone();
+
     // Forward panic reports through tracing so they appear in the UI status
     // line, but do not swallow the default/color-eyre panic handler.
     // Chain to the previous hook so users still get a rich panic report
@@ -635,6 +661,8 @@ async fn run_ratatui_app(
                 cli_kv_overrides.clone(),
                 overrides.clone(),
                 cloud_requirements.clone(),
+                codex_home.clone(),
+                loader_overrides.clone(),
             )
             .await
         } else {
@@ -643,6 +671,7 @@ async fn run_ratatui_app(
     } else {
         initial_config
     };
+    apply_custom_diff_palette_override(&config);
 
     let mut missing_session_exit = |id_str: &str, action: &str| {
         error!("Error finding conversation path: {id_str}");
@@ -886,12 +915,15 @@ async fn run_ratatui_app(
                 cli_kv_overrides.clone(),
                 overrides.clone(),
                 cloud_requirements.clone(),
+                codex_home.clone(),
+                loader_overrides.clone(),
                 fallback_cwd,
             )
             .await
         }
         _ => config,
     };
+    apply_custom_diff_palette_override(&config);
 
     // Configure syntax highlighting theme from the final config — onboarding
     // and resume/fork can both reload config with a different tui_theme, so
@@ -1120,21 +1152,34 @@ async fn load_config_or_exit(
     cli_kv_overrides: Vec<(String, toml::Value)>,
     overrides: ConfigOverrides,
     cloud_requirements: CloudRequirementsLoader,
+    codex_home: PathBuf,
+    loader_overrides: LoaderOverrides,
 ) -> Config {
-    load_config_or_exit_with_fallback_cwd(cli_kv_overrides, overrides, cloud_requirements, None)
-        .await
+    load_config_or_exit_with_fallback_cwd(
+        cli_kv_overrides,
+        overrides,
+        cloud_requirements,
+        codex_home,
+        loader_overrides,
+        None,
+    )
+    .await
 }
 
 async fn load_config_or_exit_with_fallback_cwd(
     cli_kv_overrides: Vec<(String, toml::Value)>,
     overrides: ConfigOverrides,
     cloud_requirements: CloudRequirementsLoader,
+    codex_home: PathBuf,
+    loader_overrides: LoaderOverrides,
     fallback_cwd: Option<PathBuf>,
 ) -> Config {
     #[allow(clippy::print_stderr)]
     match ConfigBuilder::default()
+        .codex_home(codex_home)
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
+        .loader_overrides(loader_overrides)
         .cloud_requirements(cloud_requirements)
         .fallback_cwd(fallback_cwd)
         .build()
@@ -1146,6 +1191,38 @@ async fn load_config_or_exit_with_fallback_cwd(
             std::process::exit(1);
         }
     }
+}
+
+fn loader_overrides_from_cli(cli: &Cli) -> std::io::Result<LoaderOverrides> {
+    let mut loader_overrides = LoaderOverrides::default();
+    if cli.no_config {
+        loader_overrides.disable_user_config = true;
+        loader_overrides.disable_project_config = true;
+        return Ok(loader_overrides);
+    }
+
+    if let Some(path) = &cli.config_toml_file {
+        let resolved = if path.is_absolute() {
+            path.clone()
+        } else {
+            std::env::current_dir()?.join(path)
+        };
+        loader_overrides.user_config_path = Some(resolved);
+    }
+
+    Ok(loader_overrides)
+}
+
+fn apply_custom_diff_palette_override(config: &Config) {
+    diff_render::set_diff_palette_override(diff_render::DiffPaletteOverride {
+        add_line_bg_rgb: config.custom_diff_add_line_bg,
+        del_line_bg_rgb: config.custom_diff_del_line_bg,
+        enabled: config.custom_diff_enabled,
+        line_bg_enabled: config.custom_diff_line_bg_enabled,
+        gutter_enabled: config.custom_diff_gutter_enabled,
+        sign_enabled: config.custom_diff_sign_enabled,
+        content_enabled: config.custom_diff_content_enabled,
+    });
 }
 
 /// Determine if user has configured a sandbox / approval policy,
@@ -1184,6 +1261,7 @@ fn should_show_login_screen(login_status: LoginStatus, config: &Config) -> bool 
 
 #[cfg(test)]
 mod tests {
+    #![allow(non_snake_case)]
     use super::*;
     use codex_core::config::ConfigBuilder;
     use codex_core::config::ConfigOverrides;
@@ -1205,6 +1283,82 @@ mod tests {
             .codex_home(temp_dir.path().to_path_buf())
             .build()
             .await
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn custom__tui設定__configファイル指定を反映する() -> std::io::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let user_config = temp_dir.path().join("custom.toml");
+        std::fs::write(
+            &user_config,
+            r#"
+approval_policy = "never"
+
+[shell_environment_policy]
+inherit = "core"
+
+[custom.exec]
+worker_uid = 1500
+worker_gid = 1500
+"#,
+        )?;
+
+        let cli = Cli {
+            prompt: None,
+            images: Vec::new(),
+            resume_picker: false,
+            resume_last: false,
+            resume_session_id: None,
+            resume_show_all: false,
+            fork_picker: false,
+            fork_last: false,
+            fork_session_id: None,
+            fork_show_all: false,
+            config_toml_file: Some(user_config),
+            no_config: false,
+            model: None,
+            oss: false,
+            oss_provider: None,
+            config_profile: None,
+            sandbox_mode: None,
+            approval_policy: None,
+            full_auto: false,
+            dangerously_bypass_approvals_and_sandbox: false,
+            cwd: None,
+            web_search: false,
+            add_dir: Vec::new(),
+            no_alt_screen: false,
+            config_overrides: codex_utils_cli::CliConfigOverrides::default(),
+        };
+
+        let loader_overrides = LoaderOverrides {
+            disable_project_config: true,
+            ..loader_overrides_from_cli(&cli)?
+        };
+
+        let cfg = load_config_or_exit_with_fallback_cwd(
+            Vec::new(),
+            ConfigOverrides {
+                cwd: Some(temp_dir.path().to_path_buf()),
+                ..Default::default()
+            },
+            CloudRequirementsLoader::default(),
+            temp_dir.path().to_path_buf(),
+            loader_overrides,
+            None,
+        )
+        .await;
+
+        assert_eq!(
+            cfg.exec_run_as,
+            Some(codex_core::spawn::RunAsUser {
+                uid: 1500,
+                gid: 1500,
+                supplementary_gids: None,
+            })
+        );
+        Ok(())
     }
 
     #[tokio::test]

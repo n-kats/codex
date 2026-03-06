@@ -1511,6 +1511,7 @@ impl CodexMessageProcessor {
             windows_sandbox_level,
             justification: None,
             arg0: None,
+            run_as: None,
         };
 
         let requested_policy = params.sandbox_policy.map(|policy| policy.to_core());
@@ -5144,6 +5145,7 @@ impl CodexMessageProcessor {
                     service_tier: params.service_tier,
                     collaboration_mode,
                     personality: params.personality,
+                    project_doc_paths: None,
                 })
                 .await;
         }

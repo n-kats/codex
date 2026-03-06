@@ -23,6 +23,7 @@ use crate::seatbelt::create_seatbelt_command_args_with_extensions;
 #[cfg(target_os = "macos")]
 use crate::spawn::CODEX_SANDBOX_ENV_VAR;
 use crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
+use crate::spawn::RunAsUser;
 use crate::tools::sandboxing::SandboxablePreference;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -46,6 +47,7 @@ pub struct CommandSpec {
     pub cwd: PathBuf,
     pub env: HashMap<String, String>,
     pub expiration: ExecExpiration,
+    pub run_as: Option<RunAsUser>,
     pub sandbox_permissions: SandboxPermissions,
     pub additional_permissions: Option<PermissionProfile>,
     pub justification: Option<String>,
@@ -60,6 +62,7 @@ pub struct ExecRequest {
     pub expiration: ExecExpiration,
     pub sandbox: SandboxType,
     pub windows_sandbox_level: WindowsSandboxLevel,
+    pub run_as: Option<RunAsUser>,
     pub sandbox_permissions: SandboxPermissions,
     pub sandbox_policy: SandboxPolicy,
     pub justification: Option<String>,
@@ -406,13 +409,12 @@ impl SandboxManager {
             SandboxType::LinuxSeccomp => {
                 let exe = codex_linux_sandbox_exe
                     .ok_or(SandboxTransformError::MissingLinuxSandboxExecutable)?;
-                let allow_proxy_network = allow_network_for_proxy(enforce_managed_network);
                 let mut args = create_linux_sandbox_command_args(
                     command.clone(),
                     &effective_permissions.sandbox_policy,
                     sandbox_policy_cwd,
                     use_linux_sandbox_bwrap,
-                    allow_proxy_network,
+                    allow_network_for_proxy(enforce_managed_network),
                 );
                 let mut full_command = Vec::with_capacity(1 + args.len());
                 full_command.push(exe.to_string_lossy().to_string());
@@ -443,6 +445,7 @@ impl SandboxManager {
             expiration: spec.expiration,
             sandbox,
             windows_sandbox_level,
+            run_as: spec.run_as,
             sandbox_permissions: spec.sandbox_permissions,
             sandbox_policy: effective_permissions.sandbox_policy,
             justification: spec.justification,

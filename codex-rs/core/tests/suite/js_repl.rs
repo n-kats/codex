@@ -21,6 +21,13 @@ use std::path::Path;
 use tempfile::tempdir;
 use wiremock::MockServer;
 
+fn has_node_runtime() -> bool {
+    std::process::Command::new("node")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
 fn custom_tool_output_text_and_success(
     req: &ResponsesRequest,
     call_id: &str,
@@ -243,6 +250,9 @@ async fn js_repl_is_not_advertised_when_startup_node_is_incompatible() -> Result
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn js_repl_persists_top_level_destructured_bindings_and_supports_tla() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    if !has_node_runtime() {
+        return Ok(());
+    }
 
     let server = responses::start_mock_server().await;
     let mocks = run_js_repl_sequence(
@@ -570,6 +580,9 @@ async fn js_repl_allows_globalthis_shadowing_with_instrumented_bindings() -> Res
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn js_repl_can_invoke_builtin_tools() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    if !has_node_runtime() {
+        return Ok(());
+    }
 
     let server = responses::start_mock_server().await;
     let mock = run_js_repl_turn(
@@ -597,6 +610,9 @@ async fn js_repl_can_invoke_builtin_tools() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn js_repl_tool_call_rejects_recursive_js_repl_invocation() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    if !has_node_runtime() {
+        return Ok(());
+    }
 
     let server = responses::start_mock_server().await;
     let mock = run_js_repl_turn(
@@ -638,6 +654,9 @@ try {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn js_repl_does_not_expose_process_global() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    if !has_node_runtime() {
+        return Ok(());
+    }
 
     let server = responses::start_mock_server().await;
     let mock = run_js_repl_turn(
@@ -662,6 +681,9 @@ async fn js_repl_does_not_expose_process_global() -> Result<()> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn js_repl_blocks_sensitive_builtin_imports() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    if !has_node_runtime() {
+        return Ok(());
+    }
 
     let server = responses::start_mock_server().await;
     let mock = run_js_repl_turn(
