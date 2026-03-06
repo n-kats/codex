@@ -106,6 +106,7 @@ include_only = [
 
 - worker ユーザー指定が「ツールごと」になっていると抜け道が生じやすいので、spawn 直前の共通箇所に集約する。
 - worker の `HOME` / `CODEX_HOME` を invoker と混ぜると、意図せずトークン/キャッシュが共有される。
+- `codex-rs/core/src/spawn.rs` では upstream 追従をしやすくするため、worker user 固有の処理を `apply_run_as_pre_exec()` / `try_spawn_with_run_as_sudo()` に寄せ、通常 spawn の流れと分離して保つ。
 
 ## 関連ファイル（実装時に追記）
 

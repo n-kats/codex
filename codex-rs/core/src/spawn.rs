@@ -41,6 +41,167 @@ pub struct RunAsUser {
     pub supplementary_gids: Option<Vec<u32>>,
 }
 
+#[cfg(unix)]
+struct RunAsPreExec {
+    uid: libc::uid_t,
+    gid: libc::gid_t,
+    supplementary_gids: Option<Vec<libc::gid_t>>,
+}
+
+#[cfg(unix)]
+impl From<RunAsUser> for RunAsPreExec {
+    fn from(value: RunAsUser) -> Self {
+        Self {
+            uid: value.uid as libc::uid_t,
+            gid: value.gid as libc::gid_t,
+            supplementary_gids: value.supplementary_gids.map(|gids| {
+                gids.into_iter()
+                    .map(|gid| gid as libc::gid_t)
+                    .collect::<Vec<_>>()
+            }),
+        }
+    }
+}
+
+#[cfg(unix)]
+struct RunAsRetry {
+    run_as: RunAsUser,
+    arg0: Option<String>,
+    program: String,
+    args: Vec<String>,
+    cwd: PathBuf,
+    env: HashMap<String, String>,
+}
+
+#[cfg(unix)]
+fn apply_run_as_pre_exec(run_as: &RunAsPreExec) -> std::io::Result<()> {
+    if let Some(groups) = run_as.supplementary_gids.as_ref() {
+        let groups_ptr = groups.as_ptr();
+        let groups_ptr = if groups.is_empty() {
+            std::ptr::null()
+        } else {
+            groups_ptr
+        };
+        if unsafe { libc::setgroups(groups.len(), groups_ptr) } == -1 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    if unsafe { libc::setgid(run_as.gid) } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if unsafe { libc::setuid(run_as.uid) } == -1 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn configure_unix_pre_exec(
+    cmd: &mut Command,
+    stdio_policy: StdioPolicy,
+    run_as: Option<RunAsUser>,
+) {
+    unsafe {
+        let detach_from_tty = matches!(stdio_policy, StdioPolicy::RedirectForShellTool);
+        #[cfg(target_os = "linux")]
+        let parent_pid = libc::getpid();
+        let run_as = run_as.map(RunAsPreExec::from);
+        cmd.pre_exec(move || {
+            if detach_from_tty {
+                codex_utils_pty::process_group::detach_from_tty()?;
+            }
+            if let Some(run_as) = run_as.as_ref() {
+                apply_run_as_pre_exec(run_as)?;
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                codex_utils_pty::process_group::set_parent_death_signal(parent_pid)?;
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(unix)]
+fn try_spawn_with_run_as_sudo(
+    retry: RunAsRetry,
+    sandbox_policy: &SandboxPolicy,
+    stdio_policy: StdioPolicy,
+    err: std::io::Error,
+) -> std::io::Result<Child> {
+    if unsafe { libc::geteuid() } == 0
+        || (err.kind() != std::io::ErrorKind::PermissionDenied
+            && err.raw_os_error() != Some(libc::EPERM))
+    {
+        return Err(err);
+    }
+
+    let Some(sudo_program) = ["/usr/bin/sudo", "/bin/sudo"]
+        .into_iter()
+        .find(|path| std::path::Path::new(path).exists())
+    else {
+        return Err(err);
+    };
+    let Some(env_program) = ["/usr/bin/env", "/bin/env"]
+        .into_iter()
+        .find(|path| std::path::Path::new(path).exists())
+    else {
+        return Err(err);
+    };
+
+    let uid = format!("#{}", retry.run_as.uid);
+    let gid = format!("#{}", retry.run_as.gid);
+    let program = if let Some(arg0) = retry.arg0.as_deref() {
+        ensure_argv0_symlink(retry.program.as_str(), arg0)?
+            .to_string_lossy()
+            .to_string()
+    } else {
+        retry.program
+    };
+
+    let mut sudo_cmd = Command::new(sudo_program);
+    sudo_cmd.args([
+        "-n",
+        "-u",
+        uid.as_str(),
+        "-g",
+        gid.as_str(),
+        "--",
+        env_program,
+    ]);
+    sudo_cmd.arg("-i");
+
+    let mut env_kv: Vec<_> = retry.env.iter().collect();
+    env_kv.sort_unstable_by_key(|(key, _)| *key);
+    for (key, value) in env_kv {
+        sudo_cmd.arg(format!("{key}={value}"));
+    }
+    if !sandbox_policy.has_full_network_access() {
+        sudo_cmd.arg(format!("{CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR}=1"));
+    }
+    sudo_cmd.arg(program);
+    sudo_cmd.args(retry.args);
+    sudo_cmd.current_dir(retry.cwd);
+    sudo_cmd.env_clear();
+    configure_unix_pre_exec(&mut sudo_cmd, stdio_policy, None);
+
+    match stdio_policy {
+        StdioPolicy::RedirectForShellTool => {
+            sudo_cmd.stdin(Stdio::null());
+            sudo_cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        }
+        StdioPolicy::Inherit => {
+            sudo_cmd
+                .stdin(Stdio::inherit())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+        }
+    }
+
+    sudo_cmd.kill_on_drop(true).spawn()
+}
+
 /// Experimental environment variable that will be set to some non-empty value
 /// if both of the following are true:
 ///
@@ -105,20 +266,23 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
         "spawn_child_async: {program:?} {args:?} {arg0:?} {cwd:?} {sandbox_policy:?} {stdio_policy:?} {env:?}"
     );
 
-    let run_as_for_retry = run_as.clone();
-    let arg0_for_retry = arg0.map(String::from);
-    let program_for_retry = program.to_string_lossy().to_string();
-    let args_for_retry = args.clone();
-    let cwd_for_retry = cwd.clone();
+    #[cfg(unix)]
+    let run_as_retry = run_as.clone().map(|run_as| RunAsRetry {
+        run_as,
+        arg0: arg0.map(String::from),
+        program: program.to_string_lossy().to_string(),
+        args: args.clone(),
+        cwd: cwd.clone(),
+        env: env.clone(),
+    });
     let mut cmd = Command::new(&program);
     #[cfg(unix)]
     cmd.arg0(arg0.map_or_else(|| program.to_string_lossy().to_string(), String::from));
     cmd.args(args);
-    cmd.current_dir(cwd);
+    cmd.current_dir(&cwd);
     if let Some(network) = network {
         network.apply_to_env(&mut env);
     }
-    let env_for_retry = env.clone();
 
     cmd.env_clear();
     cmd.envs(env);
@@ -132,56 +296,7 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
     // to also be terminated.
 
     #[cfg(unix)]
-    unsafe {
-        let detach_from_tty = matches!(stdio_policy, StdioPolicy::RedirectForShellTool);
-        #[cfg(target_os = "linux")]
-        let parent_pid = libc::getpid();
-        let run_as = run_as.map(|run_as| {
-            (
-                run_as.uid as libc::uid_t,
-                run_as.gid as libc::gid_t,
-                run_as.supplementary_gids.map(|gids| {
-                    gids.into_iter()
-                        .map(|gid| gid as libc::gid_t)
-                        .collect::<Vec<_>>()
-                }),
-            )
-        });
-        cmd.pre_exec(move || {
-            if detach_from_tty {
-                codex_utils_pty::process_group::detach_from_tty()?;
-            }
-
-            if let Some((uid, gid, groups)) = run_as.as_ref() {
-                if let Some(groups) = groups.as_ref() {
-                    let groups_ptr = groups.as_ptr();
-                    let groups_ptr = if groups.is_empty() {
-                        std::ptr::null()
-                    } else {
-                        groups_ptr
-                    };
-                    if libc::setgroups(groups.len(), groups_ptr) == -1 {
-                        return Err(std::io::Error::last_os_error());
-                    }
-                }
-                if libc::setgid(*gid) == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                if libc::setuid(*uid) == -1 {
-                    return Err(std::io::Error::last_os_error());
-                }
-            }
-
-            // This relies on prctl(2), so it only works on Linux.
-            #[cfg(target_os = "linux")]
-            {
-                // This prctl call effectively requests, "deliver SIGTERM when my
-                // current parent dies."
-                codex_utils_pty::process_group::set_parent_death_signal(parent_pid)?;
-            }
-            Ok(())
-        });
-    }
+    configure_unix_pre_exec(&mut cmd, stdio_policy, run_as);
 
     match stdio_policy {
         StdioPolicy::RedirectForShellTool => {
@@ -207,95 +322,8 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
         Err(err) => {
             #[cfg(unix)]
             {
-                if let Some(run_as) = run_as_for_retry
-                    && unsafe { libc::geteuid() } != 0
-                    && (err.kind() == std::io::ErrorKind::PermissionDenied
-                        || err.raw_os_error() == Some(libc::EPERM))
-                {
-                    let Some(sudo_program) = ["/usr/bin/sudo", "/bin/sudo"]
-                        .into_iter()
-                        .find(|path| std::path::Path::new(path).exists())
-                    else {
-                        return Err(err);
-                    };
-                    let Some(env_program) = ["/usr/bin/env", "/bin/env"]
-                        .into_iter()
-                        .find(|path| std::path::Path::new(path).exists())
-                    else {
-                        return Err(err);
-                    };
-
-                    let uid = format!("#{}", run_as.uid);
-                    let gid = format!("#{}", run_as.gid);
-
-                    let program_for_retry = if let Some(arg0) = arg0_for_retry.as_deref() {
-                        ensure_argv0_symlink(program_for_retry.as_str(), arg0)?
-                            .to_string_lossy()
-                            .to_string()
-                    } else {
-                        program_for_retry
-                    };
-
-                    let mut sudo_cmd = Command::new(sudo_program);
-                    sudo_cmd.args([
-                        "-n",
-                        "-u",
-                        uid.as_str(),
-                        "-g",
-                        gid.as_str(),
-                        "--",
-                        env_program,
-                    ]);
-                    sudo_cmd.arg("-i");
-
-                    let mut env_kv: Vec<_> = env_for_retry.iter().collect();
-                    env_kv.sort_by_key(|(key, _)| *key);
-                    for (key, value) in env_kv {
-                        sudo_cmd.arg(format!("{key}={value}"));
-                    }
-                    if !sandbox_policy.has_full_network_access() {
-                        sudo_cmd.arg(format!("{CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR}=1"));
-                    }
-                    sudo_cmd.arg(program_for_retry);
-                    sudo_cmd.args(args_for_retry);
-
-                    sudo_cmd.current_dir(&cwd_for_retry);
-                    sudo_cmd.env_clear();
-
-                    unsafe {
-                        let detach_from_tty =
-                            matches!(stdio_policy, StdioPolicy::RedirectForShellTool);
-                        #[cfg(target_os = "linux")]
-                        let parent_pid = libc::getpid();
-                        sudo_cmd.pre_exec(move || {
-                            if detach_from_tty {
-                                codex_utils_pty::process_group::detach_from_tty()?;
-                            }
-
-                            #[cfg(target_os = "linux")]
-                            {
-                                codex_utils_pty::process_group::set_parent_death_signal(
-                                    parent_pid,
-                                )?;
-                            }
-                            Ok(())
-                        });
-                    }
-
-                    match stdio_policy {
-                        StdioPolicy::RedirectForShellTool => {
-                            sudo_cmd.stdin(Stdio::null());
-                            sudo_cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-                        }
-                        StdioPolicy::Inherit => {
-                            sudo_cmd
-                                .stdin(Stdio::inherit())
-                                .stdout(Stdio::inherit())
-                                .stderr(Stdio::inherit());
-                        }
-                    }
-
-                    sudo_cmd.kill_on_drop(true).spawn()
+                if let Some(run_as_retry) = run_as_retry {
+                    try_spawn_with_run_as_sudo(run_as_retry, sandbox_policy, stdio_policy, err)
                 } else {
                     Err(err)
                 }

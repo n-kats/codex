@@ -442,7 +442,7 @@ async fn snapshot_rollback_past_compaction_replays_append_only_history() -> Resu
 
     let request_log = mount_sse_sequence(&server, vec![sse1, sse2, sse3, sse4]).await;
 
-    let (_home, _config, _manager, base) = start_test_conversation(&server, None).await;
+    let (_home, _cwd, _config, _manager, base) = start_test_conversation(&server, None).await;
 
     user_turn(&base, "hello world").await;
     compact_conversation(&base).await;
