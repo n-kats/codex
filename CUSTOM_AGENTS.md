@@ -127,6 +127,7 @@
 - `_docs/custom_notes/rebase_hints/README.md`: rebase 時の実務ヒント集（`range-diff` の見方、よくある衝突・症状→原因→対処、修正パターン）。
 - `_docs/custom_notes/custom_tests/README.md`: custom 専用テスト運用（上流非依存に分離、`custom__機能名__テスト内容` 命名、`custom` を含むファイル名に限定、一覧/絞り込み手順）。
 - `_docs/custom_notes/docker_test_env/README.md`: Docker ベースのビルド/テスト環境（Makefile の Docker 化、実行環境差の前提、ローカル運用の注意）。
+- `_docs/custom_notes/test_almost_skip_list/README.md`: `make test-almost` の既知失敗スキップ一覧（追加基準、`--skip` の注意点）。
 - `_docs/custom_notes/tool_parallelism_test/README.md`: tool parallelism テストの安定化（時間依存を排除し、出力ベースで判定する設計とテスト）。
 - `_docs/custom_notes/exec_server_tests_dotslash/README.md`: exec-server テストの前提整備（DotSlash 由来 bash を使うための同梱、Docker/CI 前提、関連テスト）。
 

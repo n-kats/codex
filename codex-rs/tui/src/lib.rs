@@ -1608,20 +1608,24 @@ trust_level = "untrusted"
         // Simulate resume/fork reload: the final config has an invalid theme.
         let mut config = build_config(&temp_dir).await?;
         config.tui_theme = Some("bogus-theme".into());
+        let initial_warning_count = config.startup_warnings.len();
 
         // Theme override must use the final config (not initial_config).
         // This mirrors the real call site in run_ratatui_app.
-        if let Some(w) = validate_theme_name(config.tui_theme.as_deref(), Some(temp_dir.path())) {
-            config.startup_warnings.push(w);
-        }
+        let warning = validate_theme_name(config.tui_theme.as_deref(), Some(temp_dir.path()))
+            .expect("expected warning for invalid theme name");
+        config.startup_warnings.push(warning);
 
         assert_eq!(
             config.startup_warnings.len(),
-            1,
-            "warning from final config's invalid theme should be present"
+            initial_warning_count + 1,
+            "expected theme warning to be appended"
         );
         assert!(
-            config.startup_warnings[0].contains("bogus-theme"),
+            config
+                .startup_warnings
+                .iter()
+                .any(|warning| warning.contains("bogus-theme")),
             "warning should reference the final config's theme name"
         );
         Ok(())

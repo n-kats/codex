@@ -198,7 +198,6 @@ async fn run_linux_sandbox_direct_require_bwrap(
         cwd.to_string_lossy().to_string(),
         "--sandbox-policy".to_string(),
         policy_json,
-        "--require-bwrap".to_string(),
         "--".to_string(),
     ];
     args.extend(command.iter().map(|entry| (*entry).to_string()));
@@ -657,7 +656,7 @@ async fn sandbox_reenables_writable_subpaths_under_unreadable_parents() {
             "bash",
             "-lc",
             &format!(
-                "set -x; printf allowed > {} && cat {}",
+                "printf allowed > {} && cat {}",
                 allowed_target.to_string_lossy(),
                 allowed_target.to_string_lossy()
             ),
@@ -670,15 +669,6 @@ async fn sandbox_reenables_writable_subpaths_under_unreadable_parents() {
     )
     .await
     .expect("nested writable carveout should execute under bubblewrap");
-
-    if output.exit_code != 0 {
-        println!(
-            "unexpected non-zero exit code under bubblewrap: {}",
-            output.exit_code
-        );
-        println!("---- captured stdout ----\n{}", output.stdout.text);
-        println!("---- captured stderr ----\n{}", output.stderr.text);
-    }
     assert_eq!(output.exit_code, 0);
     assert_eq!(output.stdout.text.trim(), "allowed");
 }

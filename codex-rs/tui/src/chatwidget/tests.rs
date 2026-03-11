@@ -129,6 +129,7 @@ use serial_test::serial;
 use std::collections::BTreeMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::time::Duration;
 use tempfile::NamedTempFile;
 use tempfile::tempdir;
 use tokio::sync::mpsc::error::TryRecvError;
@@ -656,9 +657,9 @@ async fn submission_preserves_text_elements_and_local_images() {
 
     chat.bottom_pane
         .set_composer_text(text.clone(), text_elements.clone(), local_images.clone());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
-    let items = match next_submit_op(&mut op_rx) {
+    let items = match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => items,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
@@ -744,9 +745,9 @@ async fn submission_with_remote_and_local_images_keeps_local_placeholder_numberi
     chat.bottom_pane
         .set_composer_text(text.clone(), text_elements.clone(), local_images.clone());
     assert_eq!(chat.bottom_pane.composer_text(), "[Image #2] submit mixed");
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
-    let items = match next_submit_op(&mut op_rx) {
+    let items = match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => items,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
@@ -829,9 +830,9 @@ async fn enter_with_only_remote_images_submits_user_turn() {
     chat.set_remote_image_urls(vec![remote_url.clone()]);
     assert_eq!(chat.bottom_pane.composer_text(), "");
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
-    let (items, summary) = match next_submit_op(&mut op_rx) {
+    let (items, summary) = match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, summary, .. } => (items, summary),
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
@@ -934,7 +935,7 @@ async fn enter_with_only_remote_images_does_not_submit_when_modal_is_active() {
     chat.set_remote_image_urls(vec![remote_url.clone()]);
 
     chat.open_review_popup();
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
     assert_eq!(chat.remote_image_urls(), vec![remote_url]);
     assert_no_submit_op(&mut op_rx);
@@ -1049,9 +1050,9 @@ async fn submission_prefers_selected_duplicate_skill_path() {
             path: user_skill_path.to_string_lossy().into_owned(),
         }],
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
-    let items = match next_submit_op(&mut op_rx) {
+    let items = match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => items,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
@@ -1339,9 +1340,9 @@ async fn interrupted_turn_restore_keeps_active_mode_for_resubmission() {
     assert!(chat.queued_user_messages.is_empty());
     assert_eq!(chat.active_collaboration_mode_kind(), expected_mode);
 
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(submit_key_event());
 
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn {
             collaboration_mode: Some(CollaborationMode { mode, .. }),
             personality: None,
@@ -1933,26 +1934,48 @@ async fn make_chatwidget_manual(
     (widget, rx, op_rx)
 }
 
+fn submit_key_event() -> KeyEvent {
+    KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)
+}
+
 // ChatWidget may emit other `Op`s (e.g. history/logging updates) on the same channel; this helper
 // filters until we see a submission op.
-fn next_submit_op(op_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Op>) -> Op {
+async fn next_submit_op(op_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Op>) -> Op {
+    let start = tokio::time::Instant::now();
+    let timeout = Duration::from_secs(2);
     loop {
-        match op_rx.try_recv() {
-            Ok(op @ Op::UserTurn { .. }) => return op,
-            Ok(_) => continue,
-            Err(TryRecvError::Empty) => panic!("expected a submit op but queue was empty"),
-            Err(TryRecvError::Disconnected) => panic!("expected submit op but channel closed"),
+        let elapsed = start.elapsed();
+        if elapsed >= timeout {
+            panic!("expected a submit op but timed out");
+        }
+        let remaining = timeout - elapsed;
+        let op = match tokio::time::timeout(remaining, op_rx.recv()).await {
+            Ok(Some(op)) => op,
+            Ok(None) => panic!("expected submit op but channel closed"),
+            Err(_) => panic!("expected a submit op but timed out"),
+        };
+        if matches!(op, Op::UserTurn { .. }) {
+            return op;
         }
     }
 }
 
-fn next_interrupt_op(op_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Op>) {
+async fn next_interrupt_op(op_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Op>) {
+    let start = tokio::time::Instant::now();
+    let timeout = Duration::from_secs(2);
     loop {
-        match op_rx.try_recv() {
-            Ok(Op::Interrupt) => return,
-            Ok(_) => continue,
-            Err(TryRecvError::Empty) => panic!("expected interrupt op but queue was empty"),
-            Err(TryRecvError::Disconnected) => panic!("expected interrupt op but channel closed"),
+        let elapsed = start.elapsed();
+        if elapsed >= timeout {
+            panic!("expected interrupt op but timed out");
+        }
+        let remaining = timeout - elapsed;
+        let op = match tokio::time::timeout(remaining, op_rx.recv()).await {
+            Ok(Some(op)) => op,
+            Ok(None) => panic!("expected interrupt op but channel closed"),
+            Err(_) => panic!("expected interrupt op but timed out"),
+        };
+        if matches!(op, Op::Interrupt) {
+            return;
         }
     }
 }
@@ -2481,7 +2504,7 @@ async fn submit_user_message_with_mode_sets_coding_collaboration_mode() {
         .expect("expected default collaboration mode");
     chat.submit_user_message_with_mode("Implement the plan.".to_string(), default_mode);
 
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn {
             collaboration_mode:
                 Some(CollaborationMode {
@@ -2921,7 +2944,7 @@ async fn submit_user_message_with_mode_allows_same_mode_during_running_turn() {
 
     assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
     assert!(chat.queued_user_messages.is_empty());
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn {
             collaboration_mode:
                 Some(CollaborationMode {
@@ -2956,7 +2979,7 @@ async fn submit_user_message_with_mode_submits_when_plan_stream_is_not_active() 
 
     assert_eq!(chat.active_collaboration_mode_kind(), expected_mode);
     assert!(chat.queued_user_messages.is_empty());
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn {
             collaboration_mode: Some(CollaborationMode { mode, .. }),
             personality: None,
@@ -3153,9 +3176,9 @@ async fn plan_implementation_popup_skips_when_steer_follows_proposed_plan() {
     );
     chat.bottom_pane
         .set_composer_text("Please continue.".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => assert_eq!(
             items,
             vec![UserInput::Text {
@@ -3194,9 +3217,9 @@ async fn plan_implementation_popup_shows_after_new_plan_follows_steer() {
     );
     chat.bottom_pane
         .set_composer_text("Please revise.".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => assert_eq!(
             items,
             vec![UserInput::Text {
@@ -3799,7 +3822,7 @@ async fn enqueueing_history_prompt_multiple_times_is_stable() {
     // Submit an initial prompt to seed history.
     chat.bottom_pane
         .set_composer_text("repeat me".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
     // Simulate an active task so further submissions are queued.
     chat.bottom_pane.set_task_running(true);
@@ -4006,7 +4029,7 @@ async fn steer_enter_queues_while_plan_stream_is_active() {
 
     chat.bottom_pane
         .set_composer_text("queued submission".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
     assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
     assert_eq!(chat.queued_user_messages.len(), 1);
@@ -4027,7 +4050,7 @@ async fn steer_enter_uses_pending_steers_while_turn_is_running_without_streaming
 
     chat.bottom_pane
         .set_composer_text("queued while running".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
     assert!(chat.queued_user_messages.is_empty());
     assert_eq!(chat.pending_steers.len(), 1);
@@ -4035,7 +4058,7 @@ async fn steer_enter_uses_pending_steers_while_turn_is_running_without_streaming
         chat.pending_steers.front().unwrap().user_message.text,
         "queued while running"
     );
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { .. } => {}
         other => panic!("expected Op::UserTurn, got {other:?}"),
     }
@@ -4063,7 +4086,7 @@ async fn steer_enter_uses_pending_steers_while_final_answer_stream_is_active() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
     assert!(chat.queued_user_messages.is_empty());
     assert_eq!(chat.pending_steers.len(), 1);
@@ -4071,7 +4094,7 @@ async fn steer_enter_uses_pending_steers_while_final_answer_stream_is_active() {
         chat.pending_steers.front().unwrap().user_message.text,
         "queued while streaming"
     );
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { .. } => {}
         other => panic!("expected Op::UserTurn, got {other:?}"),
     }
@@ -4097,7 +4120,7 @@ async fn failed_pending_steer_submit_does_not_add_pending_preview() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
     assert!(chat.pending_steers.is_empty());
     assert!(chat.queued_user_messages.is_empty());
@@ -4229,7 +4252,7 @@ async fn item_completed_pops_pending_steer_with_local_image_and_text_elements() 
         mention_bindings: Vec::new(),
     });
 
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { .. } => {}
         other => panic!("expected Op::UserTurn, got {other:?}"),
     }
@@ -4334,7 +4357,7 @@ async fn submit_user_message_emits_structured_plugin_mentions_from_bindings() {
         }],
     });
 
-    let Op::UserTurn { items, .. } = next_submit_op(&mut op_rx) else {
+    let Op::UserTurn { items, .. } = next_submit_op(&mut op_rx).await else {
         panic!("expected Op::UserTurn");
     };
     assert_eq!(
@@ -4363,10 +4386,10 @@ async fn steer_enter_during_final_stream_preserves_follow_up_prompts_in_order() 
 
     chat.bottom_pane
         .set_composer_text("first follow-up".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
     chat.bottom_pane
         .set_composer_text("second follow-up".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
     assert!(chat.queued_user_messages.is_empty());
     assert_eq!(chat.pending_steers.len(), 2);
@@ -4379,7 +4402,7 @@ async fn steer_enter_during_final_stream_preserves_follow_up_prompts_in_order() 
         "second follow-up"
     );
 
-    let first_items = match next_submit_op(&mut op_rx) {
+    let first_items = match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => items,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
@@ -4390,7 +4413,7 @@ async fn steer_enter_during_final_stream_preserves_follow_up_prompts_in_order() 
             text_elements: Vec::new(),
         }]
     );
-    let second_items = match next_submit_op(&mut op_rx) {
+    let second_items = match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => items,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
@@ -4438,10 +4461,10 @@ async fn manual_interrupt_restores_pending_steers_to_composer() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
     assert_eq!(chat.pending_steers.len(), 1);
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => assert_eq!(
             items,
             vec![UserInput::Text {
@@ -4476,8 +4499,8 @@ async fn esc_interrupt_sends_all_pending_steers_immediately_and_keeps_existing_d
 
     chat.bottom_pane
         .set_composer_text("first pending steer".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    match next_submit_op(&mut op_rx) {
+    chat.handle_key_event(submit_key_event());
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => assert_eq!(
             items,
             vec![UserInput::Text {
@@ -4490,9 +4513,9 @@ async fn esc_interrupt_sends_all_pending_steers_immediately_and_keeps_existing_d
 
     chat.bottom_pane
         .set_composer_text("second pending steer".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => assert_eq!(
             items,
             vec![UserInput::Text {
@@ -4510,11 +4533,11 @@ async fn esc_interrupt_sends_all_pending_steers_immediately_and_keeps_existing_d
         .set_composer_text("still editing".to_string(), Vec::new(), Vec::new());
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    next_interrupt_op(&mut op_rx);
+    next_interrupt_op(&mut op_rx).await;
 
     chat.on_interrupted_turn(TurnAbortReason::Interrupted);
 
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => assert_eq!(
             items,
             vec![UserInput::Text {
@@ -4554,8 +4577,8 @@ async fn esc_with_pending_steers_overrides_agent_command_interrupt_behavior() {
 
     chat.bottom_pane
         .set_composer_text("pending steer".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    match next_submit_op(&mut op_rx) {
+    chat.handle_key_event(submit_key_event());
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { .. } => {}
         other => panic!("expected Op::UserTurn, got {other:?}"),
     }
@@ -4564,7 +4587,7 @@ async fn esc_with_pending_steers_overrides_agent_command_interrupt_behavior() {
         .set_composer_text("/agent ".to_string(), Vec::new(), Vec::new());
     chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
 
-    next_interrupt_op(&mut op_rx);
+    next_interrupt_op(&mut op_rx).await;
     assert_eq!(chat.bottom_pane.composer_text(), "/agent ");
 }
 
@@ -4588,9 +4611,9 @@ async fn manual_interrupt_restores_pending_steer_mention_bindings_to_composer() 
         Vec::new(),
         mention_bindings.clone(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => assert_eq!(
             items,
             vec![UserInput::Text {
@@ -4624,12 +4647,12 @@ async fn manual_interrupt_restores_pending_steers_before_queued_messages() {
 
     chat.bottom_pane
         .set_composer_text("pending steer".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
     chat.queued_user_messages
         .push_back(UserMessage::from("queued draft".to_string()));
     chat.refresh_pending_input_preview();
 
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => assert_eq!(
             items,
             vec![UserInput::Text {
@@ -4666,12 +4689,12 @@ async fn replaced_turn_clears_pending_steers_but_keeps_queued_drafts() {
 
     chat.bottom_pane
         .set_composer_text("pending steer".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
     chat.queued_user_messages
         .push_back(UserMessage::from("queued draft".to_string()));
     chat.refresh_pending_input_preview();
 
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => assert_eq!(
             items,
             vec![UserInput::Text {
@@ -4694,7 +4717,7 @@ async fn replaced_turn_clears_pending_steers_but_keeps_queued_drafts() {
     assert!(chat.pending_steers.is_empty());
     assert!(chat.queued_user_messages.is_empty());
     assert_eq!(chat.bottom_pane.composer_text(), "");
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => assert_eq!(
             items,
             vec![UserInput::Text {
@@ -4719,10 +4742,10 @@ async fn enter_submits_when_plan_stream_is_not_active() {
 
     chat.bottom_pane
         .set_composer_text("submitted immediately".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
     assert!(chat.queued_user_messages.is_empty());
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn {
             personality: Some(Personality::Pragmatic),
             ..
@@ -5492,8 +5515,8 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-    match next_submit_op(&mut op_rx) {
+    chat.handle_key_event(submit_key_event());
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn {
             collaboration_mode:
                 Some(CollaborationMode {
@@ -5510,8 +5533,8 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
 
     chat.bottom_pane
         .set_composer_text("follow up".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-    match next_submit_op(&mut op_rx) {
+    chat.handle_key_event(submit_key_event());
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn {
             collaboration_mode:
                 Some(CollaborationMode {
@@ -5575,9 +5598,9 @@ async fn plan_slash_command_with_args_submits_prompt_in_plan_mode() {
 
     chat.bottom_pane
         .set_composer_text("/plan build the plan".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(submit_key_event());
 
-    let items = match next_submit_op(&mut op_rx) {
+    let items = match next_submit_op(&mut op_rx).await {
         Op::UserTurn { items, .. } => items,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
@@ -5746,8 +5769,8 @@ async fn collab_mode_is_sent_after_enabling() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-    match next_submit_op(&mut op_rx) {
+    chat.handle_key_event(submit_key_event());
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn {
             collaboration_mode:
                 Some(CollaborationMode {
@@ -5770,8 +5793,8 @@ async fn collab_mode_applies_default_preset() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-    match next_submit_op(&mut op_rx) {
+    chat.handle_key_event(submit_key_event());
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn {
             collaboration_mode:
                 Some(CollaborationMode {
@@ -5800,8 +5823,8 @@ async fn user_turn_includes_personality_from_config() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
-    match next_submit_op(&mut op_rx) {
+    chat.handle_key_event(submit_key_event());
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn {
             personality: Some(Personality::Friendly),
             ..
@@ -6303,7 +6326,7 @@ async fn custom_prompt_submit_sends_review_op() {
     chat.show_review_custom_prompt();
     // Paste prompt text via ChatWidget handler, then submit
     chat.handle_paste("  please audit dependencies  ".to_string());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
     // Expect AppEvent::CodexOp(Op::Review { .. }) with trimmed prompt
     let evt = rx.try_recv().expect("expected one app event");
@@ -8171,9 +8194,9 @@ async fn user_turn_carries_service_tier_after_fast_toggle() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(submit_key_event());
 
-    match next_submit_op(&mut op_rx) {
+    match next_submit_op(&mut op_rx).await {
         Op::UserTurn {
             service_tier: Some(Some(ServiceTier::Fast)),
             ..
@@ -11002,7 +11025,7 @@ async fn enter_queues_user_messages_while_review_is_running() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(submit_key_event());
 
     assert_eq!(chat.queued_user_messages.len(), 1);
     assert_eq!(

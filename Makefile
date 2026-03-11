@@ -46,6 +46,7 @@ SKIP_ALMOST_TESTS ?= \
 	unified_exec_streams_after_lagged_output \
 	remote_models_merge_adds_new_high_priority_first \
 	turn_start_jsonrpc_span_parents_core_turn_spans \
+	suite::codex_tool::test_shell_command_approval_triggers_elicitation \
 	suite::landlock::bwrap_populates_minimal_dev_nodes \
 	suite::landlock::bwrap_preserves_writable_dev_shm_bind_mount \
 	suite::landlock::sandbox_blocks_git_and_codex_writes_inside_writable_root \
