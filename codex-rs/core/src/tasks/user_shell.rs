@@ -171,6 +171,8 @@ pub(crate) async fn execute_user_shell_command(
             .config
             .permissions
             .windows_sandbox_private_desktop,
+        // `!` is a user-initiated command and should run as the invoker user.
+        run_as: None,
         sandbox_permissions: SandboxPermissions::UseDefault,
         sandbox_policy: sandbox_policy.clone(),
         file_system_sandbox_policy: FileSystemSandboxPolicy::from(&sandbox_policy),

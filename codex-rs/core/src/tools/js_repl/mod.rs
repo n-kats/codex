@@ -1033,6 +1033,7 @@ impl JsReplManager {
             cwd: turn.cwd.clone(),
             env,
             expiration: ExecExpiration::DefaultTimeout,
+            run_as: turn.config.exec_run_as.clone(),
             sandbox_permissions: SandboxPermissions::UseDefault,
             additional_permissions: None,
             justification: None,

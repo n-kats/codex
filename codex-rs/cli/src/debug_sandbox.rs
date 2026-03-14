@@ -257,6 +257,10 @@ async fn run_command_under_sandbox(
                 .codex_linux_sandbox_exe
                 .expect("codex-linux-sandbox executable not found");
             let use_legacy_landlock = config.features.use_legacy_landlock();
+            let mut env = env;
+            if let Some(network) = network.as_ref() {
+                network.apply_to_env(&mut env);
+            }
             spawn_command_under_linux_sandbox(
                 codex_linux_sandbox_exe,
                 command,

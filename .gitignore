@@ -1,3 +1,5 @@
+/_local/
+/_release/
 # deps
 # Node.js dependencies
 node_modules
@@ -35,6 +37,7 @@ AGENTS.override.md
 
 # caches
 .cache/
+_cache/
 .turbo/
 .parcel-cache/
 .eslintcache
@@ -51,6 +54,7 @@ yarn-error.log*
 # env
 .env*
 !.env.example
+Makefile.local
 
 # package
 *.tgz
@@ -91,3 +95,5 @@ CHANGELOG.ignore.md
 __pycache__/
 *.pyc
 
+# local debug configs (may contain secrets)
+codex_config_langfuse_local.toml

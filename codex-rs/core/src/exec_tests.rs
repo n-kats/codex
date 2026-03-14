@@ -322,6 +322,7 @@ async fn kill_child_process_group_kills_grandchildren_on_timeout() -> Result<()>
         windows_sandbox_private_desktop: false,
         justification: None,
         arg0: None,
+        run_as: None,
     };
 
     let output = exec(
@@ -379,6 +380,7 @@ async fn process_exec_tool_call_respects_cancellation_token() -> Result<()> {
         windows_sandbox_private_desktop: false,
         justification: None,
         arg0: None,
+        run_as: None,
     };
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(1_000)).await;

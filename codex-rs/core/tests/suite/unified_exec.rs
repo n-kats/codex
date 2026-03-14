@@ -22,6 +22,7 @@ use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
+use core_test_support::skip_if_linux_userns_unavailable;
 use core_test_support::skip_if_no_network;
 use core_test_support::skip_if_sandbox;
 use core_test_support::skip_if_windows;
@@ -937,7 +938,7 @@ async fn unified_exec_terminal_interaction_captures_delayed_output() -> Result<(
 
     let open_call_id = "uexec-delayed-open";
     let open_args = json!({
-        "cmd": "sleep 3 && echo MARKER1 && sleep 3 && echo MARKER2",
+        "cmd": "sleep 3 && echo MARKER1 && sleep 6 && echo MARKER2",
         "yield_time_ms": 10,
         "tty": true,
     });
@@ -2578,6 +2579,7 @@ PY
 async fn unified_exec_runs_under_sandbox() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
     skip_if_windows!(Ok(()));
 
     let server = start_mock_server().await;

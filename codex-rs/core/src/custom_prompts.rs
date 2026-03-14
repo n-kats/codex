@@ -18,6 +18,41 @@ pub async fn discover_prompts_in(dir: &Path) -> Vec<CustomPrompt> {
     discover_prompts_in_excluding(dir, &HashSet::new()).await
 }
 
+/// Parse a comma-separated directory list (for example `./prompts,../shared,/abs/prompts`).
+///
+/// - Entries are trimmed; empty entries are ignored.
+/// - Relative paths are resolved against `cwd`.
+pub fn parse_additional_prompts_dirs(raw: &str, cwd: &Path) -> Vec<PathBuf> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let path = PathBuf::from(s);
+            if path.is_absolute() {
+                path
+            } else {
+                cwd.join(path)
+            }
+        })
+        .collect()
+}
+
+/// Discover prompts across multiple directories.
+///
+/// Prompt name collisions are resolved as "later directories win".
+pub async fn discover_prompts_in_dirs(dirs: &[PathBuf]) -> Vec<CustomPrompt> {
+    let mut merged: std::collections::HashMap<String, CustomPrompt> =
+        std::collections::HashMap::new();
+    for dir in dirs {
+        for prompt in discover_prompts_in(dir).await {
+            merged.insert(prompt.name.clone(), prompt);
+        }
+    }
+    let mut out: Vec<CustomPrompt> = merged.into_values().collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out
+}
+
 /// Discover prompt files in the given directory, excluding any with names in `exclude`.
 /// Returns entries sorted by name. Non-files are ignored. Missing/unreadable dir yields empty.
 pub async fn discover_prompts_in_excluding(
@@ -147,3 +182,6 @@ fn parse_frontmatter(content: &str) -> (Option<String>, Option<String>, String) 
 #[cfg(test)]
 #[path = "custom_prompts_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod custom_tests;

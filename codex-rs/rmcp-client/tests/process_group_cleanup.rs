@@ -11,6 +11,11 @@ use anyhow::Result;
 use codex_rmcp_client::RmcpClient;
 
 fn process_exists(pid: u32) -> bool {
+    #[cfg(target_os = "linux")]
+    if process_is_zombie(pid) {
+        return false;
+    }
+
     std::process::Command::new("kill")
         .arg("-0")
         .arg(pid.to_string())
@@ -18,6 +23,17 @@ fn process_exists(pid: u32) -> bool {
         .status()
         .map(|status| status.success())
         .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn process_is_zombie(pid: u32) -> bool {
+    let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else {
+        return false;
+    };
+    let Some((_, state_and_rest)) = stat.rsplit_once(") ") else {
+        return false;
+    };
+    matches!(state_and_rest.chars().next(), Some('Z'))
 }
 
 async fn wait_for_pid_file(path: &Path) -> Result<u32> {

@@ -4173,6 +4173,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                     service_tier,
                     collaboration_mode,
                     personality,
+                    ..
                 } => {
                     let collaboration_mode = if let Some(collab_mode) = collaboration_mode {
                         collab_mode
@@ -4759,12 +4760,26 @@ mod handlers {
     }
 
     pub async fn list_custom_prompts(sess: &Session, sub_id: String) {
-        let custom_prompts: Vec<CustomPrompt> =
-            if let Some(dir) = crate::custom_prompts::default_prompts_dir() {
-                crate::custom_prompts::discover_prompts_in(&dir).await
-            } else {
-                Vec::new()
-            };
+        let mut dirs = Vec::new();
+        if let Some(dir) = crate::custom_prompts::default_prompts_dir() {
+            dirs.push(dir);
+        }
+
+        let cwd = {
+            let state = sess.state.lock().await;
+            state.session_configuration.cwd.clone()
+        };
+        if let Ok(raw) = std::env::var("CODEX_ADDITIONAL_PROMPT_DIRS") {
+            dirs.extend(crate::custom_prompts::parse_additional_prompts_dirs(
+                &raw, &cwd,
+            ));
+        }
+
+        let custom_prompts: Vec<CustomPrompt> = if dirs.is_empty() {
+            Vec::new()
+        } else {
+            crate::custom_prompts::discover_prompts_in_dirs(&dirs).await
+        };
 
         let event = Event {
             id: sub_id,

@@ -66,7 +66,7 @@ impl BottomPaneView for CustomPromptView {
             }
             KeyEvent {
                 code: KeyCode::Enter,
-                modifiers: KeyModifiers::NONE,
+                modifiers: KeyModifiers::CONTROL,
                 ..
             } => {
                 let text = self.textarea.text().trim().to_string();

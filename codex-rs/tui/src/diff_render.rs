@@ -44,6 +44,8 @@ use ratatui::widgets::Paragraph;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::sync::RwLock;
 
 use unicode_width::UnicodeWidthChar;
 
@@ -161,6 +163,31 @@ impl RichDiffColorLevel {
             DiffColorLevel::TrueColor => Some(Self::TrueColor),
             DiffColorLevel::Ansi256 => Some(Self::Ansi256),
             DiffColorLevel::Ansi16 => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DiffPaletteOverride {
+    pub add_line_bg_rgb: Option<(u8, u8, u8)>,
+    pub del_line_bg_rgb: Option<(u8, u8, u8)>,
+    pub enabled: bool,
+    pub line_bg_enabled: bool,
+    pub gutter_enabled: bool,
+    pub sign_enabled: bool,
+    pub content_enabled: bool,
+}
+
+impl Default for DiffPaletteOverride {
+    fn default() -> Self {
+        Self {
+            add_line_bg_rgb: None,
+            del_line_bg_rgb: None,
+            enabled: true,
+            line_bg_enabled: true,
+            gutter_enabled: true,
+            sign_enabled: true,
+            content_enabled: true,
         }
     }
 }
@@ -290,6 +317,22 @@ fn quantize_rgb_to_ansi256(target: (u8, u8, u8)) -> Color {
         Some(index) => indexed_color(index),
         None => indexed_color(DARK_256_ADD_LINE_BG_IDX),
     }
+}
+
+static DIFF_PALETTE_OVERRIDE: OnceLock<RwLock<DiffPaletteOverride>> = OnceLock::new();
+
+#[allow(dead_code)]
+pub(crate) fn set_diff_palette_override(override_palette: DiffPaletteOverride) {
+    let lock = DIFF_PALETTE_OVERRIDE.get_or_init(|| RwLock::new(DiffPaletteOverride::default()));
+    if let Ok(mut guard) = lock.write() {
+        *guard = override_palette;
+    }
+}
+
+fn diff_palette_override() -> DiffPaletteOverride {
+    let lock = DIFF_PALETTE_OVERRIDE.get_or_init(|| RwLock::new(DiffPaletteOverride::default()));
+    lock.read()
+        .map_or(DiffPaletteOverride::default(), |guard| *guard)
 }
 
 pub struct DiffSummary {
@@ -872,12 +915,16 @@ fn push_wrapped_diff_line_inner_with_theme_and_color_level(
     // view. The sign character keeps the diff color; content gets syntax colors
     // with an overlay modifier for delete lines (dim).
     if let Some(syn_spans) = syntax_spans {
+        let palette_override = diff_palette_override();
         let gutter = format!("{ln_str:>gutter_width$} ");
         let sign = format!("{sign_char}");
         let styled: Vec<RtSpan<'static>> = syn_spans
             .iter()
             .map(|sp| {
-                let style = if matches!(kind, DiffLineType::Delete) {
+                let style = if matches!(kind, DiffLineType::Delete)
+                    && palette_override.enabled
+                    && palette_override.content_enabled
+                {
                     sp.style.add_modifier(Modifier::DIM)
                 } else {
                     sp.style
@@ -1136,6 +1183,10 @@ fn diff_color_level_for_terminal(
 /// Context lines intentionally leave the background unset so the terminal
 /// default shows through.
 fn style_line_bg_for(kind: DiffLineType, diff_backgrounds: ResolvedDiffBackgrounds) -> Style {
+    let palette_override = diff_palette_override();
+    if !palette_override.enabled || !palette_override.line_bg_enabled {
+        return Style::default();
+    }
     match kind {
         DiffLineType::Insert => diff_backgrounds
             .add
@@ -1152,6 +1203,9 @@ fn style_context() -> Style {
 }
 
 fn add_line_bg(theme: DiffTheme, color_level: RichDiffColorLevel) -> Color {
+    if let Some(rgb) = diff_palette_override().add_line_bg_rgb {
+        return color_from_rgb_for_level(rgb, color_level);
+    }
     match (theme, color_level) {
         (DiffTheme::Dark, RichDiffColorLevel::TrueColor) => rgb_color(DARK_TC_ADD_LINE_BG_RGB),
         (DiffTheme::Dark, RichDiffColorLevel::Ansi256) => indexed_color(DARK_256_ADD_LINE_BG_IDX),
@@ -1161,6 +1215,9 @@ fn add_line_bg(theme: DiffTheme, color_level: RichDiffColorLevel) -> Color {
 }
 
 fn del_line_bg(theme: DiffTheme, color_level: RichDiffColorLevel) -> Color {
+    if let Some(rgb) = diff_palette_override().del_line_bg_rgb {
+        return color_from_rgb_for_level(rgb, color_level);
+    }
     match (theme, color_level) {
         (DiffTheme::Dark, RichDiffColorLevel::TrueColor) => rgb_color(DARK_TC_DEL_LINE_BG_RGB),
         (DiffTheme::Dark, RichDiffColorLevel::Ansi256) => indexed_color(DARK_256_DEL_LINE_BG_IDX),
@@ -1195,6 +1252,11 @@ fn light_del_num_bg(color_level: RichDiffColorLevel) -> Color {
 /// tinted background so numbers contrast against the pastel line fill.  On
 /// dark backgrounds a simple `DIM` modifier is sufficient.
 fn style_gutter_for(kind: DiffLineType, theme: DiffTheme, color_level: DiffColorLevel) -> Style {
+    let palette_override = diff_palette_override();
+    if !palette_override.enabled || !palette_override.gutter_enabled {
+        return Style::default();
+    }
+
     match (
         theme,
         kind,
@@ -1224,6 +1286,10 @@ fn style_sign_add(
     color_level: DiffColorLevel,
     diff_backgrounds: ResolvedDiffBackgrounds,
 ) -> Style {
+    let palette_override = diff_palette_override();
+    if !palette_override.enabled || !palette_override.sign_enabled {
+        return Style::default();
+    }
     match theme {
         DiffTheme::Light => Style::default().fg(Color::Green),
         DiffTheme::Dark => style_add(theme, color_level, diff_backgrounds),
@@ -1236,6 +1302,10 @@ fn style_sign_del(
     color_level: DiffColorLevel,
     diff_backgrounds: ResolvedDiffBackgrounds,
 ) -> Style {
+    let palette_override = diff_palette_override();
+    if !palette_override.enabled || !palette_override.sign_enabled {
+        return Style::default();
+    }
     match theme {
         DiffTheme::Light => Style::default().fg(Color::Red),
         DiffTheme::Dark => style_del(theme, color_level, diff_backgrounds),
@@ -1258,6 +1328,11 @@ fn style_add(
     color_level: DiffColorLevel,
     diff_backgrounds: ResolvedDiffBackgrounds,
 ) -> Style {
+    let palette_override = diff_palette_override();
+    if !palette_override.enabled || !palette_override.content_enabled {
+        return Style::default();
+    }
+
     match (theme, color_level, diff_backgrounds.add) {
         (_, DiffColorLevel::Ansi16, _) => Style::default().fg(Color::Green),
         (DiffTheme::Light, DiffColorLevel::TrueColor, Some(bg))
@@ -1282,6 +1357,11 @@ fn style_del(
     color_level: DiffColorLevel,
     diff_backgrounds: ResolvedDiffBackgrounds,
 ) -> Style {
+    let palette_override = diff_palette_override();
+    if !palette_override.enabled || !palette_override.content_enabled {
+        return Style::default();
+    }
+
     match (theme, color_level, diff_backgrounds.del) {
         (_, DiffColorLevel::Ansi16, _) => Style::default().fg(Color::Red),
         (DiffTheme::Light, DiffColorLevel::TrueColor, Some(bg))
@@ -1300,6 +1380,9 @@ fn style_del(
 fn style_gutter_dim() -> Style {
     Style::default().add_modifier(Modifier::DIM)
 }
+
+#[cfg(test)]
+mod custom_tests;
 
 #[cfg(test)]
 mod tests {

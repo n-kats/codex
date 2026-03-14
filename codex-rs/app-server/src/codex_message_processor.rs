@@ -1710,6 +1710,7 @@ impl CodexMessageProcessor {
                 .windows_sandbox_private_desktop,
             justification: None,
             arg0: None,
+            run_as: self.config.exec_run_as.clone(),
         };
 
         let requested_policy = sandbox_policy.map(|policy| policy.to_core());
@@ -5909,6 +5910,7 @@ impl CodexMessageProcessor {
                         service_tier: params.service_tier,
                         collaboration_mode,
                         personality: params.personality,
+                        project_doc_paths: None,
                     },
                 )
                 .await;

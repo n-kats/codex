@@ -10,6 +10,7 @@ pub use app::ExitReason;
 use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
 use codex_app_server_client::InProcessAppServerClient;
 use codex_app_server_client::InProcessClientStartArgs;
+use codex_app_server_protocol::ConfigLayerSource;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_cloud_requirements::cloud_requirements_loader;
 use codex_core::AuthManager;
@@ -300,10 +301,21 @@ where
     Ok(client)
 }
 
+pub(crate) fn user_config_toml_path(config: &Config) -> Option<PathBuf> {
+    config
+        .config_layer_stack
+        .get_user_layer()
+        .and_then(|layer| match &layer.name {
+            ConfigLayerSource::User { file } => Some(file.as_path().to_path_buf()),
+            _ => None,
+        })
+}
+
 pub async fn run_main(
     mut cli: Cli,
     arg0_paths: Arg0DispatchPaths,
     loader_overrides: LoaderOverrides,
+    agents_md: Vec<PathBuf>,
 ) -> std::io::Result<AppExitInfo> {
     let (sandbox_mode, approval_policy) = if cli.full_auto {
         (
@@ -457,6 +469,7 @@ pub async fn run_main(
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
         show_raw_agent_reasoning: cli.oss.then_some(true),
         additional_writable_roots: additional_dirs,
+        project_doc_paths: agents_md,
         ..Default::default()
     };
 

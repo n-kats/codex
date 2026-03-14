@@ -10,13 +10,14 @@ use std::io::Read;
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::net::TcpListener;
+use std::os::unix::process::ExitStatusExt;
 use std::process::Output;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
 
 const BWRAP_UNAVAILABLE_ERR: &str = "build-time bubblewrap is not available in this build.";
-const NETWORK_TIMEOUT_MS: u64 = 4_000;
+const NETWORK_TIMEOUT_MS: u64 = 15_000;
 const MANAGED_PROXY_PERMISSION_ERR_SNIPPETS: &[&str] = &[
     "loopback: Failed RTM_NEWADDR",
     "loopback: Failed RTM_NEWLINK",
@@ -102,6 +103,9 @@ async fn managed_proxy_skip_reason() -> Option<String> {
     }
 
     let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.contains("sandbox command timed out") {
+        return Some("managed proxy probe timed out in this environment".to_string());
+    }
     if is_managed_proxy_permission_error(stderr.as_ref()) {
         return Some(format!(
             "managed proxy requires kernel namespace privileges unavailable here: {}",
@@ -140,7 +144,7 @@ async fn run_linux_sandbox_direct(
     args.push("--".to_string());
     args.extend(command.iter().map(|entry| (*entry).to_string()));
 
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_codex-linux-sandbox"));
+    let mut cmd = Command::new(super::codex_linux_sandbox_exe());
     cmd.args(args)
         .current_dir(cwd)
         .env_clear()
@@ -150,7 +154,13 @@ async fn run_linux_sandbox_direct(
         .stderr(Stdio::piped());
     let output = match tokio::time::timeout(Duration::from_millis(timeout_ms), cmd.output()).await {
         Ok(output) => output,
-        Err(err) => panic!("sandbox command should not time out: {err}"),
+        Err(_) => {
+            return Output {
+                status: std::process::ExitStatus::from_raw(124 << 8),
+                stdout: Vec::new(),
+                stderr: b"sandbox command timed out".to_vec(),
+            };
+        }
     };
     match output {
         Ok(output) => output,

@@ -334,6 +334,13 @@ pub enum Op {
         /// Updated personality preference.
         #[serde(skip_serializing_if = "Option::is_none")]
         personality: Option<Personality>,
+
+        /// Override project doc file paths used to build `user_instructions`.
+        ///
+        /// Use `Some(Some(paths))` to set explicit project docs, `Some(None)` to
+        /// clear back to auto-discovery, or `None` to leave unchanged.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project_doc_paths: Option<Option<Vec<PathBuf>>>,
     },
 
     /// Approve a command execution

@@ -8395,7 +8395,7 @@ async fn permissions_selection_history_snapshot_full_access_to_default() {
     if popup.contains("Smart Approvals") {
         chat.handle_key_event(KeyEvent::from(KeyCode::Up));
     }
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let cells = drain_insert_history(&mut rx);
     assert_eq!(cells.len(), 1, "expected one mode-switch history cell");
@@ -8700,6 +8700,7 @@ async fn permissions_selection_sends_approvals_reviewer_in_override_turn_context
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         }
     );
 }

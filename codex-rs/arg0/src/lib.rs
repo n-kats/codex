@@ -1,3 +1,4 @@
+use std::ffi::OsString;
 use std::fs::File;
 use std::future::Future;
 use std::path::Path;
@@ -108,6 +109,9 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
 
     // This modifies the environment, which is not thread-safe, so do this
     // before creating any threads/the Tokio runtime.
+    apply_codex_home_override_from_args();
+    apply_codex_memories_home_override_from_args();
+    apply_shell_startup_files_override_from_args();
     load_dotenv();
 
     match prepend_path_entry_for_codex_aliases() {
@@ -184,6 +188,11 @@ fn build_runtime() -> anyhow::Result<tokio::runtime::Runtime> {
 }
 
 const ILLEGAL_ENV_VAR_PREFIX: &str = "CODEX_";
+const CODEX_HOME_CLI_FLAG: &str = "--codex-home";
+const CODEX_MEMORY_CLI_FLAG: &str = "--codex-memory";
+const CODEX_MEMORIES_HOME_ENV_VAR: &str = "CODEX_MEMORIES_HOME";
+const SHELL_STARTUP_FILES_CLI_FLAG: &str = "--shell-startup-files";
+const CODEX_SHELL_STARTUP_FILES_ENV_VAR: &str = "CODEX_SHELL_STARTUP_FILES";
 
 /// Load env vars from ~/.codex/.env.
 ///
@@ -195,6 +204,131 @@ fn load_dotenv() {
     {
         set_filtered(iter);
     }
+}
+
+fn apply_codex_home_override_from_args() {
+    let Some(codex_home) = parse_codex_home_flag(std::env::args_os()) else {
+        return;
+    };
+
+    // It is safe to call set_var() because our process is single-threaded at this point in its
+    // execution (before the Tokio runtime is created).
+    unsafe { std::env::set_var("CODEX_HOME", &codex_home) };
+
+    if let Err(err) = std::fs::create_dir_all(&codex_home) {
+        eprintln!(
+            "WARNING: proceeding, even though we could not create CODEX_HOME directory {}: {err}",
+            codex_home.display()
+        );
+    }
+}
+
+fn apply_codex_memories_home_override_from_args() {
+    let Some(memories_home) = parse_codex_memories_home_flag(std::env::args_os()) else {
+        return;
+    };
+
+    // It is safe to call set_var() because our process is single-threaded at this point in its
+    // execution (before the Tokio runtime is created).
+    unsafe { std::env::set_var(CODEX_MEMORIES_HOME_ENV_VAR, &memories_home) };
+
+    if let Err(err) = std::fs::create_dir_all(&memories_home) {
+        eprintln!(
+            "WARNING: proceeding, even though we could not create CODEX_MEMORIES_HOME directory {}: {err}",
+            memories_home.display()
+        );
+    }
+}
+
+fn parse_codex_home_flag<I>(mut args: I) -> Option<PathBuf>
+where
+    I: Iterator<Item = OsString>,
+{
+    // Skip argv0.
+    let _ = args.next();
+
+    while let Some(arg) = args.next() {
+        let Some(arg) = arg.to_str() else {
+            continue;
+        };
+
+        if let Some((flag, value)) = arg.split_once('=') {
+            if flag == CODEX_HOME_CLI_FLAG && !value.is_empty() {
+                return Some(PathBuf::from(value));
+            }
+            continue;
+        }
+
+        if arg == CODEX_HOME_CLI_FLAG {
+            return args.next().and_then(|s| s.to_str().map(PathBuf::from));
+        }
+    }
+
+    None
+}
+
+fn parse_codex_memories_home_flag<I>(mut args: I) -> Option<PathBuf>
+where
+    I: Iterator<Item = OsString>,
+{
+    // Skip argv0.
+    let _ = args.next();
+
+    while let Some(arg) = args.next() {
+        let Some(arg) = arg.to_str() else {
+            continue;
+        };
+
+        if let Some((flag, value)) = arg.split_once('=') {
+            if flag == CODEX_MEMORY_CLI_FLAG && !value.is_empty() {
+                return Some(PathBuf::from(value));
+            }
+            continue;
+        }
+
+        if arg == CODEX_MEMORY_CLI_FLAG {
+            return args.next().and_then(|s| s.to_str().map(PathBuf::from));
+        }
+    }
+
+    None
+}
+
+fn apply_shell_startup_files_override_from_args() {
+    let Some(mode) = parse_shell_startup_files_flag(std::env::args_os()) else {
+        return;
+    };
+
+    // It is safe to call set_var() because our process is single-threaded at this point in its
+    // execution (before the Tokio runtime is created).
+    unsafe { std::env::set_var(CODEX_SHELL_STARTUP_FILES_ENV_VAR, mode) };
+}
+
+fn parse_shell_startup_files_flag<I>(mut args: I) -> Option<String>
+where
+    I: Iterator<Item = OsString>,
+{
+    // Skip argv0.
+    let _ = args.next();
+
+    while let Some(arg) = args.next() {
+        let Some(arg) = arg.to_str() else {
+            continue;
+        };
+
+        if let Some((flag, value)) = arg.split_once('=') {
+            if flag == SHELL_STARTUP_FILES_CLI_FLAG && !value.is_empty() {
+                return Some(value.to_string());
+            }
+            continue;
+        }
+
+        if arg == SHELL_STARTUP_FILES_CLI_FLAG {
+            return args.next().and_then(|s| s.to_str().map(str::to_string));
+        }
+    }
+
+    None
 }
 
 /// Helper to set vars from a dotenvy iterator while filtering out `CODEX_` keys.
@@ -394,7 +528,7 @@ fn try_lock_dir(dir: &Path) -> std::io::Result<Option<File>> {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests_parse_codex_home {
     use super::LOCK_FILENAME;
     use super::janitor_cleanup;
     use std::fs;
@@ -450,3 +584,6 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod custom_tests;

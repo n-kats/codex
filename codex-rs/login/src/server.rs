@@ -20,6 +20,8 @@ use std::net::TcpStream;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
 
@@ -114,11 +116,13 @@ impl LoginServer {
 #[derive(Clone, Debug)]
 pub struct ShutdownHandle {
     shutdown_notify: Arc<tokio::sync::Notify>,
+    shutdown_requested: Arc<AtomicBool>,
 }
 
 impl ShutdownHandle {
     /// Signals the login loop to terminate.
     pub fn shutdown(&self) {
+        self.shutdown_requested.store(true, Ordering::SeqCst);
         self.shutdown_notify.notify_waiters();
     }
 }
@@ -173,13 +177,20 @@ pub fn run_login_server(opts: ServerOptions) -> io::Result<LoginServer> {
     };
 
     let shutdown_notify = Arc::new(tokio::sync::Notify::new());
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
     let server_handle = {
         let shutdown_notify = shutdown_notify.clone();
+        let shutdown_requested = shutdown_requested.clone();
         let server = server;
         tokio::spawn(async move {
             let result = loop {
+                if shutdown_requested.load(Ordering::SeqCst) {
+                    break Err(io::Error::other("Login was not completed"));
+                }
+
                 tokio::select! {
                     _ = shutdown_notify.notified() => {
+                        shutdown_requested.store(true, Ordering::SeqCst);
                         break Err(io::Error::other("Login was not completed"));
                     }
                     maybe_req = rx.recv() => {
@@ -232,7 +243,10 @@ pub fn run_login_server(opts: ServerOptions) -> io::Result<LoginServer> {
         auth_url,
         actual_port,
         server_handle,
-        shutdown_handle: ShutdownHandle { shutdown_notify },
+        shutdown_handle: ShutdownHandle {
+            shutdown_notify,
+            shutdown_requested,
+        },
     })
 }
 

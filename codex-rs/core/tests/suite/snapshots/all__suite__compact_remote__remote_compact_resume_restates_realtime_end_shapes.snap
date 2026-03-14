@@ -1,5 +1,6 @@
 ---
 source: core/tests/suite/compact_remote.rs
+assertion_line: 1951
 expression: "format_labeled_requests_snapshot(\"After remote manual /compact and resume, the first resumed turn rebuilds history from the compaction item and restates realtime-end instructions from reconstructed previous-turn settings.\",\n&[(\"Remote Compaction Request\", &compact_request),\n(\"Remote Post-Resume History Layout\", after_resume_request),])"
 ---
 Scenario: After remote manual /compact and resume, the first resumed turn rebuilds history from the compaction item and restates realtime-end instructions from reconstructed previous-turn settings.

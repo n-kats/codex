@@ -16,6 +16,7 @@ use codex_protocol::user_input::UserInput;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::responses::mount_function_call_agent_response;
 use core_test_support::responses::start_mock_server;
+use core_test_support::skip_if_linux_userns_unavailable;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::wait_for_event;
@@ -159,6 +160,7 @@ fn output_shows_sandbox_denial(output: &str) -> bool {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shell_zsh_fork_prompts_for_skill_script_execution() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let Some(runtime) = zsh_fork_runtime("zsh-fork skill prompt test")? else {
         return Ok(());
@@ -280,6 +282,7 @@ permissions:
 async fn shell_zsh_fork_skill_script_reject_policy_with_sandbox_approval_false_still_prompts()
 -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let Some(runtime) = zsh_fork_runtime("zsh-fork reject false skill prompt test")? else {
         return Ok(());
@@ -374,6 +377,7 @@ permissions:
 async fn shell_zsh_fork_skill_script_reject_policy_with_sandbox_approval_true_still_prompts()
 -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let Some(runtime) =
         zsh_fork_runtime("zsh-fork reject sandbox approval true skill prompt test")?
@@ -469,6 +473,7 @@ permissions:
 async fn shell_zsh_fork_skill_script_reject_policy_with_skill_approval_true_skips_prompt()
 -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let Some(runtime) = zsh_fork_runtime("zsh-fork reject skill approval true skill prompt test")?
     else {
@@ -546,6 +551,7 @@ permissions:
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shell_zsh_fork_skill_without_permissions_inherits_turn_sandbox() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let Some(runtime) = zsh_fork_runtime("zsh-fork inherited skill sandbox test")? else {
         return Ok(());
@@ -675,6 +681,7 @@ async fn shell_zsh_fork_skill_without_permissions_inherits_turn_sandbox() -> Res
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shell_zsh_fork_skill_with_empty_permissions_inherits_turn_sandbox() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let Some(runtime) = zsh_fork_runtime("zsh-fork empty skill permissions test")? else {
         return Ok(());
@@ -800,6 +807,7 @@ async fn shell_zsh_fork_skill_with_empty_permissions_inherits_turn_sandbox() -> 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shell_zsh_fork_skill_session_approval_enforces_skill_permissions() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let Some(runtime) = zsh_fork_runtime("zsh-fork explicit skill sandbox test")? else {
         return Ok(());
@@ -978,6 +986,7 @@ async fn shell_zsh_fork_skill_session_approval_enforces_skill_permissions() -> R
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shell_zsh_fork_still_enforces_workspace_write_sandbox() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let Some(runtime) = zsh_fork_runtime("zsh-fork workspace sandbox test")? else {
         return Ok(());

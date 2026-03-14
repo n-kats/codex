@@ -96,6 +96,7 @@ fn guardian_risk_level_str(level: GuardianRiskLevel) -> &'static str {
 pub(crate) fn routes_approval_to_guardian(turn: &TurnContext) -> bool {
     turn.approval_policy.value() == AskForApproval::OnRequest
         && turn.config.approvals_reviewer == ApprovalsReviewer::GuardianSubagent
+        && !is_guardian_subagent_source(&turn.session_source)
 }
 
 pub(crate) fn is_guardian_subagent_source(

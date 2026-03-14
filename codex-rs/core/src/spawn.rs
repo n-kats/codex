@@ -1,4 +1,5 @@
 use codex_network_proxy::NetworkProxy;
+use codex_protocol::permissions::NetworkSandboxPolicy;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -6,7 +7,15 @@ use tokio::process::Child;
 use tokio::process::Command;
 use tracing::trace;
 
-use codex_protocol::permissions::NetworkSandboxPolicy;
+#[cfg(unix)]
+mod run_as;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunAsUser {
+    pub uid: u32,
+    pub gid: u32,
+    pub supplementary_gids: Option<Vec<u32>>,
+}
 
 /// Experimental environment variable that will be set to some non-empty value
 /// if both of the following are true:
@@ -122,4 +131,22 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
     }
 
     cmd.kill_on_drop(true).spawn()
+}
+
+#[cfg(unix)]
+pub(crate) async fn spawn_child_async_with_run_as(
+    request: SpawnChildRequest<'_>,
+    run_as: RunAsUser,
+) -> std::io::Result<Child> {
+    run_as::spawn_child_async_with_run_as(request, run_as).await
+}
+
+#[cfg(not(unix))]
+pub(crate) async fn spawn_child_async_with_run_as(
+    _request: SpawnChildRequest<'_>,
+    _run_as: RunAsUser,
+) -> std::io::Result<Child> {
+    Err(std::io::Error::other(
+        "spawn_child_async_with_run_as is only supported on unix",
+    ))
 }

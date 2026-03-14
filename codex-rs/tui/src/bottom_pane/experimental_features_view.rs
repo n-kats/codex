@@ -185,6 +185,11 @@ impl BottomPaneView for ExperimentalFeaturesView {
                 ..
             }
             | KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }
+            | KeyEvent {
                 code: KeyCode::Esc, ..
             } => {
                 self.on_ctrl_c();

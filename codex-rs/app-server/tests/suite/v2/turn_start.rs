@@ -1528,6 +1528,7 @@ async fn turn_start_file_change_approval_v2() -> Result<()> {
                 text_elements: Vec::new(),
             }],
             cwd: Some(workspace.clone()),
+            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
             ..Default::default()
         })
         .await?;
@@ -1920,6 +1921,7 @@ async fn turn_start_file_change_approval_accept_for_session_persists_v2() -> Res
                 text_elements: Vec::new(),
             }],
             cwd: Some(workspace.clone()),
+            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
             ..Default::default()
         })
         .await?;
@@ -1997,6 +1999,7 @@ async fn turn_start_file_change_approval_accept_for_session_persists_v2() -> Res
                 text_elements: Vec::new(),
             }],
             cwd: Some(workspace.clone()),
+            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
             ..Default::default()
         })
         .await?;
@@ -2100,6 +2103,7 @@ async fn turn_start_file_change_approval_decline_v2() -> Result<()> {
                 text_elements: Vec::new(),
             }],
             cwd: Some(workspace.clone()),
+            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
             ..Default::default()
         })
         .await?;

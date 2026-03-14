@@ -210,20 +210,19 @@ impl App {
         let text_elements = selection.text_elements.clone();
         let local_image_paths = selection.local_image_paths.clone();
         let remote_image_urls = selection.remote_image_urls.clone();
-        let has_remote_image_urls = !remote_image_urls.is_empty();
         self.backtrack.pending_rollback = Some(PendingBacktrackRollback {
             selection,
             thread_id: self.chat_widget.thread_id(),
         });
         self.chat_widget.submit_op(Op::ThreadRollback { num_turns });
-        self.chat_widget.set_remote_image_urls(remote_image_urls);
         if !prefill.is_empty()
             || !text_elements.is_empty()
             || !local_image_paths.is_empty()
-            || has_remote_image_urls
+            || !remote_image_urls.is_empty()
         {
             self.chat_widget
                 .set_composer_text(prefill, text_elements, local_image_paths);
+            self.chat_widget.set_remote_image_urls(remote_image_urls);
         }
     }
 

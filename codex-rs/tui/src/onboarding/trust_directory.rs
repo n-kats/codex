@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use codex_core::config::set_project_trust_level;
+use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::git_info::resolve_root_git_project_for_trust;
 use codex_protocol::config_types::TrustLevel;
 use crossterm::event::KeyCode;
@@ -26,9 +26,9 @@ use crate::selection_list::selection_option_row;
 use super::onboarding_screen::StepState;
 pub(crate) struct TrustDirectoryWidget {
     pub codex_home: PathBuf,
+    pub config_toml_file: Option<PathBuf>,
     pub cwd: PathBuf,
-    pub show_windows_create_sandbox_hint: bool,
-    pub should_quit: bool,
+    pub is_git_repo: bool,
     pub selection: Option<TrustDirectorySelection>,
     pub highlighted: TrustDirectorySelection,
     pub error: Option<String>,
@@ -37,7 +37,7 @@ pub(crate) struct TrustDirectoryWidget {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TrustDirectorySelection {
     Trust,
-    Quit,
+    DontTrust,
 }
 
 impl WidgetRef for &TrustDirectoryWidget {
@@ -46,24 +46,44 @@ impl WidgetRef for &TrustDirectoryWidget {
 
         column.push(Line::from(vec![
             "> ".into(),
-            "You are in ".bold(),
+            "You are running Codex in ".bold(),
             self.cwd.to_string_lossy().to_string().into(),
         ]));
         column.push("");
 
+        let guidance = if self.is_git_repo {
+            "Since this folder is version controlled, you may wish to allow Codex to work in this folder without asking for approval."
+        } else {
+            "Since this folder is not version controlled, we recommend requiring approval of all edits and commands."
+        };
+
         column.push(
-            Paragraph::new(
-                "Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection.".to_string(),
-            )
+            Paragraph::new(guidance.to_string())
                 .wrap(Wrap { trim: true })
                 .inset(Insets::tlbr(0, 2, 0, 0)),
         );
         column.push("");
 
-        let options: Vec<(&str, TrustDirectorySelection)> = vec![
-            ("Yes, continue", TrustDirectorySelection::Trust),
-            ("No, quit", TrustDirectorySelection::Quit),
-        ];
+        let mut options: Vec<(&str, TrustDirectorySelection)> = Vec::new();
+        if self.is_git_repo {
+            options.push((
+                "Yes, allow Codex to work in this folder without asking for approval",
+                TrustDirectorySelection::Trust,
+            ));
+            options.push((
+                "No, ask me to approve edits and commands",
+                TrustDirectorySelection::DontTrust,
+            ));
+        } else {
+            options.push((
+                "Allow Codex to work in this folder without asking for approval",
+                TrustDirectorySelection::Trust,
+            ));
+            options.push((
+                "Require approval of edits and commands",
+                TrustDirectorySelection::DontTrust,
+            ));
+        }
 
         for (idx, (text, selection)) in options.iter().enumerate() {
             column.push(selection_option_row(
@@ -89,11 +109,7 @@ impl WidgetRef for &TrustDirectoryWidget {
             Line::from(vec![
                 "Press ".dim(),
                 key_hint::plain(KeyCode::Enter).into(),
-                if self.show_windows_create_sandbox_hint {
-                    " to continue and create a sandbox...".dim()
-                } else {
-                    " to continue".dim()
-                },
+                " to continue".dim(),
             ])
             .inset(Insets::tlbr(0, 2, 0, 0)),
         );
@@ -113,13 +129,13 @@ impl KeyboardHandler for TrustDirectoryWidget {
                 self.highlighted = TrustDirectorySelection::Trust;
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                self.highlighted = TrustDirectorySelection::Quit;
+                self.highlighted = TrustDirectorySelection::DontTrust;
             }
             KeyCode::Char('1') | KeyCode::Char('y') => self.handle_trust(),
-            KeyCode::Char('2') | KeyCode::Char('n') => self.handle_quit(),
+            KeyCode::Char('2') | KeyCode::Char('n') => self.handle_dont_trust(),
             KeyCode::Enter => match self.highlighted {
                 TrustDirectorySelection::Trust => self.handle_trust(),
-                TrustDirectorySelection::Quit => self.handle_quit(),
+                TrustDirectorySelection::DontTrust => self.handle_dont_trust(),
             },
             _ => {}
         }
@@ -128,10 +144,9 @@ impl KeyboardHandler for TrustDirectoryWidget {
 
 impl StepStateProvider for TrustDirectoryWidget {
     fn get_step_state(&self) -> StepState {
-        if self.selection.is_some() || self.should_quit {
-            StepState::Complete
-        } else {
-            StepState::InProgress
+        match self.selection {
+            Some(_) => StepState::Complete,
+            None => StepState::InProgress,
         }
     }
 }
@@ -140,7 +155,16 @@ impl TrustDirectoryWidget {
     fn handle_trust(&mut self) {
         let target =
             resolve_root_git_project_for_trust(&self.cwd).unwrap_or_else(|| self.cwd.clone());
-        if let Err(e) = set_project_trust_level(&self.codex_home, &target, TrustLevel::Trusted) {
+        let Some(config_path) = self.config_toml_file.clone() else {
+            self.error =
+                Some("Config persistence is disabled; cannot set trust level.".to_string());
+            return;
+        };
+        if let Err(e) = ConfigEditsBuilder::new(&self.codex_home)
+            .with_config_path(config_path)
+            .set_project_trust_level(&target, TrustLevel::Trusted)
+            .apply_blocking()
+        {
             tracing::error!("Failed to set project trusted: {e:?}");
             self.error = Some(format!("Failed to set trust for {}: {e}", target.display()));
         }
@@ -148,13 +172,28 @@ impl TrustDirectoryWidget {
         self.selection = Some(TrustDirectorySelection::Trust);
     }
 
-    fn handle_quit(&mut self) {
-        self.highlighted = TrustDirectorySelection::Quit;
-        self.should_quit = true;
-    }
+    fn handle_dont_trust(&mut self) {
+        self.highlighted = TrustDirectorySelection::DontTrust;
+        let target =
+            resolve_root_git_project_for_trust(&self.cwd).unwrap_or_else(|| self.cwd.clone());
+        let Some(config_path) = self.config_toml_file.clone() else {
+            self.error =
+                Some("Config persistence is disabled; cannot set trust level.".to_string());
+            return;
+        };
+        if let Err(e) = ConfigEditsBuilder::new(&self.codex_home)
+            .with_config_path(config_path)
+            .set_project_trust_level(&target, TrustLevel::Untrusted)
+            .apply_blocking()
+        {
+            tracing::error!("Failed to set project untrusted: {e:?}");
+            self.error = Some(format!(
+                "Failed to set untrusted for {}: {e}",
+                target.display()
+            ));
+        }
 
-    pub fn should_quit(&self) -> bool {
-        self.should_quit
+        self.selection = Some(TrustDirectorySelection::DontTrust);
     }
 }
 
@@ -177,11 +216,11 @@ mod tests {
         let codex_home = TempDir::new().expect("temp home");
         let mut widget = TrustDirectoryWidget {
             codex_home: codex_home.path().to_path_buf(),
+            config_toml_file: Some(codex_home.path().join("config.toml")),
             cwd: PathBuf::from("."),
-            show_windows_create_sandbox_hint: false,
-            should_quit: false,
+            is_git_repo: false,
             selection: None,
-            highlighted: TrustDirectorySelection::Quit,
+            highlighted: TrustDirectorySelection::DontTrust,
             error: None,
         };
 
@@ -194,7 +233,7 @@ mod tests {
 
         let press = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         widget.handle_key_event(press);
-        assert!(widget.should_quit);
+        assert_eq!(widget.selection, Some(TrustDirectorySelection::DontTrust));
     }
 
     #[test]
@@ -202,9 +241,9 @@ mod tests {
         let codex_home = TempDir::new().expect("temp home");
         let widget = TrustDirectoryWidget {
             codex_home: codex_home.path().to_path_buf(),
+            config_toml_file: Some(codex_home.path().join("config.toml")),
             cwd: PathBuf::from("/workspace/project"),
-            show_windows_create_sandbox_hint: false,
-            should_quit: false,
+            is_git_repo: true,
             selection: None,
             highlighted: TrustDirectorySelection::Trust,
             error: None,

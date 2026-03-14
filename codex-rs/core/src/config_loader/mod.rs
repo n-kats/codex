@@ -140,7 +140,8 @@ pub async fn load_config_layers_state(
 
     // Make a best-effort to support the legacy `managed_config.toml` as a
     // requirements specification.
-    let loaded_config_layers = layer_io::load_config_layers_internal(codex_home, overrides).await?;
+    let loaded_config_layers =
+        layer_io::load_config_layers_internal(codex_home, &overrides).await?;
     load_requirements_from_legacy_scheme(
         &mut config_requirements_toml,
         loaded_config_layers.clone(),
@@ -178,22 +179,29 @@ pub async fn load_config_layers_state(
         .await?;
     layers.push(system_layer);
 
-    // Add a layer for $CODEX_HOME/config.toml if it exists. Note if the file
-    // exists, but is malformed, then this error should be propagated to the
-    // user.
-    let user_file = AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home)?;
-    let user_layer = load_config_toml_for_required_layer(&user_file, |config_toml| {
-        ConfigLayerEntry::new(
-            ConfigLayerSource::User {
-                file: user_file.clone(),
-            },
-            config_toml,
-        )
-    })
-    .await?;
-    layers.push(user_layer);
+    // Add a layer for the user config.toml. By default this is
+    // `$CODEX_HOME/config.toml`, but it can be overridden (e.g., via a CLI
+    // flag) or disabled entirely.
+    let user_config_file = match &overrides.user_config_path {
+        Some(path) => AbsolutePathBuf::try_from(path.as_path())?,
+        None => AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home)?,
+    };
+    if !overrides.disable_user_config {
+        let user_layer = load_config_toml_for_required_layer(&user_config_file, |config_toml| {
+            ConfigLayerEntry::new(
+                ConfigLayerSource::User {
+                    file: user_config_file.clone(),
+                },
+                config_toml,
+            )
+        })
+        .await?;
+        layers.push(user_layer);
+    }
 
-    if let Some(cwd) = cwd {
+    if let Some(cwd) = cwd
+        && !overrides.disable_project_config
+    {
         let mut merged_so_far = TomlValue::Table(toml::map::Map::new());
         for layer in &layers {
             merge_toml_values(&mut merged_so_far, &layer.config);
@@ -220,7 +228,7 @@ pub async fn load_config_layers_state(
             &cwd,
             &project_root_markers,
             codex_home,
-            &user_file,
+            &user_config_file,
         )
         .await
         {

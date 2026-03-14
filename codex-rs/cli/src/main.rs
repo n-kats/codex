@@ -74,6 +74,10 @@ struct MultitoolCli {
     #[clap(flatten)]
     pub feature_toggles: FeatureToggles,
 
+    /// Additional AGENTS.md files to inject as user instructions (repeatable).
+    #[clap(long = "agents-md", value_name = "FILE")]
+    pub agents_md: Vec<PathBuf>,
+
     #[clap(flatten)]
     interactive: TuiCli,
 
@@ -561,6 +565,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     let MultitoolCli {
         config_overrides: mut root_config_overrides,
         feature_toggles,
+        agents_md,
         mut interactive,
         subcommand,
     } = MultitoolCli::parse();
@@ -575,7 +580,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 &mut interactive.config_overrides,
                 root_config_overrides.clone(),
             );
-            let exit_info = run_interactive_tui(interactive, arg0_paths.clone()).await?;
+            let exit_info =
+                run_interactive_tui(interactive, arg0_paths.clone(), agents_md.clone()).await?;
             handle_app_exit(exit_info)?;
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
@@ -583,7 +589,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
             );
-            codex_exec::run_main(exec_cli, arg0_paths.clone()).await?;
+            codex_exec::run_main_with_agents_md(exec_cli, arg0_paths.clone(), agents_md).await?;
         }
         Some(Subcommand::Review(review_args)) => {
             let mut exec_cli = ExecCli::try_parse_from(["codex", "exec"])?;
@@ -592,7 +598,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
             );
-            codex_exec::run_main(exec_cli, arg0_paths.clone()).await?;
+            codex_exec::run_main_with_agents_md(exec_cli, arg0_paths.clone(), agents_md).await?;
         }
         Some(Subcommand::McpServer) => {
             codex_mcp_server::run_main(arg0_paths.clone(), root_config_overrides).await?;
@@ -650,7 +656,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 all,
                 config_overrides,
             );
-            let exit_info = run_interactive_tui(interactive, arg0_paths.clone()).await?;
+            let exit_info =
+                run_interactive_tui(interactive, arg0_paths.clone(), agents_md.clone()).await?;
             handle_app_exit(exit_info)?;
         }
         Some(Subcommand::Fork(ForkCommand {
@@ -667,7 +674,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 all,
                 config_overrides,
             );
-            let exit_info = run_interactive_tui(interactive, arg0_paths.clone()).await?;
+            let exit_info =
+                run_interactive_tui(interactive, arg0_paths.clone(), agents_md.clone()).await?;
             handle_app_exit(exit_info)?;
         }
         Some(Subcommand::Login(mut login_cli)) => {
@@ -677,7 +685,12 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             );
             match login_cli.action {
                 Some(LoginSubcommand::Status) => {
-                    run_login_status(login_cli.config_overrides).await;
+                    run_login_status(
+                        login_cli.config_overrides,
+                        interactive.config_toml_file.clone(),
+                        interactive.no_config,
+                    )
+                    .await;
                 }
                 None => {
                     if login_cli.use_device_code {
@@ -685,6 +698,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                             login_cli.config_overrides,
                             login_cli.issuer_base_url,
                             login_cli.client_id,
+                            interactive.config_toml_file.clone(),
+                            interactive.no_config,
                         )
                         .await;
                     } else if login_cli.api_key.is_some() {
@@ -694,9 +709,20 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         std::process::exit(1);
                     } else if login_cli.with_api_key {
                         let api_key = read_api_key_from_stdin();
-                        run_login_with_api_key(login_cli.config_overrides, api_key).await;
+                        run_login_with_api_key(
+                            login_cli.config_overrides,
+                            api_key,
+                            interactive.config_toml_file.clone(),
+                            interactive.no_config,
+                        )
+                        .await;
                     } else {
-                        run_login_with_chatgpt(login_cli.config_overrides).await;
+                        run_login_with_chatgpt(
+                            login_cli.config_overrides,
+                            interactive.config_toml_file.clone(),
+                            interactive.no_config,
+                        )
+                        .await;
                     }
                 }
             }
@@ -706,7 +732,12 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 &mut logout_cli.config_overrides,
                 root_config_overrides.clone(),
             );
-            run_logout(logout_cli.config_overrides).await;
+            run_logout(
+                logout_cli.config_overrides,
+                interactive.config_toml_file.clone(),
+                interactive.no_config,
+            )
+            .await;
         }
         Some(Subcommand::Completion(completion_cli)) => {
             print_completion(completion_cli);
@@ -952,6 +983,7 @@ fn prepend_config_flags(
 async fn run_interactive_tui(
     mut interactive: TuiCli,
     arg0_paths: Arg0DispatchPaths,
+    agents_md: Vec<PathBuf>,
 ) -> std::io::Result<AppExitInfo> {
     if let Some(prompt) = interactive.prompt.take() {
         // Normalize CRLF/CR to LF so CLI-provided text can't leak `\r` into TUI state.
@@ -976,12 +1008,67 @@ async fn run_interactive_tui(
         }
     }
 
-    codex_tui::run_main(
+    run_codex_tui_main(
         interactive,
         arg0_paths,
         codex_core::config_loader::LoaderOverrides::default(),
+        agents_md,
     )
     .await
+}
+
+#[cfg(not(test))]
+async fn run_codex_tui_main(
+    interactive: TuiCli,
+    arg0_paths: Arg0DispatchPaths,
+    loader_overrides: codex_core::config_loader::LoaderOverrides,
+    agents_md: Vec<PathBuf>,
+) -> std::io::Result<AppExitInfo> {
+    codex_tui::run_main(interactive, arg0_paths, loader_overrides, agents_md).await
+}
+
+#[cfg(test)]
+static INTERACTIVE_TUI_AGENTS_MD_CAPTURE: std::sync::LazyLock<
+    std::sync::Mutex<Option<Vec<PathBuf>>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(None));
+
+#[cfg(test)]
+#[allow(dead_code)]
+fn clear_interactive_tui_agents_md_capture_for_test() {
+    if let Ok(mut captured) = INTERACTIVE_TUI_AGENTS_MD_CAPTURE.lock() {
+        *captured = None;
+    }
+}
+
+#[cfg(test)]
+#[allow(dead_code)]
+fn take_interactive_tui_agents_md_capture_for_test() -> Option<Vec<PathBuf>> {
+    INTERACTIVE_TUI_AGENTS_MD_CAPTURE
+        .lock()
+        .ok()
+        .and_then(|mut captured| captured.take())
+}
+
+#[cfg(test)]
+async fn run_codex_tui_main(
+    interactive: TuiCli,
+    arg0_paths: Arg0DispatchPaths,
+    loader_overrides: codex_core::config_loader::LoaderOverrides,
+    agents_md: Vec<PathBuf>,
+) -> std::io::Result<AppExitInfo> {
+    let _ = interactive;
+    let _ = arg0_paths;
+    let _ = loader_overrides;
+    if let Ok(mut captured) = INTERACTIVE_TUI_AGENTS_MD_CAPTURE.lock() {
+        *captured = Some(agents_md);
+    }
+    Ok(AppExitInfo {
+        token_usage: codex_protocol::protocol::TokenUsage::default(),
+        thread_id: None,
+        thread_name: None,
+        update_action: None,
+        exit_reason: ExitReason::UserRequested,
+    })
 }
 
 fn confirm(prompt: &str) -> std::io::Result<bool> {
@@ -1114,6 +1201,7 @@ mod tests {
             config_overrides: root_overrides,
             subcommand,
             feature_toggles: _,
+            agents_md: _,
         } = cli;
 
         let Subcommand::Resume(ResumeCommand {
@@ -1143,6 +1231,7 @@ mod tests {
             config_overrides: root_overrides,
             subcommand,
             feature_toggles: _,
+            agents_md: _,
         } = cli;
 
         let Subcommand::Fork(ForkCommand {

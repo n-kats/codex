@@ -44,6 +44,7 @@ async fn run_test_cmd(tmp: TempDir, cmd: Vec<&str>) -> Result<ExecToolCallOutput
         windows_sandbox_private_desktop: false,
         justification: None,
         arg0: None,
+        run_as: None,
     };
 
     let policy = SandboxPolicy::new_read_only_policy();
