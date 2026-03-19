@@ -959,8 +959,8 @@ pub async fn load_config_as_toml_with_cli_overrides_and_loader_overrides(
     cli_overrides: Vec<(String, TomlValue)>,
     loader_overrides: LoaderOverrides,
 ) -> std::io::Result<ConfigToml> {
-    if let Err(err) = maybe_migrate_guardian_approval_alias(codex_home).await {
-        tracing::warn!(error = %err, "failed to migrate guardian_approval feature alias");
+    if let Err(err) = maybe_migrate_smart_approvals_alias(codex_home).await {
+        tracing::warn!(error = %err, "failed to migrate smart_approvals feature alias");
     }
     let config_layer_stack = load_config_layers_state(
         codex_home,
@@ -2853,6 +2853,7 @@ impl Config {
         } else {
             network.enabled().then_some(network)
         };
+        let original_sandbox_policy = sandbox_policy.clone();
         let effective_sandbox_policy = constrained_sandbox_policy.value.get().clone();
         let effective_file_system_sandbox_policy =
             if effective_sandbox_policy == original_sandbox_policy {
@@ -2882,8 +2883,8 @@ impl Config {
             permissions: Permissions {
                 approval_policy: constrained_approval_policy.value,
                 sandbox_policy: constrained_sandbox_policy.value,
-                file_system_sandbox_policy,
-                network_sandbox_policy,
+                file_system_sandbox_policy: effective_file_system_sandbox_policy,
+                network_sandbox_policy: effective_network_sandbox_policy,
                 network,
                 allow_login_shell,
                 shell_environment_policy: assistant_shell_environment_policy,

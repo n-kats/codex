@@ -51,12 +51,14 @@ use codex_state::log_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_oss::ensure_oss_provider_ready;
 use codex_utils_oss::get_default_model_for_oss_provider;
+use color_eyre::eyre::WrapErr;
 use cwd_prompt::CwdPromptAction;
 use cwd_prompt::CwdPromptOutcome;
 use cwd_prompt::CwdSelection;
 use std::fs::OpenOptions;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tracing::error;
 use tracing_appender::non_blocking;
 use tracing_subscriber::EnvFilter;
@@ -1601,11 +1603,12 @@ trust_level = "untrusted"
             initial_warning_count + 1,
             "expected theme warning to be appended"
         );
+        let new_warning = config
+            .startup_warnings
+            .last()
+            .expect("expected a new theme warning");
         assert!(
-            config
-                .startup_warnings
-                .iter()
-                .any(|warning| warning.contains("bogus-theme")),
+            new_warning.contains("bogus-theme"),
             "warning should reference the final config's theme name"
         );
         Ok(())

@@ -1346,6 +1346,7 @@ impl App {
                 /*service_tier*/ None,
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
+                /*project_doc_paths*/ None,
             );
             let replay_state_op =
                 ThreadEventStore::op_can_change_pending_replay_state(&op).then(|| op.clone());
@@ -1368,6 +1369,7 @@ impl App {
                         None,
                         #[cfg(target_os = "windows")]
                         Some(windows_sandbox_level),
+                        None,
                         None,
                         None,
                         None,
@@ -3983,6 +3985,7 @@ impl App {
                                         None,
                                         None,
                                         None,
+                                        None,
                                     )
                                     .into(),
                                 ));
@@ -4003,6 +4006,7 @@ impl App {
                                         Some(preset.sandbox.clone()),
                                         #[cfg(target_os = "windows")]
                                         Some(windows_sandbox_level),
+                                        None,
                                         None,
                                         None,
                                         None,
@@ -6524,6 +6528,7 @@ mod tests {
                 service_tier: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             })
         );
         let cell = match app_event_rx.try_recv() {
@@ -6615,6 +6620,7 @@ mod tests {
                 service_tier: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             })
         );
         let cell = match app_event_rx.try_recv() {
@@ -6694,6 +6700,7 @@ mod tests {
                 service_tier: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             })
         );
 
@@ -6751,6 +6758,7 @@ mod tests {
                 service_tier: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             })
         );
         assert!(
@@ -6810,6 +6818,7 @@ mod tests {
                 service_tier: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             })
         );
 
@@ -6897,6 +6906,7 @@ guardian_approval = true
                 service_tier: None,
                 collaboration_mode: None,
                 personality: None,
+                project_doc_paths: None,
             })
         );
         let cell = match app_event_rx.try_recv() {

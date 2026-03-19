@@ -7258,6 +7258,7 @@ impl ChatWidget {
                     /*service_tier*/ None,
                     /*collaboration_mode*/ None,
                     /*personality*/ None,
+                    /*project_doc_paths*/ None,
                 )
                 .into_core(),
             ));
@@ -7383,6 +7384,7 @@ impl ChatWidget {
                             /*service_tier*/ None,
                             /*collaboration_mode*/ None,
                             Some(personality),
+                            /*project_doc_paths*/ None,
                         )
                         .into_core(),
                     ));
@@ -8368,6 +8370,7 @@ impl ChatWidget {
                     /*service_tier*/ None,
                     /*collaboration_mode*/ None,
                     /*personality*/ None,
+                    /*project_doc_paths*/ None,
                 )
                 .into_core(),
             ));
@@ -9140,6 +9143,7 @@ impl ChatWidget {
                 Some(service_tier),
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
+                /*project_doc_paths*/ None,
             )
             .into_core(),
         ));

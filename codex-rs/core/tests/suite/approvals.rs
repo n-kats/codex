@@ -23,6 +23,7 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
+use core_test_support::fs_wait;
 use core_test_support::responses::ev_apply_patch_function_call;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -2206,15 +2207,7 @@ async fn spawned_subagent_execpolicy_amendment_propagates_to_parent_session() ->
         }
         other => panic!("unexpected event: {other:?}"),
     }
-    assert!(
-        child_file.exists(),
-        "expected subagent command to create file"
-    );
-    fs::remove_file(&child_file)?;
-    assert!(
-        !child_file.exists(),
-        "expected child file to be removed before parent rerun"
-    );
+    let _ = fs::remove_file(&child_file);
 
     submit_turn(
         &test,
@@ -2224,6 +2217,7 @@ async fn spawned_subagent_execpolicy_amendment_propagates_to_parent_session() ->
     )
     .await?;
     wait_for_completion_without_approval(&test).await;
+    fs_wait::wait_for_path_exists(&child_file, Duration::from_secs(5)).await?;
 
     Ok(())
 }

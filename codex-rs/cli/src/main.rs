@@ -1477,6 +1477,7 @@ mod tests {
             subcommand,
             feature_toggles: _,
             agents_md: _,
+            remote: _,
         } = cli;
 
         let Subcommand::Resume(ResumeCommand {
@@ -1513,6 +1514,7 @@ mod tests {
             subcommand,
             feature_toggles: _,
             agents_md: _,
+            remote: _,
         } = cli;
 
         let Subcommand::Fork(ForkCommand {

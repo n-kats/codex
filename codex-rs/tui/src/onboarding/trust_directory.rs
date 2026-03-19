@@ -60,7 +60,9 @@ impl WidgetRef for &TrustDirectoryWidget {
         column.push(
             Paragraph::new(guidance.to_string())
                 .wrap(Wrap { trim: true })
-                .inset(Insets::tlbr(/*top*/ 0, /*left*/ 2, /*bottom*/ 0, /*right*/ 0)),
+                .inset(Insets::tlbr(
+                    /*top*/ 0, /*left*/ 2, /*bottom*/ 0, /*right*/ 0,
+                )),
         );
         column.push("");
 

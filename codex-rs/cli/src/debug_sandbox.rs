@@ -4,6 +4,7 @@ mod pid_tracker;
 mod seatbelt;
 
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
 use std::process::Stdio;
 
 use codex_core::config::Config;
@@ -11,16 +12,21 @@ use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::NetworkProxyAuditMetadata;
 use codex_core::exec_env::create_env;
-use codex_core::landlock::create_linux_sandbox_command_args_for_policies;
+use codex_core::landlock::spawn_command_under_linux_sandbox;
 #[cfg(target_os = "macos")]
 use codex_core::seatbelt::create_seatbelt_command_args_for_policies_with_extensions;
 #[cfg(target_os = "macos")]
 use codex_core::spawn::CODEX_SANDBOX_ENV_VAR;
+#[cfg(target_os = "macos")]
 use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
+use codex_core::spawn::StdioPolicy;
 use codex_protocol::config_types::SandboxMode;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_utils_cli::CliConfigOverrides;
+#[cfg(target_os = "macos")]
 use tokio::process::Child;
+#[cfg(target_os = "macos")]
 use tokio::process::Command as TokioCommand;
 use toml::Value as TomlValue;
 
@@ -138,6 +144,7 @@ async fn run_command_under_sandbox(
         &config.permissions.shell_environment_policy,
         /*thread_id*/ None,
     );
+    let stdio_policy = StdioPolicy::Inherit;
 
     // Special-case Windows sandbox: execute and exit the process to emulate inherited stdio.
     if let SandboxType::Windows = sandbox_type {
@@ -331,6 +338,7 @@ pub fn create_sandbox_mode(full_auto: bool) -> SandboxMode {
     }
 }
 
+#[cfg(target_os = "macos")]
 async fn spawn_debug_sandbox_child(
     program: PathBuf,
     args: Vec<String>,

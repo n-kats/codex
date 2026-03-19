@@ -51,6 +51,7 @@ async fn custom__agents_md__interactive起動時にtuiへ引き継がれる() {
 
     run_interactive_tui(
         interactive,
+        None,
         Arg0DispatchPaths::default(),
         codex_core::config_loader::LoaderOverrides::default(),
         agents_md.clone(),
