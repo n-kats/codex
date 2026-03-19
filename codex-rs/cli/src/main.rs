@@ -71,6 +71,21 @@ struct MultitoolCli {
     #[clap(flatten)]
     pub config_overrides: CliConfigOverrides,
 
+    /// Load the user config layer from an arbitrary `config.toml` file instead of
+    /// `$CODEX_HOME/config.toml`.
+    #[clap(
+        long = "config",
+        alias = "config-toml-file",
+        value_name = "FILE",
+        global = true,
+        conflicts_with = "no_config"
+    )]
+    pub config_toml_file: Option<PathBuf>,
+
+    /// Ignore user + project config files entirely (still honors system config and `-c` overrides).
+    #[clap(long = "no-config", global = true, default_value_t = false)]
+    pub no_config: bool,
+
     #[clap(flatten)]
     pub feature_toggles: FeatureToggles,
 
@@ -564,6 +579,8 @@ fn main() -> anyhow::Result<()> {
 async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     let MultitoolCli {
         config_overrides: mut root_config_overrides,
+        config_toml_file,
+        no_config,
         feature_toggles,
         agents_md,
         mut interactive,
@@ -574,14 +591,24 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     let toggle_overrides = feature_toggles.to_overrides()?;
     root_config_overrides.raw_overrides.extend(toggle_overrides);
 
+    let resolved_config_toml_file = config_toml_file.map(resolve_path_from_cwd);
+    let loader_overrides = build_loader_overrides(resolved_config_toml_file.clone(), no_config);
+    interactive.config_toml_file = resolved_config_toml_file.clone();
+    interactive.no_config = no_config;
+
     match subcommand {
         None => {
             prepend_config_flags(
                 &mut interactive.config_overrides,
                 root_config_overrides.clone(),
             );
-            let exit_info =
-                run_interactive_tui(interactive, arg0_paths.clone(), agents_md.clone()).await?;
+            let exit_info = run_interactive_tui(
+                interactive,
+                arg0_paths.clone(),
+                loader_overrides.clone(),
+                agents_md.clone(),
+            )
+            .await?;
             handle_app_exit(exit_info)?;
         }
         Some(Subcommand::Exec(mut exec_cli)) => {
@@ -589,6 +616,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
             );
+            exec_cli.config_toml_file = resolved_config_toml_file.clone();
+            exec_cli.no_config = no_config;
             codex_exec::run_main_with_agents_md(exec_cli, arg0_paths.clone(), agents_md).await?;
         }
         Some(Subcommand::Review(review_args)) => {
@@ -598,14 +627,23 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
             );
+            exec_cli.config_toml_file = resolved_config_toml_file.clone();
+            exec_cli.no_config = no_config;
             codex_exec::run_main_with_agents_md(exec_cli, arg0_paths.clone(), agents_md).await?;
         }
         Some(Subcommand::McpServer) => {
-            codex_mcp_server::run_main(arg0_paths.clone(), root_config_overrides).await?;
+            codex_mcp_server::run_main(
+                arg0_paths.clone(),
+                root_config_overrides,
+                loader_overrides.clone(),
+            )
+            .await?;
         }
         Some(Subcommand::Mcp(mut mcp_cli)) => {
             // Propagate any root-level config overrides (e.g. `-c key=value`).
             prepend_config_flags(&mut mcp_cli.config_overrides, root_config_overrides.clone());
+            mcp_cli.config_toml_file = resolved_config_toml_file.clone();
+            mcp_cli.no_config = no_config;
             mcp_cli.run().await?;
         }
         Some(Subcommand::AppServer(app_server_cli)) => match app_server_cli.subcommand {
@@ -614,7 +652,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 codex_app_server::run_main_with_transport(
                     arg0_paths.clone(),
                     root_config_overrides,
-                    codex_core::config_loader::LoaderOverrides::default(),
+                    loader_overrides.clone(),
                     app_server_cli.analytics_default_enabled,
                     transport,
                 )
@@ -656,8 +694,13 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 all,
                 config_overrides,
             );
-            let exit_info =
-                run_interactive_tui(interactive, arg0_paths.clone(), agents_md.clone()).await?;
+            let exit_info = run_interactive_tui(
+                interactive,
+                arg0_paths.clone(),
+                loader_overrides.clone(),
+                agents_md.clone(),
+            )
+            .await?;
             handle_app_exit(exit_info)?;
         }
         Some(Subcommand::Fork(ForkCommand {
@@ -674,8 +717,13 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 all,
                 config_overrides,
             );
-            let exit_info =
-                run_interactive_tui(interactive, arg0_paths.clone(), agents_md.clone()).await?;
+            let exit_info = run_interactive_tui(
+                interactive,
+                arg0_paths.clone(),
+                loader_overrides.clone(),
+                agents_md.clone(),
+            )
+            .await?;
             handle_app_exit(exit_info)?;
         }
         Some(Subcommand::Login(mut login_cli)) => {
@@ -687,8 +735,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 Some(LoginSubcommand::Status) => {
                     run_login_status(
                         login_cli.config_overrides,
-                        interactive.config_toml_file.clone(),
-                        interactive.no_config,
+                        resolved_config_toml_file.clone(),
+                        no_config,
                     )
                     .await;
                 }
@@ -698,8 +746,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                             login_cli.config_overrides,
                             login_cli.issuer_base_url,
                             login_cli.client_id,
-                            interactive.config_toml_file.clone(),
-                            interactive.no_config,
+                            resolved_config_toml_file.clone(),
+                            no_config,
                         )
                         .await;
                     } else if login_cli.api_key.is_some() {
@@ -712,15 +760,15 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         run_login_with_api_key(
                             login_cli.config_overrides,
                             api_key,
-                            interactive.config_toml_file.clone(),
-                            interactive.no_config,
+                            resolved_config_toml_file.clone(),
+                            no_config,
                         )
                         .await;
                     } else {
                         run_login_with_chatgpt(
                             login_cli.config_overrides,
-                            interactive.config_toml_file.clone(),
-                            interactive.no_config,
+                            resolved_config_toml_file.clone(),
+                            no_config,
                         )
                         .await;
                     }
@@ -734,8 +782,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             );
             run_logout(
                 logout_cli.config_overrides,
-                interactive.config_toml_file.clone(),
-                interactive.no_config,
+                resolved_config_toml_file.clone(),
+                no_config,
             )
             .await;
         }
@@ -747,6 +795,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 &mut cloud_cli.config_overrides,
                 root_config_overrides.clone(),
             );
+            cloud_cli.config_toml_file = resolved_config_toml_file.clone();
+            cloud_cli.no_config = no_config;
             codex_cloud_tasks::run_main(cloud_cli, arg0_paths.codex_linux_sandbox_exe.clone())
                 .await?;
         }
@@ -983,6 +1033,7 @@ fn prepend_config_flags(
 async fn run_interactive_tui(
     mut interactive: TuiCli,
     arg0_paths: Arg0DispatchPaths,
+    loader_overrides: codex_core::config_loader::LoaderOverrides,
     agents_md: Vec<PathBuf>,
 ) -> std::io::Result<AppExitInfo> {
     if let Some(prompt) = interactive.prompt.take() {
@@ -1008,13 +1059,30 @@ async fn run_interactive_tui(
         }
     }
 
-    run_codex_tui_main(
-        interactive,
-        arg0_paths,
-        codex_core::config_loader::LoaderOverrides::default(),
-        agents_md,
-    )
-    .await
+    run_codex_tui_main(interactive, arg0_paths, loader_overrides, agents_md).await
+}
+
+fn resolve_path_from_cwd(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        return path;
+    }
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(path)
+}
+
+fn build_loader_overrides(
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
+) -> codex_core::config_loader::LoaderOverrides {
+    let mut loader_overrides = codex_core::config_loader::LoaderOverrides::default();
+    if no_config {
+        loader_overrides.disable_user_config = true;
+        loader_overrides.disable_project_config = true;
+    } else if let Some(path) = config_toml_file {
+        loader_overrides.user_config_path = Some(path);
+    }
+    loader_overrides
 }
 
 #[cfg(not(test))]
@@ -1199,6 +1267,8 @@ mod tests {
         let MultitoolCli {
             interactive,
             config_overrides: root_overrides,
+            config_toml_file: _,
+            no_config: _,
             subcommand,
             feature_toggles: _,
             agents_md: _,
@@ -1229,6 +1299,8 @@ mod tests {
         let MultitoolCli {
             interactive,
             config_overrides: root_overrides,
+            config_toml_file: _,
+            no_config: _,
             subcommand,
             feature_toggles: _,
             agents_md: _,
@@ -1635,3 +1707,7 @@ mod tests {
         assert_eq!(err.to_string(), "Unknown feature flag: does_not_exist");
     }
 }
+
+#[cfg(test)]
+#[path = "custom_tests.rs"]
+mod custom_tests;

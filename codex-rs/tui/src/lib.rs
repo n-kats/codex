@@ -25,7 +25,7 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_overrides;
+use codex_core::config::load_config_as_toml_with_cli_overrides_and_loader_overrides;
 use codex_core::config::resolve_oss_provider;
 use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::config_loader::ConfigLoadError;
@@ -373,10 +373,11 @@ pub async fn run_main(
     };
 
     #[allow(clippy::print_stderr)]
-    let config_toml = match load_config_as_toml_with_cli_overrides(
+    let config_toml = match load_config_as_toml_with_cli_overrides_and_loader_overrides(
         &codex_home,
         &config_cwd,
         cli_kv_overrides.clone(),
+        loader_overrides.clone(),
     )
     .await
     {
@@ -475,6 +476,7 @@ pub async fn run_main(
 
     let config = load_config_or_exit(
         cli_kv_overrides.clone(),
+        loader_overrides.clone(),
         overrides.clone(),
         cloud_requirements.clone(),
     )
@@ -728,6 +730,7 @@ async fn run_ratatui_app(
         if onboarding_result.directory_trust_decision.is_some() || show_login_screen {
             load_config_or_exit(
                 cli_kv_overrides.clone(),
+                loader_overrides.clone(),
                 overrides.clone(),
                 cloud_requirements.clone(),
             )
@@ -979,6 +982,7 @@ async fn run_ratatui_app(
         resume_picker::SessionSelection::Resume(_) | resume_picker::SessionSelection::Fork(_) => {
             load_config_or_exit_with_fallback_cwd(
                 cli_kv_overrides.clone(),
+                loader_overrides.clone(),
                 overrides.clone(),
                 cloud_requirements.clone(),
                 fallback_cwd,
@@ -1228,17 +1232,25 @@ fn get_login_status(config: &Config) -> LoginStatus {
     }
 }
 
-async fn load_config_or_exit(
+pub(crate) async fn load_config_or_exit(
     cli_kv_overrides: Vec<(String, toml::Value)>,
+    loader_overrides: LoaderOverrides,
     overrides: ConfigOverrides,
     cloud_requirements: CloudRequirementsLoader,
 ) -> Config {
-    load_config_or_exit_with_fallback_cwd(cli_kv_overrides, overrides, cloud_requirements, None)
-        .await
+    load_config_or_exit_with_fallback_cwd(
+        cli_kv_overrides,
+        loader_overrides,
+        overrides,
+        cloud_requirements,
+        None,
+    )
+    .await
 }
 
-async fn load_config_or_exit_with_fallback_cwd(
+pub(crate) async fn load_config_or_exit_with_fallback_cwd(
     cli_kv_overrides: Vec<(String, toml::Value)>,
+    loader_overrides: LoaderOverrides,
     overrides: ConfigOverrides,
     cloud_requirements: CloudRequirementsLoader,
     fallback_cwd: Option<PathBuf>,
@@ -1247,6 +1259,7 @@ async fn load_config_or_exit_with_fallback_cwd(
     match ConfigBuilder::default()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
+        .loader_overrides(loader_overrides)
         .cloud_requirements(cloud_requirements)
         .fallback_cwd(fallback_cwd)
         .build()
@@ -1722,3 +1735,7 @@ trust_level = "untrusted"
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "custom_config_loader_tests.rs"]
+mod custom_config_loader_tests;

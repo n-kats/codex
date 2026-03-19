@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -7,11 +8,13 @@ use anyhow::anyhow;
 use anyhow::bail;
 use clap::ArgGroup;
 use codex_core::config::Config;
+use codex_core::config::ConfigBuilder;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_global_mcp_servers;
 use codex_core::config::types::McpServerConfig;
 use codex_core::config::types::McpServerTransportConfig;
+use codex_core::config_loader::LoaderOverrides;
 use codex_core::mcp::McpManager;
 use codex_core::mcp::auth::McpOAuthLoginSupport;
 use codex_core::mcp::auth::ResolvedMcpOAuthScopes;
@@ -38,6 +41,12 @@ use codex_utils_cli::format_env_display::format_env_display;
 pub struct McpCli {
     #[clap(flatten)]
     pub config_overrides: CliConfigOverrides,
+
+    #[clap(skip)]
+    pub config_toml_file: Option<PathBuf>,
+
+    #[clap(skip)]
+    pub no_config: bool,
 
     #[command(subcommand)]
     pub subcommand: McpSubcommand,
@@ -159,32 +168,62 @@ impl McpCli {
     pub async fn run(self) -> Result<()> {
         let McpCli {
             config_overrides,
+            config_toml_file,
+            no_config,
             subcommand,
         } = self;
 
         match subcommand {
             McpSubcommand::List(args) => {
-                run_list(&config_overrides, args).await?;
+                run_list(&config_overrides, config_toml_file.clone(), no_config, args).await?;
             }
             McpSubcommand::Get(args) => {
-                run_get(&config_overrides, args).await?;
+                run_get(&config_overrides, config_toml_file.clone(), no_config, args).await?;
             }
             McpSubcommand::Add(args) => {
-                run_add(&config_overrides, args).await?;
+                run_add(&config_overrides, config_toml_file.clone(), no_config, args).await?;
             }
             McpSubcommand::Remove(args) => {
-                run_remove(&config_overrides, args).await?;
+                run_remove(&config_overrides, config_toml_file.clone(), no_config, args).await?;
             }
             McpSubcommand::Login(args) => {
-                run_login(&config_overrides, args).await?;
+                run_login(&config_overrides, config_toml_file.clone(), no_config, args).await?;
             }
             McpSubcommand::Logout(args) => {
-                run_logout(&config_overrides, args).await?;
+                run_logout(&config_overrides, config_toml_file, no_config, args).await?;
             }
         }
 
         Ok(())
     }
+}
+
+fn build_loader_overrides(config_toml_file: Option<PathBuf>, no_config: bool) -> LoaderOverrides {
+    let mut loader_overrides = LoaderOverrides::default();
+    if no_config {
+        loader_overrides.disable_user_config = true;
+        loader_overrides.disable_project_config = true;
+    } else if let Some(path) = config_toml_file {
+        loader_overrides.user_config_path = Some(path);
+    }
+    loader_overrides
+}
+
+async fn load_config(
+    config_overrides: &CliConfigOverrides,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
+) -> Result<Config> {
+    let overrides = config_overrides
+        .parse_overrides()
+        .map_err(anyhow::Error::msg)?;
+    let loader_overrides = build_loader_overrides(config_toml_file, no_config);
+    ConfigBuilder::default()
+        .cli_overrides(overrides)
+        .loader_overrides(loader_overrides)
+        .build()
+        .await
+        .context("failed to load configuration")
 }
 
 /// Preserve compatibility with servers that still expect the legacy empty-scope
@@ -235,14 +274,13 @@ async fn perform_oauth_login_retry_without_scopes(
     }
 }
 
-async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Result<()> {
-    // Validate any provided overrides even though they are not currently applied.
-    let overrides = config_overrides
-        .parse_overrides()
-        .map_err(anyhow::Error::msg)?;
-    let config = Config::load_with_cli_overrides(overrides)
-        .await
-        .context("failed to load configuration")?;
+async fn run_add(
+    config_overrides: &CliConfigOverrides,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
+    add_args: AddArgs,
+) -> Result<()> {
+    let config = load_config(config_overrides, config_toml_file, no_config).await?;
 
     let AddArgs {
         name,
@@ -346,7 +384,12 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
     Ok(())
 }
 
-async fn run_remove(config_overrides: &CliConfigOverrides, remove_args: RemoveArgs) -> Result<()> {
+async fn run_remove(
+    config_overrides: &CliConfigOverrides,
+    _config_toml_file: Option<PathBuf>,
+    _no_config: bool,
+    remove_args: RemoveArgs,
+) -> Result<()> {
     config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
@@ -379,13 +422,13 @@ async fn run_remove(config_overrides: &CliConfigOverrides, remove_args: RemoveAr
     Ok(())
 }
 
-async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs) -> Result<()> {
-    let overrides = config_overrides
-        .parse_overrides()
-        .map_err(anyhow::Error::msg)?;
-    let config = Config::load_with_cli_overrides(overrides)
-        .await
-        .context("failed to load configuration")?;
+async fn run_login(
+    config_overrides: &CliConfigOverrides,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
+    login_args: LoginArgs,
+) -> Result<()> {
+    let config = load_config(config_overrides, config_toml_file, no_config).await?;
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(config.codex_home.clone())));
     let mcp_servers = mcp_manager.effective_servers(&config, None);
 
@@ -430,13 +473,13 @@ async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs)
     Ok(())
 }
 
-async fn run_logout(config_overrides: &CliConfigOverrides, logout_args: LogoutArgs) -> Result<()> {
-    let overrides = config_overrides
-        .parse_overrides()
-        .map_err(anyhow::Error::msg)?;
-    let config = Config::load_with_cli_overrides(overrides)
-        .await
-        .context("failed to load configuration")?;
+async fn run_logout(
+    config_overrides: &CliConfigOverrides,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
+    logout_args: LogoutArgs,
+) -> Result<()> {
+    let config = load_config(config_overrides, config_toml_file, no_config).await?;
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(config.codex_home.clone())));
     let mcp_servers = mcp_manager.effective_servers(&config, None);
 
@@ -460,13 +503,13 @@ async fn run_logout(config_overrides: &CliConfigOverrides, logout_args: LogoutAr
     Ok(())
 }
 
-async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) -> Result<()> {
-    let overrides = config_overrides
-        .parse_overrides()
-        .map_err(anyhow::Error::msg)?;
-    let config = Config::load_with_cli_overrides(overrides)
-        .await
-        .context("failed to load configuration")?;
+async fn run_list(
+    config_overrides: &CliConfigOverrides,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
+    list_args: ListArgs,
+) -> Result<()> {
+    let config = load_config(config_overrides, config_toml_file, no_config).await?;
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(config.codex_home.clone())));
     let mcp_servers = mcp_manager.effective_servers(&config, None);
 
@@ -709,13 +752,13 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
     Ok(())
 }
 
-async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Result<()> {
-    let overrides = config_overrides
-        .parse_overrides()
-        .map_err(anyhow::Error::msg)?;
-    let config = Config::load_with_cli_overrides(overrides)
-        .await
-        .context("failed to load configuration")?;
+async fn run_get(
+    config_overrides: &CliConfigOverrides,
+    config_toml_file: Option<PathBuf>,
+    no_config: bool,
+    get_args: GetArgs,
+) -> Result<()> {
+    let config = load_config(config_overrides, config_toml_file, no_config).await?;
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(config.codex_home.clone())));
     let mcp_servers = mcp_manager.effective_servers(&config, None);
 

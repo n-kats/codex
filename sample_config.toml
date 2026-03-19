@@ -8,8 +8,7 @@
 # Edit this file to tweak test settings.
 
 approval_policy = "never"
-sandbox_mode = "workspace-write"
-
+sandbox_mode = "danger-full-access"
 custom.user_shell.no_inject=true
 [memories]
 generate_memories = false

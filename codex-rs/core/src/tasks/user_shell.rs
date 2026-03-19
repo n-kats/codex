@@ -322,6 +322,10 @@ async fn persist_user_shell_output(
     exec_output: &ExecToolCallOutput,
     mode: UserShellCommandMode,
 ) {
+    if turn_context.config.user_shell_no_inject {
+        return;
+    }
+
     let output_item = user_shell_command_record_item(raw_command, exec_output, turn_context);
 
     if mode == UserShellCommandMode::StandaloneTurn {

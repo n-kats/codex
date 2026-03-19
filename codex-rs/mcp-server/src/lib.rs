@@ -5,7 +5,8 @@ use std::io::ErrorKind;
 use std::io::Result as IoResult;
 
 use codex_arg0::Arg0DispatchPaths;
-use codex_core::config::Config;
+use codex_core::config::ConfigBuilder;
+use codex_core::config_loader::LoaderOverrides;
 use codex_utils_cli::CliConfigOverrides;
 
 use rmcp::model::ClientNotification;
@@ -54,6 +55,7 @@ type IncomingMessage = JsonRpcMessage<ClientRequest, Value, ClientNotification>;
 pub async fn run_main(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
 ) -> IoResult<()> {
     // Parse CLI overrides once and derive the base Config eagerly so later
     // components do not need to work with raw TOML values.
@@ -63,7 +65,10 @@ pub async fn run_main(
             format!("error parsing -c overrides: {e}"),
         )
     })?;
-    let config = Config::load_with_cli_overrides(cli_kv_overrides)
+    let config = ConfigBuilder::default()
+        .cli_overrides(cli_kv_overrides)
+        .loader_overrides(loader_overrides)
+        .build()
         .await
         .map_err(|e| {
             std::io::Error::new(ErrorKind::InvalidData, format!("error loading config: {e}"))

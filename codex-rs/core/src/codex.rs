@@ -176,6 +176,9 @@ use crate::error::Result as CodexResult;
 use crate::exec::StreamOutput;
 use codex_config::CONFIG_TOML_FILE;
 
+#[cfg(test)]
+#[path = "codex/custom_tests.rs"]
+mod custom_tests;
 mod rollout_reconstruction;
 #[cfg(test)]
 mod rollout_reconstruction_tests;
@@ -1115,6 +1118,7 @@ impl SessionConfiguration {
 #[derive(Default, Clone)]
 pub(crate) struct SessionSettingsUpdate {
     pub(crate) cwd: Option<PathBuf>,
+    pub(crate) project_doc_paths: Option<Option<Vec<PathBuf>>>,
     pub(crate) approval_policy: Option<AskForApproval>,
     pub(crate) approvals_reviewer: Option<ApprovalsReviewer>,
     pub(crate) sandbox_policy: Option<SandboxPolicy>,
@@ -2219,6 +2223,7 @@ impl Session {
         &self,
         updates: SessionSettingsUpdate,
     ) -> ConstraintResult<()> {
+        let project_doc_paths = updates.project_doc_paths.clone();
         let mut state = self.state.lock().await;
 
         match state.session_configuration.apply(&updates) {
@@ -2236,6 +2241,31 @@ impl Session {
                     &codex_home,
                     &session_source,
                 );
+
+                if let Some(project_doc_paths) = project_doc_paths {
+                    let (mut config, cwd) = {
+                        let state = self.state.lock().await;
+                        (
+                            (*state.session_configuration.original_config_do_not_use).clone(),
+                            state.session_configuration.cwd.clone(),
+                        )
+                    };
+                    config.cwd = cwd;
+                    match project_doc_paths {
+                        Some(paths) => {
+                            config.project_doc_paths = paths;
+                        }
+                        None => {
+                            config.project_doc_paths.clear();
+                        }
+                    }
+
+                    let user_instructions = get_user_instructions(&config).await;
+                    let mut state = self.state.lock().await;
+                    state.session_configuration.original_config_do_not_use = Arc::new(config);
+                    state.session_configuration.user_instructions = user_instructions;
+                    state.set_reference_context_item(None);
+                }
 
                 Ok(())
             }
@@ -4163,6 +4193,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                 }
                 Op::OverrideTurnContext {
                     cwd,
+                    project_doc_paths,
                     approval_policy,
                     approvals_reviewer,
                     sandbox_policy,
@@ -4190,6 +4221,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
                         sub.id.clone(),
                         SessionSettingsUpdate {
                             cwd,
+                            project_doc_paths,
                             approval_policy,
                             approvals_reviewer,
                             sandbox_policy,
@@ -4451,8 +4483,77 @@ mod handlers {
     pub async fn override_turn_context(
         sess: &Session,
         sub_id: String,
-        updates: SessionSettingsUpdate,
+        mut updates: SessionSettingsUpdate,
     ) {
+        if let Some(project_doc_paths) = updates.project_doc_paths.clone() {
+            let cwd = match updates.cwd.clone() {
+                Some(cwd) => cwd,
+                None => {
+                    let state = sess.state.lock().await;
+                    state.session_configuration.cwd.clone()
+                }
+            };
+
+            if let Some(project_doc_paths) = project_doc_paths {
+                let mut resolved = Vec::with_capacity(project_doc_paths.len());
+                for path in project_doc_paths {
+                    let resolved_path = if path.is_absolute() {
+                        path
+                    } else {
+                        cwd.join(path)
+                    };
+                    match std::fs::symlink_metadata(&resolved_path) {
+                        Ok(md) => {
+                            let ft = md.file_type();
+                            if !(ft.is_file() || ft.is_symlink()) {
+                                sess.send_event_raw(Event {
+                                    id: sub_id.clone(),
+                                    msg: EventMsg::Error(ErrorEvent {
+                                        message: format!(
+                                            "invalid /custom-agents path (not a file): {}",
+                                            resolved_path.display()
+                                        ),
+                                        codex_error_info: Some(CodexErrorInfo::BadRequest),
+                                    }),
+                                })
+                                .await;
+                                return;
+                            }
+                        }
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                            sess.send_event_raw(Event {
+                                id: sub_id.clone(),
+                                msg: EventMsg::Error(ErrorEvent {
+                                    message: format!(
+                                        "invalid /custom-agents path: {}",
+                                        resolved_path.display()
+                                    ),
+                                    codex_error_info: Some(CodexErrorInfo::BadRequest),
+                                }),
+                            })
+                            .await;
+                            return;
+                        }
+                        Err(e) => {
+                            sess.send_event_raw(Event {
+                                id: sub_id.clone(),
+                                msg: EventMsg::Error(ErrorEvent {
+                                    message: format!(
+                                        "invalid /custom-agents path {}: {e}",
+                                        resolved_path.display()
+                                    ),
+                                    codex_error_info: Some(CodexErrorInfo::BadRequest),
+                                }),
+                            })
+                            .await;
+                            return;
+                        }
+                    }
+                    resolved.push(resolved_path);
+                }
+                updates.project_doc_paths = Some(Some(resolved));
+            }
+        }
         if let Err(err) = sess.update_settings(updates).await {
             sess.send_event_raw(Event {
                 id: sub_id,
@@ -4494,6 +4595,7 @@ mod handlers {
                     items,
                     SessionSettingsUpdate {
                         cwd: Some(cwd),
+                        project_doc_paths: None,
                         approval_policy: Some(approval_policy),
                         approvals_reviewer: None,
                         sandbox_policy: Some(sandbox_policy),
