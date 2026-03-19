@@ -1,6 +1,7 @@
 use clap::Args;
 use clap::CommandFactory;
 use clap::Parser;
+use clap::ValueHint;
 use clap_complete::Shell;
 use clap_complete::generate;
 use codex_arg0::Arg0DispatchPaths;
@@ -70,6 +71,41 @@ use codex_core::terminal::TerminalName;
 struct MultitoolCli {
     #[clap(flatten)]
     pub config_overrides: CliConfigOverrides,
+
+    /// Override Codex home directory (equivalent to `CODEX_HOME`).
+    ///
+    /// Note: this is applied very early (before the Tokio runtime is created) by
+    /// `codex-arg0`, and is accepted here so clap parsing does not reject it.
+    #[clap(
+        long = "codex-home",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath,
+        global = true
+    )]
+    pub codex_home: Option<PathBuf>,
+
+    /// Override the memories root directory (equivalent to `CODEX_MEMORIES_HOME`).
+    ///
+    /// Note: this is applied very early (before the Tokio runtime is created) by
+    /// `codex-arg0`, and is accepted here so clap parsing does not reject it.
+    #[clap(
+        long = "codex-memory",
+        value_name = "DIR",
+        value_hint = ValueHint::DirPath,
+        global = true
+    )]
+    pub codex_memory: Option<PathBuf>,
+
+    /// Control whether Codex reads shell startup files (equivalent to `CODEX_SHELL_STARTUP_FILES`).
+    ///
+    /// Values:
+    /// - `default`: allow normal startup file behavior
+    /// - `clean`: attempt to avoid user dotfiles where possible
+    ///
+    /// Note: this is applied very early (before the Tokio runtime is created) by
+    /// `codex-arg0`, and is accepted here so clap parsing does not reject it.
+    #[clap(long = "shell-startup-files", value_name = "MODE", global = true)]
+    pub shell_startup_files: Option<String>,
 
     /// Load the user config layer from an arbitrary `config.toml` file instead of
     /// `$CODEX_HOME/config.toml`.
@@ -579,6 +615,9 @@ fn main() -> anyhow::Result<()> {
 async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     let MultitoolCli {
         config_overrides: mut root_config_overrides,
+        codex_home: _,
+        codex_memory: _,
+        shell_startup_files: _,
         config_toml_file,
         no_config,
         feature_toggles,
@@ -1267,6 +1306,9 @@ mod tests {
         let MultitoolCli {
             interactive,
             config_overrides: root_overrides,
+            codex_home: _,
+            codex_memory: _,
+            shell_startup_files: _,
             config_toml_file: _,
             no_config: _,
             subcommand,
@@ -1299,6 +1341,9 @@ mod tests {
         let MultitoolCli {
             interactive,
             config_overrides: root_overrides,
+            codex_home: _,
+            codex_memory: _,
+            shell_startup_files: _,
             config_toml_file: _,
             no_config: _,
             subcommand,

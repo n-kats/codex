@@ -253,9 +253,9 @@ verify-codex-home-cli-flag:
 	$(call run_targets_continue_logged,verify_codex_home_cli_flag,fmt lint-arg0 test-arg0 lint-cli test-cli)
 
 verify-tui-enter-newline-ctrl-enter-send: cache-dir docker-build
-	$(call run_test_logged,verify_tui_enter_newline,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib enter_inserts_newline_instead_of_submitting)
-	$(call run_test_logged,verify_tui_ctrl_enter_send,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib ctrl_enter_submits_single_line_text)
-	$(call run_test_logged,verify_tui_slash_tab_ctrl_enter,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib slash_tab_then_ctrl_enter_dispatches_builtin_command)
+	$(call run_test_logged,verify_tui_enter_newline,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib enter_inserts_newline_without_submitting)
+	$(call run_test_logged,verify_tui_ctrl_enter_send,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib ctrl_enter_submits_message)
+	$(call run_test_logged,verify_tui_slash_tab_ctrl_enter,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib slash_tab_then_enter_dispatches_builtin_command)
 
 verify-additional-prompt-dirs-env: cache-dir docker-build
 	$(call run_test_logged,verify_additional_prompt_dirs_parse,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib custom__追加プロンプトディレクトリ__カンマ区切りと相対パスを解決できる)
@@ -271,7 +271,7 @@ verify-linux-default-shell: cache-dir docker-build
 	$(call run_test_logged,verify_linux_snapshot_file_lifecycle,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell_snapshot::tests::try_new_creates_and_deletes_snapshot_file)
 
 verify-command-exec-worker-user: cache-dir docker-build
-	$(call run_test_logged,verify_command_exec_worker_user,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib config::custom_exec_tests)
+	$(call run_test_logged,verify_command_exec_worker_user,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib custom__exec_worker_user__ -- --list | grep -q custom__exec_worker_user__ && cargo test -p codex-core --lib custom__exec_worker_user__)
 	$(call run_test_logged,verify_command_exec_worker_user_exec_command_sudo,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib prepare_pty_command_)
 
 # TUI helpers

@@ -1,7 +1,14 @@
 #![allow(non_snake_case)]
 use super::*;
+use clap::CommandFactory;
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
+
+fn temp_dir_path(suffix: &str) -> (PathBuf, String) {
+    let dir = std::env::temp_dir().join(suffix);
+    let arg = dir.to_string_lossy().to_string();
+    (dir, arg)
+}
 
 #[test]
 fn custom__agents_md__複数指定を順序どおり取得できる() {
@@ -90,4 +97,96 @@ fn custom__config_toml_read_control__build_loader_overrides_config_sets_user_con
     assert!(!overrides.disable_user_config);
     assert!(!overrides.disable_project_config);
     assert_eq!(overrides.user_config_path, Some(PathBuf::from("alt.toml")));
+}
+
+#[test]
+fn custom__codex_home_cli_flag__フラグが解釈できる() {
+    let (dir, arg) = temp_dir_path("codex-home");
+    let cli = MultitoolCli::try_parse_from(["codex", "--codex-home", arg.as_str()])
+        .expect("parse should succeed");
+    assert_eq!(cli.codex_home, Some(dir));
+}
+
+#[test]
+fn custom__codex_home_cli_flag__サブコマンド後でも解釈できる() {
+    let (dir, arg) = temp_dir_path("codex-home");
+    let cli = MultitoolCli::try_parse_from([
+        "codex",
+        "exec",
+        "--codex-home",
+        arg.as_str(),
+        "--json",
+        "hello",
+    ])
+    .expect("parse should succeed");
+    assert_eq!(cli.codex_home, Some(dir));
+}
+
+#[test]
+fn custom__codex_home_cli_flag__イコール形式でも解釈できる() {
+    let (dir, arg) = temp_dir_path("codex-home");
+    let arg = format!("--codex-home={arg}");
+    let cli = MultitoolCli::try_parse_from(["codex", arg.as_str()]).expect("parse should succeed");
+    assert_eq!(cli.codex_home, Some(dir));
+}
+
+#[test]
+fn custom__codex_memory_cli_flag__サブコマンド後でも解釈できる() {
+    let (dir, arg) = temp_dir_path("codex-memories");
+    let cli = MultitoolCli::try_parse_from([
+        "codex",
+        "exec",
+        "--codex-memory",
+        arg.as_str(),
+        "--json",
+        "hello",
+    ])
+    .expect("parse should succeed");
+    assert_eq!(cli.codex_memory, Some(dir));
+}
+
+#[test]
+fn custom__codex_memory_cli_flag__イコール形式でも解釈できる() {
+    let (dir, arg) = temp_dir_path("codex-memories");
+    let arg = format!("--codex-memory={arg}");
+    let cli = MultitoolCli::try_parse_from(["codex", arg.as_str()]).expect("parse should succeed");
+    assert_eq!(cli.codex_memory, Some(dir));
+}
+
+#[test]
+fn custom__shell_startup_files_cli_flag__サブコマンド後でも解釈できる() {
+    let cli = MultitoolCli::try_parse_from([
+        "codex",
+        "exec",
+        "--shell-startup-files",
+        "clean",
+        "--json",
+        "hello",
+    ])
+    .expect("parse should succeed");
+    assert_eq!(cli.shell_startup_files.as_deref(), Some("clean"));
+}
+
+#[test]
+fn custom__shell_startup_files_cli_flag__イコール形式でも解釈できる() {
+    let cli = MultitoolCli::try_parse_from(["codex", "--shell-startup-files=clean"])
+        .expect("parse should succeed");
+    assert_eq!(cli.shell_startup_files.as_deref(), Some("clean"));
+}
+
+#[test]
+fn custom__custom_flags__helpに表示される() {
+    let help = MultitoolCli::command().render_long_help().to_string();
+    assert!(
+        help.contains("--codex-home"),
+        "expected help to contain --codex-home, got:\n{help}"
+    );
+    assert!(
+        help.contains("--codex-memory"),
+        "expected help to contain --codex-memory, got:\n{help}"
+    );
+    assert!(
+        help.contains("--shell-startup-files"),
+        "expected help to contain --shell-startup-files, got:\n{help}"
+    );
 }
