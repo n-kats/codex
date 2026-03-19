@@ -482,15 +482,16 @@ fn append_unreadable_root_args(
             .map(PathBuf::as_path)
             .filter(|path| *path != unreadable_root && path.starts_with(unreadable_root))
             .collect();
+        let has_writable_descendants = !writable_descendants.is_empty();
         args.push("--perms".to_string());
         // Execute-only perms let the process traverse into explicitly
         // re-opened writable descendants while still hiding the denied
         // directory contents. Plain denied directories with no writable child
         // mounts stay at `000`.
-        args.push(if writable_descendants.is_empty() {
-            "000".to_string()
-        } else {
+        args.push(if has_writable_descendants {
             "111".to_string()
+        } else {
+            "000".to_string()
         });
         args.push("--tmpfs".to_string());
         args.push(path_to_string(unreadable_root));
@@ -1030,7 +1031,7 @@ mod tests {
             blocked_none_index < allowed_dir_index
                 && allowed_dir_index < blocked_remount_ro_index
                 && blocked_remount_ro_index < allowed_bind_index,
-            "expected writable child target recreation before remounting and rebinding under unreadable parent: {:#?}",
+            "expected writable child target recreation before remounting unreadable parent read-only, then rebinding writable child: {:#?}",
             args.args
         );
     }

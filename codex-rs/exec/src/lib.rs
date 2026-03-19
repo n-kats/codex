@@ -51,7 +51,7 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_overrides;
+use codex_core::config::load_config_as_toml_with_cli_overrides_and_loader_overrides;
 use codex_core::config::resolve_oss_provider;
 use codex_core::config_loader::ConfigLoadError;
 use codex_core::config_loader::LoaderOverrides;
@@ -159,6 +159,14 @@ fn exec_root_span() -> tracing::Span {
 }
 
 pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
+    run_main_with_agents_md(cli, arg0_paths, Vec::new()).await
+}
+
+pub async fn run_main_with_agents_md(
+    cli: Cli,
+    arg0_paths: Arg0DispatchPaths,
+    agents_md: Vec<PathBuf>,
+) -> anyhow::Result<()> {
     if let Err(err) = set_default_originator("codex_exec".to_string()) {
         tracing::warn!(?err, "Failed to set codex exec originator override {err:?}");
     }
@@ -184,6 +192,9 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         output_schema: output_schema_path,
         config_overrides,
         progress_cursor,
+        config_toml_file,
+        no_config,
+        ..
     } = cli;
 
     let (_stdout_with_ansi, stderr_with_ansi) = match color {
@@ -260,11 +271,20 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         }
     };
 
+    let mut preflight_loader_overrides = LoaderOverrides::default();
+    if no_config {
+        preflight_loader_overrides.disable_user_config = true;
+        preflight_loader_overrides.disable_project_config = true;
+    } else if let Some(path) = config_toml_file.clone() {
+        preflight_loader_overrides.user_config_path = Some(path);
+    }
+
     #[allow(clippy::print_stderr)]
-    let config_toml = match load_config_as_toml_with_cli_overrides(
+    let config_toml = match load_config_as_toml_with_cli_overrides_and_loader_overrides(
         &codex_home,
         &config_cwd,
         cli_kv_overrides.clone(),
+        preflight_loader_overrides,
     )
     .await
     {
@@ -299,7 +319,12 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     let cloud_requirements =
         cloud_requirements_loader(cloud_auth_manager, chatgpt_base_url, codex_home.clone());
     let run_cli_overrides = cli_kv_overrides.clone();
-    let run_loader_overrides = LoaderOverrides::default();
+    let run_loader_overrides = LoaderOverrides {
+        user_config_path: if no_config { None } else { config_toml_file },
+        disable_user_config: no_config,
+        disable_project_config: no_config,
+        ..LoaderOverrides::default()
+    };
     let run_cloud_requirements = cloud_requirements.clone();
 
     let model_provider = if oss {
@@ -358,6 +383,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         tools_web_search_request: None,
         ephemeral: ephemeral.then_some(true),
         additional_writable_roots: add_dir,
+        project_doc_paths: agents_md,
     };
 
     let config = ConfigBuilder::default()

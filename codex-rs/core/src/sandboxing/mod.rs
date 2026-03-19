@@ -23,6 +23,7 @@ use crate::seatbelt::create_seatbelt_command_args_for_policies_with_extensions;
 #[cfg(target_os = "macos")]
 use crate::spawn::CODEX_SANDBOX_ENV_VAR;
 use crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
+use crate::spawn::RunAsUser;
 use crate::tools::sandboxing::SandboxablePreference;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -55,6 +56,7 @@ pub struct CommandSpec {
     pub cwd: PathBuf,
     pub env: HashMap<String, String>,
     pub expiration: ExecExpiration,
+    pub run_as: Option<RunAsUser>,
     pub sandbox_permissions: SandboxPermissions,
     pub additional_permissions: Option<PermissionProfile>,
     pub justification: Option<String>,
@@ -70,6 +72,7 @@ pub struct ExecRequest {
     pub sandbox: SandboxType,
     pub windows_sandbox_level: WindowsSandboxLevel,
     pub windows_sandbox_private_desktop: bool,
+    pub run_as: Option<RunAsUser>,
     pub sandbox_permissions: SandboxPermissions,
     pub sandbox_policy: SandboxPolicy,
     pub file_system_sandbox_policy: FileSystemSandboxPolicy,
@@ -710,6 +713,7 @@ impl SandboxManager {
             sandbox,
             windows_sandbox_level,
             windows_sandbox_private_desktop,
+            run_as: spec.run_as,
             sandbox_permissions: spec.sandbox_permissions,
             sandbox_policy: effective_policy,
             file_system_sandbox_policy: effective_file_system_policy,

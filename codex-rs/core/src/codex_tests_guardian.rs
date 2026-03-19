@@ -134,6 +134,7 @@ async fn guardian_allows_shell_additional_permissions_requests_past_policy_valid
             .windows_sandbox_private_desktop,
         justification: Some("test".to_string()),
         arg0: None,
+        run_as: None,
     };
 
     let handler = ShellHandler;

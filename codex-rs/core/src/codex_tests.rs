@@ -2856,6 +2856,7 @@ fn op_kind_distinguishes_turn_ops() {
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         }
         .kind(),
         "override_turn_context"
@@ -4772,6 +4773,7 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
             .windows_sandbox_private_desktop,
         justification: Some("test".to_string()),
         arg0: None,
+        run_as: None,
     };
 
     let params2 = ExecParams {
@@ -4788,6 +4790,7 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
             .windows_sandbox_private_desktop,
         justification: params.justification.clone(),
         arg0: None,
+        run_as: None,
     };
 
     let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));

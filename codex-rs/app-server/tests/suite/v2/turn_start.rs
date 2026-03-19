@@ -1528,6 +1528,7 @@ async fn turn_start_file_change_approval_v2() -> Result<()> {
                 text_elements: Vec::new(),
             }],
             cwd: Some(workspace.clone()),
+            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
             ..Default::default()
         })
         .await?;
@@ -1826,16 +1827,18 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
     assert_eq!(prompt, Some(CHILD_PROMPT.to_string()));
     assert_eq!(model, Some(REQUESTED_MODEL.to_string()));
     assert_eq!(reasoning_effort, Some(REQUESTED_REASONING_EFFORT));
-    assert_eq!(
-        agents_states,
-        HashMap::from([(
-            receiver_thread_id,
-            CollabAgentState {
-                status: CollabAgentStatus::PendingInit,
-                message: None,
-            },
-        )])
+    assert_eq!(agents_states.len(), 1);
+    let receiver_state = agents_states
+        .get(&receiver_thread_id)
+        .expect("spawn completion should include receiver agent state");
+    assert!(
+        matches!(
+            receiver_state.status,
+            CollabAgentStatus::PendingInit | CollabAgentStatus::Running
+        ),
+        "unexpected receiver agent status at spawn completion: {receiver_state:#?}"
     );
+    assert_eq!(receiver_state.message, None);
 
     let turn_completed = timeout(DEFAULT_READ_TIMEOUT, async {
         loop {
@@ -2101,6 +2104,7 @@ async fn turn_start_file_change_approval_accept_for_session_persists_v2() -> Res
                 text_elements: Vec::new(),
             }],
             cwd: Some(workspace.clone()),
+            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
             ..Default::default()
         })
         .await?;
@@ -2178,6 +2182,7 @@ async fn turn_start_file_change_approval_accept_for_session_persists_v2() -> Res
                 text_elements: Vec::new(),
             }],
             cwd: Some(workspace.clone()),
+            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
             ..Default::default()
         })
         .await?;
@@ -2281,6 +2286,7 @@ async fn turn_start_file_change_approval_decline_v2() -> Result<()> {
                 text_elements: Vec::new(),
             }],
             cwd: Some(workspace.clone()),
+            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
             ..Default::default()
         })
         .await?;

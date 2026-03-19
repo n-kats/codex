@@ -13,6 +13,7 @@ use crate::sandboxing::ExecRequest;
 use crate::sandboxing::SandboxPermissions;
 use crate::shell::ShellType;
 use crate::skills::SkillMetadata;
+use crate::spawn::RunAsUser;
 use crate::tools::runtimes::ExecveSessionApproval;
 use crate::tools::runtimes::build_command_spec;
 use crate::tools::sandboxing::SandboxAttempt;
@@ -111,6 +112,7 @@ pub(super) async fn try_run_zsh_fork(
         &req.cwd,
         &req.env,
         req.timeout_ms.into(),
+        ctx.turn.config.exec_run_as.clone(),
         req.sandbox_permissions,
         req.additional_permissions.clone(),
         req.justification.clone(),
@@ -124,6 +126,7 @@ pub(super) async fn try_run_zsh_fork(
         env: sandbox_env,
         network: sandbox_network,
         expiration: _sandbox_expiration,
+        run_as,
         sandbox,
         windows_sandbox_level,
         windows_sandbox_private_desktop: _windows_sandbox_private_desktop,
@@ -151,6 +154,7 @@ pub(super) async fn try_run_zsh_fork(
         sandbox,
         env: sandbox_env,
         network: sandbox_network,
+        run_as,
         windows_sandbox_level,
         sandbox_permissions,
         justification,
@@ -257,6 +261,7 @@ pub(crate) async fn prepare_unified_exec_zsh_fork(
         sandbox: exec_request.sandbox,
         env: exec_request.env.clone(),
         network: exec_request.network.clone(),
+        run_as: exec_request.run_as.clone(),
         windows_sandbox_level: exec_request.windows_sandbox_level,
         sandbox_permissions: exec_request.sandbox_permissions,
         justification: exec_request.justification.clone(),
@@ -854,6 +859,7 @@ struct CoreShellCommandExecutor {
     sandbox: SandboxType,
     env: HashMap<String, String>,
     network: Option<codex_network_proxy::NetworkProxy>,
+    run_as: Option<RunAsUser>,
     windows_sandbox_level: WindowsSandboxLevel,
     sandbox_permissions: SandboxPermissions,
     justification: Option<String>,
@@ -903,6 +909,7 @@ impl ShellCommandExecutor for CoreShellCommandExecutor {
                 env: exec_env,
                 network: self.network.clone(),
                 expiration: ExecExpiration::Cancellation(cancel_rx),
+                run_as: self.run_as.clone(),
                 sandbox: self.sandbox,
                 windows_sandbox_level: self.windows_sandbox_level,
                 windows_sandbox_private_desktop: false,
@@ -1042,6 +1049,7 @@ impl CoreShellCommandExecutor {
                     cwd: workdir.to_path_buf(),
                     env,
                     expiration: ExecExpiration::DefaultTimeout,
+                    run_as: self.run_as.clone(),
                     sandbox_permissions: if additional_permissions.is_some() {
                         SandboxPermissions::WithAdditionalPermissions
                     } else {

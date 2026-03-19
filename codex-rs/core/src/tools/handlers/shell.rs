@@ -80,6 +80,7 @@ impl ShellHandler {
                 .windows_sandbox_private_desktop,
             justification: params.justification.clone(),
             arg0: None,
+            run_as: turn_context.config.exec_run_as.clone(),
         }
     }
 }
@@ -134,6 +135,7 @@ impl ShellCommandHandler {
                 .windows_sandbox_private_desktop,
             justification: params.justification.clone(),
             arg0: None,
+            run_as: turn_context.config.exec_run_as.clone(),
         })
     }
 }

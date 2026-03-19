@@ -46,6 +46,43 @@ use wiremock::ResponseTemplate;
 #[cfg(not(debug_assertions))]
 use wiremock::matchers::body_string_contains;
 
+fn has_node_runtime() -> bool {
+    fn parse_version(input: &str) -> Option<(u64, u64, u64)> {
+        let version = input.trim().strip_prefix('v').unwrap_or(input.trim());
+        let mut parts = version.split('.');
+        let major = parts.next()?.parse().ok()?;
+        let minor = parts.next()?.parse().ok()?;
+        let patch = parts.next()?.parse().ok()?;
+        Some((major, minor, patch))
+    }
+
+    fn is_at_least(found: (u64, u64, u64), required: (u64, u64, u64)) -> bool {
+        found.0 > required.0
+            || (found.0 == required.0
+                && (found.1 > required.1 || (found.1 == required.1 && found.2 >= required.2)))
+    }
+
+    let Some(required) = parse_version(include_str!("../../../node-version.txt")) else {
+        return false;
+    };
+    let node_path = std::env::var_os("CODEX_JS_REPL_NODE_PATH")
+        .filter(|path| std::path::Path::new(path).exists())
+        .unwrap_or_else(|| "node".into());
+    let Ok(output) = std::process::Command::new(node_path)
+        .arg("--version")
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let Some(found) = parse_version(&String::from_utf8_lossy(&output.stdout)) else {
+        return false;
+    };
+    is_at_least(found, required)
+}
+
 fn image_messages(body: &Value) -> Vec<&Value> {
     body.get("input")
         .and_then(Value::as_array)
@@ -795,6 +832,9 @@ async fn view_image_tool_does_not_force_original_resolution_with_capability_feat
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn js_repl_emit_image_attaches_local_image() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
+    if !has_node_runtime() {
+        return Ok(());
+    }
 
     let server = start_mock_server().await;
     let mut builder = test_codex().with_config(|config| {
@@ -913,6 +953,9 @@ await codex.emitImage(out);
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn js_repl_view_image_requires_explicit_emit() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
+    if !has_node_runtime() {
+        return Ok(());
+    }
 
     let server = start_mock_server().await;
     #[allow(clippy::expect_used)]

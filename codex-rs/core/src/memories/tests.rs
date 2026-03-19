@@ -421,7 +421,6 @@ mod phase2 {
     use crate::codex::make_session_and_context;
     use crate::config::Config;
     use crate::config::test_config;
-    use crate::memories::memory_root;
     use crate::memories::phase2;
     use crate::memories::raw_memories_file;
     use crate::memories::rollout_summaries_dir;
@@ -468,6 +467,7 @@ mod phase2 {
             let codex_home = tempfile::tempdir().expect("create temp codex home");
             let mut config = test_config();
             config.codex_home = codex_home.path().to_path_buf();
+            config.memories_root_dir = config.codex_home.join("memories");
             config.cwd = config.codex_home.clone();
             let config = Arc::new(config);
 
@@ -670,14 +670,14 @@ mod phase2 {
             .expect("get consolidation thread");
         let config_snapshot = subagent.config_snapshot().await;
         pretty_assertions::assert_eq!(config_snapshot.approval_policy, AskForApproval::Never);
-        pretty_assertions::assert_eq!(config_snapshot.cwd, memory_root(&harness.config.codex_home));
+        pretty_assertions::assert_eq!(config_snapshot.cwd, harness.config.memories_root_dir);
         match config_snapshot.sandbox_policy {
             SandboxPolicy::WorkspaceWrite { writable_roots, .. } => {
                 assert!(
                     writable_roots
                         .iter()
-                        .any(|root| root.as_path() == harness.config.codex_home.as_path()),
-                    "consolidation subagent should have codex_home as writable root"
+                        .any(|root| root.as_path() == harness.config.memories_root_dir.as_path()),
+                    "consolidation subagent should have memories_root_dir as writable root"
                 );
             }
             other => panic!("unexpected sandbox policy: {other:?}"),
@@ -689,7 +689,7 @@ mod phase2 {
     #[tokio::test]
     async fn dispatch_with_empty_stage1_outputs_rebuilds_local_artifacts() {
         let harness = DispatchHarness::new().await;
-        let root = memory_root(&harness.config.codex_home);
+        let root = harness.config.memories_root_dir.clone();
         let summaries_dir = rollout_summaries_dir(&root);
         tokio::fs::create_dir_all(&summaries_dir)
             .await
@@ -807,7 +807,7 @@ mod phase2 {
     async fn dispatch_marks_job_for_retry_when_syncing_artifacts_fails() {
         let harness = DispatchHarness::new().await;
         harness.seed_stage1_output(100).await;
-        let root = memory_root(&harness.config.codex_home);
+        let root = harness.config.memories_root_dir.clone();
         tokio::fs::write(&root, "not a directory")
             .await
             .expect("create file at memory root");
@@ -829,7 +829,7 @@ mod phase2 {
     async fn dispatch_marks_job_for_retry_when_rebuilding_raw_memories_fails() {
         let harness = DispatchHarness::new().await;
         harness.seed_stage1_output(100).await;
-        let root = memory_root(&harness.config.codex_home);
+        let root = harness.config.memories_root_dir.clone();
         tokio::fs::create_dir_all(raw_memories_file(&root))
             .await
             .expect("create raw_memories.md as a directory");
@@ -852,6 +852,7 @@ mod phase2 {
         let codex_home = tempfile::tempdir().expect("create temp codex home");
         let mut config = test_config();
         config.codex_home = codex_home.path().to_path_buf();
+        config.memories_root_dir = config.codex_home.join("memories");
         config.cwd = config.codex_home.clone();
         let config = Arc::new(config);
 

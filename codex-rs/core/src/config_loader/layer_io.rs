@@ -37,7 +37,7 @@ pub(super) struct LoadedConfigLayers {
 
 pub(super) async fn load_config_layers_internal(
     codex_home: &Path,
-    overrides: LoaderOverrides,
+    overrides: &LoaderOverrides,
 ) -> io::Result<LoadedConfigLayers> {
     #[cfg(target_os = "macos")]
     let LoaderOverrides {
@@ -53,7 +53,9 @@ pub(super) async fn load_config_layers_internal(
     } = overrides;
 
     let managed_config_path = AbsolutePathBuf::from_absolute_path(
-        managed_config_path.unwrap_or_else(|| managed_config_default_path(codex_home)),
+        managed_config_path
+            .clone()
+            .unwrap_or_else(|| managed_config_default_path(codex_home)),
     )?;
 
     let managed_config =

@@ -3,7 +3,6 @@ use crate::agent::status::is_final as is_final_agent_status;
 use crate::codex::Session;
 use crate::config::Config;
 use crate::features::Feature;
-use crate::memories::memory_root;
 use crate::memories::metrics;
 use crate::memories::phase_two;
 use crate::memories::prompts::build_consolidation_prompt;
@@ -51,7 +50,7 @@ pub(super) async fn run(session: &Arc<Session>, config: Arc<Config>) {
         // This should not happen.
         return;
     };
-    let root = memory_root(&config.codex_home);
+    let root = config.memories_root_dir.clone();
     let max_raw_memories = config.memories.max_raw_memories_for_consolidation;
     let max_unused_days = config.memories.max_unused_days;
 
@@ -263,7 +262,7 @@ mod agent {
     use super::*;
 
     pub(super) fn get_config(config: Arc<Config>) -> Option<Config> {
-        let root = memory_root(&config.codex_home);
+        let root = config.memories_root_dir.clone();
         let mut agent_config = config.as_ref().clone();
 
         agent_config.cwd = root;
@@ -276,14 +275,14 @@ mod agent {
 
         // Sandbox policy
         let mut writable_roots = Vec::new();
-        match AbsolutePathBuf::from_absolute_path(agent_config.codex_home.clone()) {
-            Ok(codex_home) => writable_roots.push(codex_home),
+        match AbsolutePathBuf::from_absolute_path(agent_config.memories_root_dir.clone()) {
+            Ok(memories_root_dir) => writable_roots.push(memories_root_dir),
             Err(err) => warn!(
-                "memory phase-2 consolidation could not add codex_home writable root {}: {err}",
-                agent_config.codex_home.display()
+                "memory phase-2 consolidation could not add memories_root_dir writable root {}: {err}",
+                agent_config.memories_root_dir.display()
             ),
         }
-        // The consolidation agent only needs local codex_home write access and no network.
+        // The consolidation agent only needs local memories_root_dir write access and no network.
         let consolidation_sandbox_policy = SandboxPolicy::WorkspaceWrite {
             writable_roots,
             read_only_access: Default::default(),
@@ -313,7 +312,7 @@ mod agent {
         config: Arc<Config>,
         selection: &codex_state::Phase2InputSelection,
     ) -> Vec<UserInput> {
-        let root = memory_root(&config.codex_home);
+        let root = config.memories_root_dir.clone();
         let prompt = build_consolidation_prompt(&root, selection);
         vec![UserInput::Text {
             text: prompt,

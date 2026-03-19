@@ -1,14 +1,15 @@
 ---
 source: tui/src/onboarding/trust_directory.rs
-assertion_line: 218
+assertion_line: 257
 expression: terminal.backend()
 ---
-> You are in /workspace/project
+> You are running Codex in /workspace/project
 
-  Do you trust the contents of this directory? Working with untrusted
-  contents comes with higher risk of prompt injection.
+  Since this folder is version controlled, you may wish to allow Codex
+  to work in this folder without asking for approval.
 
-› 1. Yes, continue                                                    
-  2. No, quit
+› 1. Yes, allow Codex to work in this folder without asking for       
+     approval                                                         
+  2. No, ask me to approve edits and commands
 
   Press enter to continue

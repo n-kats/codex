@@ -61,6 +61,10 @@ pub(crate) async fn init(config: &Config) -> Option<StateDbHandle> {
     Some(runtime)
 }
 
+pub async fn init_if_enabled(config: &Config, _feature_flag: Option<()>) -> Option<StateDbHandle> {
+    init(config).await
+}
+
 /// Get the DB if the feature is enabled and the DB exists.
 pub async fn get_state_db(config: &Config) -> Option<StateDbHandle> {
     let state_path = codex_state::state_db_path(config.sqlite_home.as_path());

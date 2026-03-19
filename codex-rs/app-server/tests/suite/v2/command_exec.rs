@@ -16,6 +16,7 @@ use codex_app_server_protocol::CommandExecWriteParams;
 use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::RequestId;
+use codex_app_server_protocol::SandboxPolicy;
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -56,7 +57,7 @@ async fn command_exec_without_streams_can_be_terminated() -> Result<()> {
             cwd: None,
             env: None,
             size: None,
-            sandbox_policy: None,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
         })
         .await?;
     let terminate_request_id = mcp
@@ -108,7 +109,7 @@ async fn command_exec_without_process_id_keeps_buffered_compatibility() -> Resul
             cwd: None,
             env: None,
             size: None,
-            sandbox_policy: None,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
         })
         .await?;
 
@@ -166,7 +167,7 @@ async fn command_exec_env_overrides_merge_with_server_environment_and_support_un
                 ("RUST_LOG".to_string(), None),
             ])),
             size: None,
-            sandbox_policy: None,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
         })
         .await?;
 
@@ -208,7 +209,7 @@ async fn command_exec_rejects_disable_timeout_with_timeout_ms() -> Result<()> {
             cwd: None,
             env: None,
             size: None,
-            sandbox_policy: None,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
         })
         .await?;
 
@@ -245,7 +246,7 @@ async fn command_exec_rejects_disable_output_cap_with_output_bytes_cap() -> Resu
             cwd: None,
             env: None,
             size: None,
-            sandbox_policy: None,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
         })
         .await?;
 
@@ -282,7 +283,7 @@ async fn command_exec_rejects_negative_timeout_ms() -> Result<()> {
             cwd: None,
             env: None,
             size: None,
-            sandbox_policy: None,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
         })
         .await?;
 
@@ -319,7 +320,7 @@ async fn command_exec_without_process_id_rejects_streaming() -> Result<()> {
             cwd: None,
             env: None,
             size: None,
-            sandbox_policy: None,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
         })
         .await?;
 
@@ -360,7 +361,7 @@ async fn command_exec_non_streaming_respects_output_cap() -> Result<()> {
             cwd: None,
             env: None,
             size: None,
-            sandbox_policy: None,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
         })
         .await?;
 
@@ -407,11 +408,11 @@ async fn command_exec_streaming_does_not_buffer_output() -> Result<()> {
             cwd: None,
             env: None,
             size: None,
-            sandbox_policy: None,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
         })
         .await?;
 
-    let delta = read_command_exec_delta(&mut mcp).await?;
+    let delta = timeout(DEFAULT_READ_TIMEOUT, read_command_exec_delta(&mut mcp)).await??;
     assert_eq!(delta.process_id, process_id.as_str());
     assert_eq!(delta.stream, CommandExecOutputStream::Stdout);
     assert_eq!(STANDARD.decode(&delta.delta_base64)?, b"abcde");
@@ -421,14 +422,18 @@ async fn command_exec_streaming_does_not_buffer_output() -> Result<()> {
             process_id: process_id.clone(),
         })
         .await?;
-    let terminate_response = mcp
-        .read_stream_until_response_message(RequestId::Integer(terminate_request_id))
-        .await?;
+    let terminate_response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(terminate_request_id)),
+    )
+    .await??;
     assert_eq!(terminate_response.result, serde_json::json!({}));
 
-    let response = mcp
-        .read_stream_until_response_message(RequestId::Integer(command_request_id))
-        .await?;
+    let response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(command_request_id)),
+    )
+    .await??;
     let response: CommandExecResponse = to_response(response)?;
     assert_ne!(
         response.exit_code, 0,
@@ -467,12 +472,12 @@ async fn command_exec_pipe_streams_output_and_accepts_write() -> Result<()> {
             cwd: None,
             env: None,
             size: None,
-            sandbox_policy: None,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
         })
         .await?;
 
-    let first_stdout = read_command_exec_delta(&mut mcp).await?;
-    let first_stderr = read_command_exec_delta(&mut mcp).await?;
+    let first_stdout = timeout(DEFAULT_READ_TIMEOUT, read_command_exec_delta(&mut mcp)).await??;
+    let first_stderr = timeout(DEFAULT_READ_TIMEOUT, read_command_exec_delta(&mut mcp)).await??;
     let seen = [first_stdout, first_stderr];
     assert!(
         seen.iter()
@@ -494,13 +499,15 @@ async fn command_exec_pipe_streams_output_and_accepts_write() -> Result<()> {
             close_stdin: true,
         })
         .await?;
-    let write_response = mcp
-        .read_stream_until_response_message(RequestId::Integer(write_request_id))
-        .await?;
+    let write_response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(write_request_id)),
+    )
+    .await??;
     assert_eq!(write_response.result, serde_json::json!({}));
 
-    let next_delta = read_command_exec_delta(&mut mcp).await?;
-    let final_delta = read_command_exec_delta(&mut mcp).await?;
+    let next_delta = timeout(DEFAULT_READ_TIMEOUT, read_command_exec_delta(&mut mcp)).await??;
+    let final_delta = timeout(DEFAULT_READ_TIMEOUT, read_command_exec_delta(&mut mcp)).await??;
     let seen = [next_delta, final_delta];
     assert!(
         seen.iter()
@@ -515,9 +522,11 @@ async fn command_exec_pipe_streams_output_and_accepts_write() -> Result<()> {
             && delta.delta_base64 == STANDARD.encode("err:hello\n")
     }));
 
-    let response = mcp
-        .read_stream_until_response_message(RequestId::Integer(command_request_id))
-        .await?;
+    let response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(command_request_id)),
+    )
+    .await??;
     let response: CommandExecResponse = to_response(response)?;
     assert_eq!(
         response,
@@ -558,7 +567,7 @@ async fn command_exec_tty_implies_streaming_and_reports_pty_output() -> Result<(
             cwd: None,
             env: None,
             size: None,
-            sandbox_policy: None,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
         })
         .await?;
 
@@ -639,7 +648,7 @@ async fn command_exec_tty_supports_initial_size_and_resize() -> Result<()> {
                 rows: 31,
                 cols: 101,
             }),
-            sandbox_policy: None,
+            sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
         })
         .await?;
 
@@ -739,6 +748,7 @@ async fn command_exec_process_ids_are_connection_scoped_and_disconnect_terminate
                 marker,
             ],
             "processId": "shared-process",
+            "sandboxPolicy": { "type": "dangerFullAccess" },
             "streamStdoutStderr": true,
         })),
     )

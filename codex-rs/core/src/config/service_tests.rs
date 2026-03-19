@@ -183,6 +183,7 @@ async fn read_includes_origins_and_layers() {
             #[cfg(target_os = "macos")]
             managed_preferences_base64: None,
             macos_managed_config_requirements_base64: None,
+            ..Default::default()
         },
         CloudRequirementsLoader::default(),
     );
@@ -258,6 +259,7 @@ async fn write_value_reports_override() {
             #[cfg(target_os = "macos")]
             managed_preferences_base64: None,
             macos_managed_config_requirements_base64: None,
+            ..Default::default()
         },
         CloudRequirementsLoader::default(),
     );
@@ -362,6 +364,7 @@ async fn invalid_user_value_rejected_even_if_overridden_by_managed() {
             #[cfg(target_os = "macos")]
             managed_preferences_base64: None,
             macos_managed_config_requirements_base64: None,
+            ..Default::default()
         },
         CloudRequirementsLoader::default(),
     );
@@ -427,6 +430,7 @@ async fn write_value_rejects_feature_requirement_conflict() {
             #[cfg(target_os = "macos")]
             managed_preferences_base64: None,
             macos_managed_config_requirements_base64: None,
+            ..Default::default()
         },
         CloudRequirementsLoader::new(async {
             Ok(Some(ConfigRequirementsToml {
@@ -478,6 +482,7 @@ async fn write_value_rejects_profile_feature_requirement_conflict() {
             #[cfg(target_os = "macos")]
             managed_preferences_base64: None,
             macos_managed_config_requirements_base64: None,
+            ..Default::default()
         },
         CloudRequirementsLoader::new(async {
             Ok(Some(ConfigRequirementsToml {
@@ -540,6 +545,7 @@ async fn read_reports_managed_overrides_user_and_session_flags() {
             #[cfg(target_os = "macos")]
             managed_preferences_base64: None,
             macos_managed_config_requirements_base64: None,
+            ..Default::default()
         },
         CloudRequirementsLoader::default(),
     );
@@ -598,6 +604,7 @@ async fn write_value_reports_managed_override() {
             #[cfg(target_os = "macos")]
             managed_preferences_base64: None,
             macos_managed_config_requirements_base64: None,
+            ..Default::default()
         },
         CloudRequirementsLoader::default(),
     );

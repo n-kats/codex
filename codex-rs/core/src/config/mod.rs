@@ -19,6 +19,7 @@ use crate::config::types::OtelExporterKind;
 use crate::config::types::PluginConfig;
 use crate::config::types::SandboxWorkspaceWrite;
 use crate::config::types::ShellEnvironmentPolicy;
+use crate::config::types::ShellEnvironmentPolicyInherit;
 use crate::config::types::ShellEnvironmentPolicyToml;
 use crate::config::types::SkillsConfig;
 use crate::config::types::ToolSuggestConfig;
@@ -58,6 +59,7 @@ use crate::project_doc::LOCAL_PROJECT_DOC_FILENAME;
 use crate::protocol::AskForApproval;
 use crate::protocol::ReadOnlyAccess;
 use crate::protocol::SandboxPolicy;
+use crate::spawn::RunAsUser;
 use crate::unified_exec::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
@@ -105,6 +107,7 @@ use toml_edit::DocumentMut;
 use toml_edit::value;
 
 pub(crate) mod agent_roles;
+pub mod custom;
 pub mod edit;
 mod managed_features;
 mod network_proxy_spec;
@@ -132,6 +135,7 @@ pub use service::ConfigServiceError;
 pub use types::ApprovalsReviewer;
 
 pub use codex_git::GhostSnapshotConfig;
+use custom::CustomConfigToml;
 
 /// Maximum number of bytes of the documentation that will be embedded. Larger
 /// files are *silently truncated* to this size so we do not take up too much of
@@ -140,6 +144,7 @@ pub(crate) const PROJECT_DOC_MAX_BYTES: usize = 32 * 1024; // 32 KiB
 pub(crate) const DEFAULT_AGENT_MAX_THREADS: Option<usize> = Some(6);
 pub(crate) const DEFAULT_AGENT_MAX_DEPTH: i32 = 1;
 pub(crate) const DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS: Option<u64> = None;
+pub(crate) const USER_SHELL_NO_INJECT_WARNING: &str = "custom.user_shell.no_inject is false (default); `!` (UserShell) commands and their outputs will be injected into the model context and recorded to the local session history. Set custom.user_shell.no_inject=true to disable injection/recording, and avoid secrets in `!` commands/output.";
 
 pub const CONFIG_TOML_FILE: &str = "config.toml";
 const OPENAI_BASE_URL_ENV_VAR: &str = "OPENAI_BASE_URL";
@@ -150,6 +155,7 @@ const RESERVED_MODEL_PROVIDER_IDS: [&str; 3] = [
     OLLAMA_OSS_PROVIDER_ID,
     LMSTUDIO_OSS_PROVIDER_ID,
 ];
+const CODEX_MEMORIES_HOME_ENV_VAR: &str = "CODEX_MEMORIES_HOME";
 
 #[cfg(target_os = "linux")]
 pub fn missing_system_bwrap_warning() -> Option<String> {
@@ -179,6 +185,32 @@ fn resolve_sqlite_home_env(resolved_cwd: &Path) -> Option<PathBuf> {
     } else {
         Some(resolved_cwd.join(path))
     }
+}
+
+fn resolve_memories_home_env(resolved_cwd: &Path) -> Option<PathBuf> {
+    let raw = std::env::var(CODEX_MEMORIES_HOME_ENV_VAR).ok()?;
+    resolve_memories_home_from_raw(&raw, resolved_cwd)
+}
+
+fn resolve_memories_home_from_raw(raw: &str, resolved_cwd: &Path) -> Option<PathBuf> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(trimmed);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        Some(resolved_cwd.join(path))
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn resolve_memories_home_from_raw_for_tests(
+    raw: &str,
+    resolved_cwd: &Path,
+) -> Option<PathBuf> {
+    resolve_memories_home_from_raw(raw, resolved_cwd)
 }
 #[cfg(test)]
 pub(crate) fn test_config() -> Config {
@@ -268,11 +300,28 @@ pub struct Config {
     /// been escalated. This does not disable separate safety checks such as
     /// ARC.
     pub approvals_reviewer: ApprovalsReviewer,
+    /// Fork-specific: resolved run-as user for model-triggered command execution.
+    ///
+    /// When `Some`, shell-like tool calls (`shell` / `shell_command` / `exec_command`)
+    /// are executed as this OS user (Unix only).
+    pub exec_run_as: Option<RunAsUser>,
+
+    /// Fork-specific: resolved shell environment policy for `!` (UserShell).
+    pub user_shell_environment_policy: ShellEnvironmentPolicy,
+
+    /// Fork-specific: when `true`, `!` (UserShell) command output is not
+    /// injected into the model context and is not persisted to local session
+    /// history.
+    pub user_shell_no_inject: bool,
 
     /// enforce_residency means web traffic cannot be routed outside of a
     /// particular geography. HTTP clients should direct their requests
     /// using backend-specific headers or URLs to enforce this.
     pub enforce_residency: Constrained<Option<ResidencyRequirement>>,
+
+    /// True if the user passed in an override or set a value in config.toml
+    /// for either of approval_policy or sandbox_mode.
+    pub did_user_set_custom_approval_policy_or_sandbox_mode: bool,
 
     /// When `true`, `AgentReasoning` events emitted by the backend will be
     /// suppressed from the frontend output. This can reduce visual noise when
@@ -362,6 +411,21 @@ pub struct Config {
     /// Syntax highlighting theme override (kebab-case name).
     pub tui_theme: Option<String>,
 
+    /// Optional custom diff background color for added lines (RGB).
+    pub custom_diff_add_line_bg: Option<(u8, u8, u8)>,
+    /// Optional custom diff background color for deleted lines (RGB).
+    pub custom_diff_del_line_bg: Option<(u8, u8, u8)>,
+    /// Enable diff-specific color styling in the TUI.
+    pub custom_diff_enabled: bool,
+    /// Enable add/delete line background tint in the TUI diff renderer.
+    pub custom_diff_line_bg_enabled: bool,
+    /// Enable line-number gutter styling in the TUI diff renderer.
+    pub custom_diff_gutter_enabled: bool,
+    /// Enable `+`/`-` sign coloring in the TUI diff renderer.
+    pub custom_diff_sign_enabled: bool,
+    /// Enable non-syntax diff content styling in the TUI diff renderer.
+    pub custom_diff_content_enabled: bool,
+
     /// The directory that should be treated as the current working directory
     /// for the session. All relative paths inside the business-logic layer are
     /// resolved against this path.
@@ -406,6 +470,12 @@ pub struct Config {
     /// Additional filenames to try when looking for project-level docs.
     pub project_doc_fallback_filenames: Vec<String>,
 
+    /// Explicit project doc file paths to use instead of auto-discovery.
+    ///
+    /// When non-empty, Codex reads these files in order and does not scan for
+    /// `AGENTS.md` along the project root to cwd path.
+    pub project_doc_paths: Vec<PathBuf>,
+
     /// Token budget applied when storing tool/function outputs in the context manager.
     pub tool_output_token_limit: Option<usize>,
 
@@ -426,6 +496,12 @@ pub struct Config {
     /// Directory containing all Codex state (defaults to `~/.codex` but can be
     /// overridden by the `CODEX_HOME` environment variable).
     pub codex_home: PathBuf,
+
+    /// Directory where Codex stores filesystem memory artifacts.
+    ///
+    /// Defaults to `$CODEX_HOME/memories` but can be overridden by
+    /// `CODEX_MEMORIES_HOME` (or `--codex-memory`).
+    pub memories_root_dir: PathBuf,
 
     /// Directory where Codex stores the SQLite state DB.
     pub sqlite_home: PathBuf,
@@ -496,6 +572,11 @@ pub struct Config {
     /// Machine-local realtime audio device preferences used by realtime voice.
     pub realtime_audio: RealtimeAudioConfig,
 
+    /// Experimental / do not use. Overrides the realtime conversation startup
+    /// instructions (the `DeveloperInstructions::realtime_start_message*`)
+    /// without changing normal prompts.
+    pub experimental_realtime_start_instructions: Option<String>,
+
     /// Experimental / do not use. Overrides only the realtime conversation
     /// websocket transport base URL (the `Op::RealtimeConversation`
     /// `/v1/realtime`
@@ -515,10 +596,6 @@ pub struct Config {
     /// context appended to websocket session instructions. An empty string
     /// disables startup context injection entirely.
     pub experimental_realtime_ws_startup_context: Option<String>,
-    /// Experimental / do not use. Replaces the built-in realtime start
-    /// instructions inserted into developer messages when realtime becomes
-    /// active.
-    pub experimental_realtime_start_instructions: Option<String>,
     /// When set, restricts ChatGPT login to a specific workspace identifier.
     pub forced_chatgpt_workspace_id: Option<String>,
 
@@ -533,7 +610,7 @@ pub struct Config {
     /// Explicit or feature-derived web search mode.
     pub web_search_mode: Constrained<WebSearchMode>,
 
-    /// Additional parameters for the web search tool when it is enabled.
+    /// Optional web search tool configuration (filters, user location, context size).
     pub web_search_config: Option<WebSearchConfig>,
 
     /// If set to `true`, used only the experimental unified exec tool.
@@ -860,11 +937,36 @@ pub async fn load_config_as_toml_with_cli_overrides(
     if let Err(err) = maybe_migrate_smart_approvals_alias(codex_home).await {
         tracing::warn!(error = %err, "failed to migrate smart_approvals feature alias");
     }
+    load_config_as_toml_with_cli_overrides_and_loader_overrides(
+        codex_home,
+        cwd,
+        cli_overrides,
+        LoaderOverrides::default(),
+    )
+    .await
+}
+
+/// DEPRECATED: Use [Config::load_with_cli_overrides()] instead because working
+/// with [ConfigToml] directly means that [ConfigRequirements] have not been
+/// applied yet, which risks failing to enforce required constraints.
+///
+/// This overload exists so clients like the TUI can honor CLI config-layer
+/// overrides such as `--config` / `--no-config` without re-implementing the
+/// layer-loading logic.
+pub async fn load_config_as_toml_with_cli_overrides_and_loader_overrides(
+    codex_home: &Path,
+    cwd: &AbsolutePathBuf,
+    cli_overrides: Vec<(String, TomlValue)>,
+    loader_overrides: LoaderOverrides,
+) -> std::io::Result<ConfigToml> {
+    if let Err(err) = maybe_migrate_guardian_approval_alias(codex_home).await {
+        tracing::warn!(error = %err, "failed to migrate guardian_approval feature alias");
+    }
     let config_layer_stack = load_config_layers_state(
         codex_home,
         Some(cwd.clone()),
         &cli_overrides,
-        LoaderOverrides::default(),
+        loader_overrides,
         CloudRequirementsLoader::default(),
     )
     .await?;
@@ -1239,9 +1341,13 @@ pub struct ConfigToml {
     /// table.
     pub default_permissions: Option<String>,
 
-    /// Named permissions profiles.
+    /// Nested permissions settings.
     #[serde(default)]
     pub permissions: Option<PermissionsToml>,
+
+    /// Fork-specific custom settings.
+    #[serde(default)]
+    pub custom: Option<CustomConfigToml>,
 
     /// Optional external command to spawn for end-user notifications.
     #[serde(default)]
@@ -1397,6 +1503,7 @@ pub struct ConfigToml {
     #[serde(default)]
     pub audio: Option<RealtimeAudioToml>,
 
+    pub experimental_realtime_start_instructions: Option<String>,
     /// Experimental / do not use. Overrides only the realtime conversation
     /// websocket transport base URL (the `Op::RealtimeConversation`
     /// `/v1/realtime`
@@ -1417,10 +1524,6 @@ pub struct ConfigToml {
     /// context appended to websocket session instructions. An empty string
     /// disables startup context injection entirely.
     pub experimental_realtime_ws_startup_context: Option<String>,
-    /// Experimental / do not use. Replaces the built-in realtime start
-    /// instructions inserted into developer messages when realtime becomes
-    /// active.
-    pub experimental_realtime_start_instructions: Option<String>,
     pub projects: Option<HashMap<String, ProjectConfig>>,
 
     /// Controls the web search tool mode: disabled, cached, or live.
@@ -1621,10 +1724,7 @@ where
 
     Ok(match value {
         None => None,
-        Some(WebSearchToolConfigInput::Enabled(enabled)) => {
-            let _ = enabled;
-            None
-        }
+        Some(WebSearchToolConfigInput::Enabled(_enabled)) => None,
         Some(WebSearchToolConfigInput::Config(config)) => Some(config),
     })
 }
@@ -1682,7 +1782,6 @@ pub struct AgentsToml {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentRoleConfig {
     /// Human-facing role documentation used in spawn tool guidance.
-    /// Required for loaded user-defined roles after deprecated/new metadata precedence resolves.
     pub description: Option<String>,
     /// Path to a role-specific config layer.
     pub config_file: Option<PathBuf>,
@@ -1694,7 +1793,6 @@ pub struct AgentRoleConfig {
 #[schemars(deny_unknown_fields)]
 pub struct AgentRoleToml {
     /// Human-facing role documentation used in spawn tool guidance.
-    /// Required unless supplied by the referenced agent role file.
     pub description: Option<String>,
 
     /// Path to a role-specific config layer.
@@ -1708,7 +1806,7 @@ pub struct AgentRoleToml {
 impl From<ToolsToml> for Tools {
     fn from(tools_toml: ToolsToml) -> Self {
         Self {
-            web_search: tools_toml.web_search.is_some().then_some(true),
+            web_search: tools_toml.web_search.map(|_| true),
             view_image: tools_toml.view_image,
         }
     }
@@ -1952,6 +2050,8 @@ pub struct ConfigOverrides {
     pub show_raw_agent_reasoning: Option<bool>,
     pub tools_web_search_request: Option<bool>,
     pub ephemeral: Option<bool>,
+    /// Explicit project doc paths to use instead of auto-discovery.
+    pub project_doc_paths: Vec<PathBuf>,
     /// Additional directories that should be treated as writable roots for this session.
     pub additional_writable_roots: Vec<PathBuf>,
 }
@@ -2033,25 +2133,36 @@ fn resolve_web_search_mode(
     None
 }
 
-fn resolve_web_search_config(
-    config_toml: &ConfigToml,
-    config_profile: &ConfigProfile,
-) -> Option<WebSearchConfig> {
-    let base = config_toml
-        .tools
-        .as_ref()
-        .and_then(|tools| tools.web_search.as_ref());
-    let profile = config_profile
-        .tools
-        .as_ref()
-        .and_then(|tools| tools.web_search.as_ref());
-
-    match (base, profile) {
-        (None, None) => None,
-        (Some(base), None) => Some(base.clone().into()),
-        (None, Some(profile)) => Some(profile.clone().into()),
-        (Some(base), Some(profile)) => Some(base.merge(profile).into()),
+fn resolve_project_doc_paths(paths: &[PathBuf], cwd: &PathBuf) -> std::io::Result<Vec<PathBuf>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
     }
+
+    let mut resolved = Vec::with_capacity(paths.len());
+    for path in paths {
+        let path = if path.is_absolute() {
+            path.clone()
+        } else {
+            cwd.join(path)
+        };
+
+        let md = std::fs::symlink_metadata(&path).map_err(|e| {
+            std::io::Error::new(
+                e.kind(),
+                format!("project doc path {}: {e}", path.display()),
+            )
+        })?;
+        let ft = md.file_type();
+        if !(ft.is_file() || ft.is_symlink()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("project doc path is not a file: {}", path.display()),
+            ));
+        }
+        resolved.push(path);
+    }
+
+    Ok(resolved)
 }
 
 pub(crate) fn resolve_web_search_mode_for_turn(
@@ -2150,6 +2261,7 @@ impl Config {
             show_raw_agent_reasoning,
             tools_web_search_request: override_tools_web_search_request,
             ephemeral,
+            project_doc_paths,
             additional_writable_roots,
         } = overrides;
 
@@ -2199,6 +2311,7 @@ impl Config {
                 }
             }
         });
+        let project_doc_paths = resolve_project_doc_paths(&project_doc_paths, &resolved_cwd)?;
         let mut additional_writable_roots: Vec<AbsolutePathBuf> = additional_writable_roots
             .into_iter()
             .map(|path| AbsolutePathBuf::resolve_path_against_base(path, &resolved_cwd))
@@ -2234,9 +2347,10 @@ impl Config {
             Some(WindowsSandboxModeToml::Unelevated) => WindowsSandboxLevel::RestrictedToken,
             None => WindowsSandboxLevel::from_features(&features),
         };
-        let memories_root = memory_root(&codex_home);
-        std::fs::create_dir_all(&memories_root)?;
-        let memories_root = AbsolutePathBuf::from_absolute_path(&memories_root)?;
+        let memories_root_dir =
+            resolve_memories_home_env(&resolved_cwd).unwrap_or_else(|| memory_root(&codex_home));
+        std::fs::create_dir_all(&memories_root_dir)?;
+        let memories_root = AbsolutePathBuf::from_absolute_path(&memories_root_dir)?;
         if !additional_writable_roots
             .iter()
             .any(|existing| existing == &memories_root)
@@ -2318,6 +2432,7 @@ impl Config {
                 network_sandbox_policy,
             )
         };
+
         let approval_policy_was_explicit = approval_policy_override.is_some()
             || config_profile.approval_policy.is_some()
             || cfg.approval_policy.is_some();
@@ -2348,10 +2463,16 @@ impl Config {
             .unwrap_or(ApprovalsReviewer::User);
         let web_search_mode = resolve_web_search_mode(&cfg, &config_profile, &features)
             .unwrap_or(WebSearchMode::Cached);
-        let web_search_config = resolve_web_search_config(&cfg, &config_profile);
 
         let agent_roles =
             agent_roles::load_agent_roles(&cfg, &config_layer_stack, &mut startup_warnings)?;
+        let sandbox_mode_was_explicit = sandbox_mode.is_some()
+            || config_profile.sandbox_mode.is_some()
+            || cfg.sandbox_mode.is_some();
+        // TODO(dylan): We should be able to leverage ConfigLayerStack so that
+        // we can reliably check this at every config level.
+        let did_user_set_custom_approval_policy_or_sandbox_mode =
+            approval_policy_was_explicit || sandbox_mode_was_explicit;
 
         let openai_base_url = cfg
             .openai_base_url
@@ -2396,7 +2517,107 @@ impl Config {
             })?
             .clone();
 
-        let shell_environment_policy = cfg.shell_environment_policy.into();
+        let base_shell_environment_policy: ShellEnvironmentPolicy =
+            cfg.shell_environment_policy.into();
+        let assistant_shell_environment_policy = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.assistant_shell_environment_policy.clone())
+            .map(Into::into)
+            .unwrap_or_else(|| base_shell_environment_policy.clone());
+        let user_shell_environment_policy = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.user_shell_environment_policy.clone())
+            .map(Into::into)
+            .unwrap_or_else(|| assistant_shell_environment_policy.clone());
+        let user_shell_no_inject = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.user_shell.no_inject)
+            .unwrap_or(false);
+        if !user_shell_no_inject {
+            startup_warnings.push(USER_SHELL_NO_INJECT_WARNING.to_string());
+        }
+        let custom_diff_add_line_bg = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.add_line_bg.as_deref())
+            .map(|value| custom::parse_hex_rgb(value, "custom.theme.diff.add_line_bg"))
+            .transpose()?;
+        let custom_diff_del_line_bg = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.del_line_bg.as_deref())
+            .map(|value| custom::parse_hex_rgb(value, "custom.theme.diff.del_line_bg"))
+            .transpose()?;
+        let custom_diff_enabled = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.enabled)
+            .unwrap_or(true);
+        let custom_diff_line_bg_enabled = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.line_bg)
+            .unwrap_or(true);
+        let custom_diff_gutter_enabled = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.gutter)
+            .unwrap_or(true);
+        let custom_diff_sign_enabled = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.sign)
+            .unwrap_or(true);
+        let custom_diff_content_enabled = cfg
+            .custom
+            .as_ref()
+            .and_then(|custom| custom.theme.as_ref())
+            .and_then(|theme| theme.diff.content)
+            .unwrap_or(true);
+        let custom_exec_was_configured = cfg.custom.as_ref().is_some_and(|custom| {
+            custom
+                .exec
+                .worker_user
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty())
+                || custom.exec.worker_uid.is_some()
+                || custom.exec.worker_gid.is_some()
+        });
+        let exec_run_as = custom::resolve_exec_run_as(cfg.custom.as_ref())?;
+        if exec_run_as.is_some()
+            && assistant_shell_environment_policy.inherit == ShellEnvironmentPolicyInherit::All
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "custom.exec is set, but shell_environment_policy.inherit = \"all\" is unsafe; set inherit = \"core\" or \"none\" (and/or use include_only).",
+            ));
+        }
+        #[cfg(unix)]
+        {
+            // If the configured worker user resolves to the current invoker uid, the
+            // "worker-only" execution policy is effectively disabled and offers no
+            // protection over `!` (UserShell), which always runs as the invoker user.
+            //
+            // Only warn when the user explicitly configured custom.exec.* so defaults
+            // remain quiet.
+            if custom_exec_was_configured
+                && exec_run_as
+                    .as_ref()
+                    .is_some_and(|run_as| run_as.uid == unsafe { libc::geteuid() })
+            {
+                startup_warnings.push("custom.exec.* resolves to the current user; model-triggered commands will run as the invoker user (same as `!`/UserShell), so privilege separation is not in effect. Configure a different worker user/uid/gid to enable separation.".to_string());
+            }
+        }
+
         let allow_login_shell = cfg.allow_login_shell.unwrap_or(true);
 
         let history = cfg.history.unwrap_or_default();
@@ -2584,7 +2805,6 @@ impl Config {
             .map(AbsolutePathBuf::to_path_buf)
             .or_else(|| resolve_sqlite_home_env(&resolved_cwd))
             .unwrap_or_else(|| codex_home.to_path_buf());
-        let original_sandbox_policy = sandbox_policy.clone();
 
         apply_requirement_constrained_value(
             "approval_policy",
@@ -2594,7 +2814,7 @@ impl Config {
         )?;
         apply_requirement_constrained_value(
             "sandbox_mode",
-            sandbox_policy,
+            sandbox_policy.clone(),
             &mut constrained_sandbox_policy,
             &mut startup_warnings,
         )?;
@@ -2616,7 +2836,7 @@ impl Config {
         let network = NetworkProxySpec::from_config_and_constraints(
             configured_network_proxy_config,
             network_requirements,
-            constrained_sandbox_policy.get(),
+            &sandbox_policy,
         )
         .map_err(|err| {
             if let Some(source) = network_requirements_source.as_ref() {
@@ -2662,17 +2882,21 @@ impl Config {
             permissions: Permissions {
                 approval_policy: constrained_approval_policy.value,
                 sandbox_policy: constrained_sandbox_policy.value,
-                file_system_sandbox_policy: effective_file_system_sandbox_policy,
-                network_sandbox_policy: effective_network_sandbox_policy,
+                file_system_sandbox_policy,
+                network_sandbox_policy,
                 network,
                 allow_login_shell,
-                shell_environment_policy,
+                shell_environment_policy: assistant_shell_environment_policy,
                 windows_sandbox_mode,
                 windows_sandbox_private_desktop,
                 macos_seatbelt_profile_extensions: None,
             },
             approvals_reviewer,
+            exec_run_as,
+            user_shell_environment_policy,
+            user_shell_no_inject,
             enforce_residency: enforce_residency.value,
+            did_user_set_custom_approval_policy_or_sandbox_mode,
             notify: cfg.notify,
             user_instructions,
             base_instructions,
@@ -2704,6 +2928,7 @@ impl Config {
                     }
                 })
                 .collect(),
+            project_doc_paths,
             tool_output_token_limit: cfg.tool_output_token_limit,
             agent_max_threads,
             agent_max_depth,
@@ -2711,6 +2936,7 @@ impl Config {
             memories: cfg.memories.unwrap_or_default().into(),
             agent_job_max_runtime_seconds,
             codex_home,
+            memories_root_dir,
             sqlite_home,
             log_dir,
             config_layer_stack,
@@ -2751,6 +2977,7 @@ impl Config {
                     microphone: audio.microphone,
                     speaker: audio.speaker,
                 }),
+            experimental_realtime_start_instructions: cfg.experimental_realtime_start_instructions,
             experimental_realtime_ws_base_url: cfg.experimental_realtime_ws_base_url,
             experimental_realtime_ws_model: cfg.experimental_realtime_ws_model,
             realtime: cfg
@@ -2761,12 +2988,15 @@ impl Config {
                 }),
             experimental_realtime_ws_backend_prompt: cfg.experimental_realtime_ws_backend_prompt,
             experimental_realtime_ws_startup_context: cfg.experimental_realtime_ws_startup_context,
-            experimental_realtime_start_instructions: cfg.experimental_realtime_start_instructions,
             forced_chatgpt_workspace_id,
             forced_login_method,
             include_apply_patch_tool: include_apply_patch_tool_flag,
             web_search_mode: constrained_web_search_mode.value,
-            web_search_config,
+            web_search_config: cfg
+                .tools
+                .as_ref()
+                .and_then(|tools| tools.web_search.clone())
+                .map(Into::into),
             use_experimental_unified_exec_tool,
             background_terminal_max_timeout,
             ghost_snapshot,
@@ -2815,6 +3045,13 @@ impl Config {
                 .unwrap_or_default(),
             tui_status_line: cfg.tui.as_ref().and_then(|t| t.status_line.clone()),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
+            custom_diff_add_line_bg,
+            custom_diff_del_line_bg,
+            custom_diff_enabled,
+            custom_diff_line_bg_enabled,
+            custom_diff_gutter_enabled,
+            custom_diff_sign_enabled,
+            custom_diff_content_enabled,
             otel: {
                 let t: OtelConfigToml = cfg.otel.unwrap_or_default();
                 let log_user_prompt = t.log_user_prompt.unwrap_or(false);
@@ -2913,7 +3150,7 @@ impl Config {
             .is_some()
     }
 
-    pub fn bundled_skills_enabled(&self) -> bool {
+    pub(crate) fn bundled_skills_enabled(&self) -> bool {
         crate::skills::manager::bundled_skills_enabled_from_stack(&self.config_layer_stack)
     }
 }
@@ -2971,6 +3208,9 @@ pub fn find_codex_home() -> std::io::Result<PathBuf> {
 pub fn log_dir(cfg: &Config) -> std::io::Result<PathBuf> {
     Ok(cfg.log_dir.clone())
 }
+
+#[cfg(test)]
+mod custom_tests;
 
 #[cfg(test)]
 #[path = "config_tests.rs"]

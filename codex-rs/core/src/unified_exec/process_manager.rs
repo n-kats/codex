@@ -543,6 +543,13 @@ impl UnifiedExecProcessManager {
         tty: bool,
         mut spawn_lifecycle: SpawnLifecycleHandle,
     ) -> Result<UnifiedExecProcess, UnifiedExecError> {
+        #[cfg(unix)]
+        if env.run_as.is_some() {
+            return self
+                .open_session_with_exec_env_custom(env, tty, spawn_lifecycle)
+                .await;
+        }
+
         let (program, args) = env
             .command
             .split_first()

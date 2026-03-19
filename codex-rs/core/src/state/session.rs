@@ -14,6 +14,7 @@ use crate::protocol::TokenUsageInfo;
 use crate::sandboxing::merge_permission_profiles;
 use crate::session_startup_prewarm::SessionStartupPrewarmHandle;
 use crate::truncate::TruncationPolicy;
+use codex_hooks::SessionStartSource;
 use codex_protocol::protocol::TurnContextItem;
 
 /// Persistent, session-scoped state previously stored directly on `Session`.
@@ -31,8 +32,8 @@ pub(crate) struct SessionState {
     /// Startup prewarmed session prepared during session initialization.
     pub(crate) startup_prewarm: Option<SessionStartupPrewarmHandle>,
     pub(crate) active_connector_selection: HashSet<String>,
-    pub(crate) pending_session_start_source: Option<codex_hooks::SessionStartSource>,
     granted_permissions: Option<PermissionProfile>,
+    pending_session_start_source: Option<SessionStartSource>,
 }
 
 impl SessionState {
@@ -49,9 +50,17 @@ impl SessionState {
             previous_turn_settings: None,
             startup_prewarm: None,
             active_connector_selection: HashSet::new(),
-            pending_session_start_source: None,
             granted_permissions: None,
+            pending_session_start_source: None,
         }
+    }
+
+    pub(crate) fn set_pending_session_start_source(&mut self, source: Option<SessionStartSource>) {
+        self.pending_session_start_source = source;
+    }
+
+    pub(crate) fn take_pending_session_start_source(&mut self) -> Option<SessionStartSource> {
+        self.pending_session_start_source.take()
     }
 
     // History helpers
@@ -191,19 +200,6 @@ impl SessionState {
     // Removes all currently tracked connector selections.
     pub(crate) fn clear_connector_selection(&mut self) {
         self.active_connector_selection.clear();
-    }
-
-    pub(crate) fn set_pending_session_start_source(
-        &mut self,
-        value: Option<codex_hooks::SessionStartSource>,
-    ) {
-        self.pending_session_start_source = value;
-    }
-
-    pub(crate) fn take_pending_session_start_source(
-        &mut self,
-    ) -> Option<codex_hooks::SessionStartSource> {
-        self.pending_session_start_source.take()
     }
 
     pub(crate) fn record_granted_permissions(&mut self, permissions: PermissionProfile) {

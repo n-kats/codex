@@ -48,11 +48,11 @@ async fn user_shell_cmd_ls_and_cat_in_temp_dir() {
     let mut builder = test_codex().with_config(move |config| {
         config.cwd = cwd_path;
     });
-    let codex = builder
+    let fixture = builder
         .build(&server)
         .await
-        .expect("create new conversation")
-        .codex;
+        .expect("create new conversation");
+    let codex = fixture.codex.clone();
 
     // 1) shell command should list the file
     let list_cmd = "ls".to_string();
@@ -326,6 +326,67 @@ async fn user_shell_command_history_is_persisted_and_shared_with_model() -> anyh
         r"(?m)\A<user_shell_command>\n<command>\n{escaped_command}\n</command>\n<result>\nExit code: 0\nDuration: [0-9]+(?:\.[0-9]+)? seconds\nOutput:\nnot-set\n</result>\n</user_shell_command>\z"
     );
     assert_regex_match(&expected_pattern, &command_message);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(non_snake_case)]
+async fn custom__user_shell_no_inject__user_shell_command_history_is_not_shared_with_model()
+-> anyhow::Result<()> {
+    let server = responses::start_mock_server().await;
+    // Disable it to ease command matching.
+    let mut builder = core_test_support::test_codex::test_codex().with_config(move |config| {
+        config.user_shell_no_inject = true;
+        config
+            .features
+            .disable(Feature::ShellSnapshot)
+            .expect("test config should allow feature update");
+    });
+    let test = builder.build(&server).await?;
+
+    let token = "CUSTOM_NO_INJECT_TOKEN_123";
+    #[cfg(windows)]
+    let command = format!(r#"[System.Console]::Write("{token}")"#);
+    #[cfg(not(windows))]
+    let command = format!(r#"sh -c "printf '{token}'""#);
+
+    test.codex
+        .submit(Op::RunUserShellCommand {
+            command: command.clone(),
+        })
+        .await?;
+
+    let _ = wait_for_event_match(&test.codex, |ev| match ev {
+        EventMsg::ExecCommandEnd(event) => Some(event.clone()),
+        _ => None,
+    })
+    .await;
+    let _ = wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let responses = vec![responses::sse(vec![
+        responses::ev_response_created("resp-1"),
+        responses::ev_assistant_message("msg-1", "done"),
+        responses::ev_completed("resp-1"),
+    ])];
+    let mock = responses::mount_sse_sequence(&server, responses).await;
+
+    test.submit_turn("follow-up after user shell command")
+        .await?;
+
+    let request = mock.single_request();
+    assert!(
+        !request.body_contains_text("<user_shell_command>"),
+        "expected user shell command history to be excluded from model request when custom.user_shell.no_inject=true"
+    );
+    assert!(
+        !request.body_contains_text(token),
+        "expected user shell command output token to be excluded from model request when custom.user_shell.no_inject=true"
+    );
+    assert!(
+        !request.body_contains_text(&command),
+        "expected raw user shell command to be excluded from model request when custom.user_shell.no_inject=true"
+    );
 
     Ok(())
 }

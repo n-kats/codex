@@ -28,9 +28,11 @@ use crate::sandboxing::CommandSpec;
 use crate::sandboxing::ExecRequest;
 use crate::sandboxing::SandboxManager;
 use crate::sandboxing::SandboxPermissions;
+use crate::spawn::RunAsUser;
 use crate::spawn::SpawnChildRequest;
 use crate::spawn::StdioPolicy;
 use crate::spawn::spawn_child_async;
+use crate::spawn::spawn_child_async_with_run_as;
 use crate::text_encoding::bytes_to_string_smart;
 use crate::tools::sandboxing::SandboxablePreference;
 use codex_network_proxy::NetworkProxy;
@@ -85,6 +87,7 @@ pub struct ExecParams {
     pub windows_sandbox_private_desktop: bool,
     pub justification: Option<String>,
     pub arg0: Option<String>,
+    pub run_as: Option<RunAsUser>,
 }
 
 fn select_process_exec_tool_sandbox_type(
@@ -231,6 +234,7 @@ pub fn build_exec_request(
         mut env,
         expiration,
         network,
+        run_as,
         sandbox_permissions,
         windows_sandbox_level,
         windows_sandbox_private_desktop,
@@ -253,6 +257,7 @@ pub fn build_exec_request(
         cwd,
         env,
         expiration,
+        run_as,
         sandbox_permissions,
         additional_permissions: None,
         justification,
@@ -295,6 +300,7 @@ pub(crate) async fn execute_exec_request(
         sandbox,
         windows_sandbox_level,
         windows_sandbox_private_desktop,
+        run_as,
         sandbox_permissions,
         sandbox_policy: _sandbox_policy_from_env,
         file_system_sandbox_policy,
@@ -315,6 +321,7 @@ pub(crate) async fn execute_exec_request(
         windows_sandbox_private_desktop,
         justification,
         arg0,
+        run_as,
     };
 
     let start = Instant::now();
@@ -785,6 +792,7 @@ async fn exec(
         network,
         arg0,
         expiration,
+        run_as,
         windows_sandbox_level: _,
         ..
     } = params;
@@ -799,7 +807,7 @@ async fn exec(
         ))
     })?;
     let arg0_ref = arg0.as_deref();
-    let child = spawn_child_async(SpawnChildRequest {
+    let spawn_request = SpawnChildRequest {
         program: PathBuf::from(program),
         args: args.into(),
         arg0: arg0_ref,
@@ -811,8 +819,12 @@ async fn exec(
         network: None,
         stdio_policy: StdioPolicy::RedirectForShellTool,
         env,
-    })
-    .await?;
+    };
+    let child = if let Some(run_as) = run_as {
+        spawn_child_async_with_run_as(spawn_request, run_as).await?
+    } else {
+        spawn_child_async(spawn_request).await?
+    };
     if let Some(after_spawn) = after_spawn {
         after_spawn();
     }

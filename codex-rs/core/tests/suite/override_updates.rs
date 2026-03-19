@@ -13,6 +13,11 @@ use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::user_input::UserInput;
+use core_test_support::responses::ev_completed;
+use core_test_support::responses::ev_response_created;
+use core_test_support::responses::mount_sse_once;
+use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
@@ -125,6 +130,7 @@ async fn override_turn_context_without_user_turn_does_not_record_permissions_upd
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
         .await?;
 
@@ -167,6 +173,7 @@ async fn override_turn_context_without_user_turn_does_not_record_environment_upd
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
         .await?;
 
@@ -206,6 +213,7 @@ async fn override_turn_context_without_user_turn_does_not_record_collaboration_u
             service_tier: None,
             collaboration_mode: Some(collaboration_mode),
             personality: None,
+            project_doc_paths: None,
         })
         .await?;
 
@@ -221,6 +229,72 @@ async fn override_turn_context_without_user_turn_does_not_record_collaboration_u
         .filter(|text| text.as_str() == collab_text.as_str())
         .count();
     assert_eq!(collab_count, 0);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn override_turn_context_custom_agents_reflects_in_next_turn_context() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let req = mount_sse_once(
+        &server,
+        sse(vec![ev_response_created("resp-1"), ev_completed("resp-1")]),
+    )
+    .await;
+
+    let mut builder = test_codex().with_config(|config| {
+        std::fs::write(config.cwd.join("AGENTS.md"), "auto instructions")
+            .expect("write AGENTS.md");
+        std::fs::create_dir_all(config.cwd.join("docs")).expect("create docs dir");
+        std::fs::write(
+            config.cwd.join("docs").join("AGENTS.override.md"),
+            "custom instructions",
+        )
+        .expect("write AGENTS.override.md");
+    });
+    let test = builder.build(&server).await?;
+
+    test.codex
+        .submit(Op::OverrideTurnContext {
+            cwd: None,
+            approval_policy: None,
+            sandbox_policy: None,
+            windows_sandbox_level: None,
+            model: None,
+            effort: None,
+            summary: None,
+            collaboration_mode: None,
+            personality: None,
+            project_doc_paths: Some(Some(vec!["docs/AGENTS.override.md".into()])),
+        })
+        .await?;
+
+    test.codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "hello".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+        })
+        .await?;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let user_messages = req.single_request().message_input_texts("user");
+    let instructions = user_messages
+        .iter()
+        .find(|text| text.starts_with("# AGENTS.md instructions for "))
+        .expect("instructions message");
+    assert!(
+        instructions.contains("custom instructions"),
+        "expected custom-agents text in contextual user message: {instructions}"
+    );
+    assert!(
+        !instructions.contains("auto instructions"),
+        "did not expect auto-discovered AGENTS.md after /custom-agents override: {instructions}"
+    );
 
     Ok(())
 }

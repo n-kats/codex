@@ -26,6 +26,7 @@ use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
+use core_test_support::skip_if_linux_userns_unavailable;
 use core_test_support::skip_if_no_network;
 use core_test_support::skip_if_sandbox;
 use core_test_support::test_codex::TestCodex;
@@ -313,6 +314,7 @@ fn normalized_directory_write_permissions(path: &Path) -> Result<RequestPermissi
 async fn with_additional_permissions_requires_approval_under_on_request() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let server = start_mock_server().await;
     let approval_policy = AskForApproval::OnRequest;
@@ -490,6 +492,7 @@ async fn request_permissions_tool_is_auto_denied_when_granular_request_permissio
 async fn relative_additional_permissions_resolve_against_tool_workdir() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let server = start_mock_server().await;
     let approval_policy = AskForApproval::OnRequest;
@@ -790,6 +793,7 @@ async fn read_only_with_additional_permissions_does_not_widen_to_unrequested_tmp
 async fn workspace_write_with_additional_permissions_can_write_outside_cwd() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let server = start_mock_server().await;
     let approval_policy = AskForApproval::OnRequest;
@@ -999,6 +1003,7 @@ async fn with_additional_permissions_denied_approval_blocks_execution() -> Resul
 async fn request_permissions_grants_apply_to_later_exec_command_calls() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let server = start_mock_server().await;
     let approval_policy = AskForApproval::OnRequest;
@@ -1122,6 +1127,7 @@ async fn request_permissions_preapprove_explicit_exec_permissions_outside_on_req
 {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let server = start_mock_server().await;
     let approval_policy = AskForApproval::OnRequest;
@@ -1239,6 +1245,7 @@ async fn request_permissions_preapprove_explicit_exec_permissions_outside_on_req
 async fn request_permissions_grants_apply_to_later_shell_command_calls() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let server = start_mock_server().await;
     let approval_policy = AskForApproval::OnRequest;
@@ -1350,6 +1357,7 @@ async fn request_permissions_grants_apply_to_later_shell_command_calls_without_i
 -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let server = start_mock_server().await;
     let approval_policy = AskForApproval::OnRequest;
@@ -1461,6 +1469,7 @@ async fn request_permissions_grants_apply_to_later_shell_command_calls_without_i
 async fn partial_request_permissions_grants_do_not_preapprove_new_permissions() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let server = start_mock_server().await;
     let approval_policy = AskForApproval::OnRequest;

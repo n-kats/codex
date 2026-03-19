@@ -464,7 +464,7 @@ async fn prepare_realtime_start(
         .clone()
         .unwrap_or(params.prompt);
     let startup_context = match config.experimental_realtime_ws_startup_context.clone() {
-        Some(startup_context) => startup_context,
+        Some(context) => context,
         None => {
             build_realtime_startup_context(sess.as_ref(), REALTIME_STARTUP_CONTEXT_TOKEN_BUDGET)
                 .await

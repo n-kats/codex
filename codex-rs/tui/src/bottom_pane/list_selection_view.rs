@@ -664,6 +664,11 @@ impl BottomPaneView for ListSelectionView {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
                 ..
+            }
+            | KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::CONTROL,
+                ..
             } => self.accept(),
             _ => {}
         }

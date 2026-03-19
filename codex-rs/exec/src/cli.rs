@@ -80,6 +80,12 @@ pub struct Cli {
     pub output_schema: Option<PathBuf>,
 
     #[clap(skip)]
+    pub config_toml_file: Option<PathBuf>,
+
+    #[clap(skip)]
+    pub no_config: bool,
+
+    #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 
     /// Specifies color settings for use in the output.

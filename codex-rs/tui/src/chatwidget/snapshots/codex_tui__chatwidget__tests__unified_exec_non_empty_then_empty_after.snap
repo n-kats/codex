@@ -1,5 +1,6 @@
 ---
 source: tui/src/chatwidget/tests.rs
+assertion_line: 4194
 expression: combined
 ---
 ↳ Interacted with background terminal · just fix

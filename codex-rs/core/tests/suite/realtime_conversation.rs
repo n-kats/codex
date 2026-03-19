@@ -1799,13 +1799,17 @@ async fn delegated_turn_user_role_echo_does_not_redelegate_and_still_forwards_au
         Some("\"Agent Final Message\":\n\nassistant says hi")
     );
 
-    let audio_out = wait_for_event_match(&test.codex, |msg| match msg {
-        EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
-            payload: RealtimeEvent::AudioOut(frame),
-        }) => Some(frame.clone()),
-        _ => None,
-    })
-    .await;
+    let audio_out = tokio::time::timeout(
+        Duration::from_millis(1_500),
+        wait_for_event_match(&test.codex, |msg| match msg {
+            EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
+                payload: RealtimeEvent::AudioOut(frame),
+            }) => Some(frame.clone()),
+            _ => None,
+        }),
+    )
+    .await
+    .expect("timed out waiting for realtime audio after echoed user-role message");
     eprintln!(
         "[realtime test +{}ms] saw audio out data={} sample_rate={} num_channels={}",
         start.elapsed().as_millis(),

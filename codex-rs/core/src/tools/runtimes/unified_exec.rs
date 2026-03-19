@@ -218,6 +218,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
                 &req.cwd,
                 &env,
                 ExecExpiration::DefaultTimeout,
+                ctx.turn.config.exec_run_as.clone(),
                 req.sandbox_permissions,
                 req.additional_permissions.clone(),
                 req.justification.clone(),
@@ -266,6 +267,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             &req.cwd,
             &env,
             ExecExpiration::DefaultTimeout,
+            ctx.turn.config.exec_run_as.clone(),
             req.sandbox_permissions,
             req.additional_permissions.clone(),
             req.justification.clone(),
@@ -274,6 +276,22 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
         let exec_env = attempt
             .env_for(spec, req.network.as_ref())
             .map_err(|err| ToolError::Codex(err.into()))?;
+        if let Some(run_as) = exec_env.run_as.clone() {
+            if let Some(message) = self
+                .manager
+                .exec_command_sudo_worker_user_startup_warning(run_as)
+                .await
+            {
+                ctx.session
+                    .record_model_warning(
+                        format!(
+                            "exec_command requires passwordless sudo to run as the configured worker user: {message}"
+                        ),
+                        ctx.turn.as_ref(),
+                    )
+                    .await;
+            }
+        }
         self.manager
             .open_session_with_exec_env(&exec_env, req.tty, Box::new(NoopSpawnLifecycle))
             .await

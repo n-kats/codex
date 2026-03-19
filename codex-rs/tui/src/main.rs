@@ -84,25 +84,13 @@ fn main() -> anyhow::Result<()> {
             .config_overrides
             .raw_overrides
             .splice(0..0, top_cli.config_overrides.raw_overrides);
-        let use_app_server_tui = codex_tui::should_use_app_server_tui(&inner).await?;
-        let exit_info = if use_app_server_tui {
-            into_legacy_exit_info(
-                codex_tui_app_server::run_main(
-                    into_app_server_cli(inner),
-                    arg0_paths,
-                    codex_core::config_loader::LoaderOverrides::default(),
-                    /*remote*/ None,
-                )
-                .await?,
-            )
-        } else {
-            run_main(
-                inner,
-                arg0_paths,
-                codex_core::config_loader::LoaderOverrides::default(),
-            )
-            .await?
-        };
+        let exit_info = run_main(
+            inner,
+            arg0_paths,
+            codex_core::config_loader::LoaderOverrides::default(),
+            Vec::new(),
+        )
+        .await?;
         let token_usage = exit_info.token_usage;
         if !token_usage.is_zero() {
             println!(

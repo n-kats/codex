@@ -7,6 +7,11 @@ use additional_dirs::add_dir_warning_message;
 use app::App;
 pub use app::AppExitInfo;
 pub use app::ExitReason;
+use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
+use codex_app_server_client::InProcessAppServerClient;
+use codex_app_server_client::InProcessClientStartArgs;
+use codex_app_server_protocol::ConfigLayerSource;
+use codex_app_server_protocol::ConfigWarningNotification;
 use codex_cloud_requirements::cloud_requirements_loader;
 use codex_core::AuthManager;
 use codex_core::CodexAuth;
@@ -20,7 +25,7 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
-use codex_core::config::load_config_as_toml_with_cli_overrides;
+use codex_core::config::load_config_as_toml_with_cli_overrides_and_loader_overrides;
 use codex_core::config::resolve_oss_provider;
 use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::config_loader::ConfigLoadError;
@@ -260,10 +265,87 @@ pub use public_widgets::composer_input::ComposerAction;
 pub use public_widgets::composer_input::ComposerInput;
 // (tests access modules directly within the crate)
 
+#[allow(dead_code)]
+async fn start_embedded_app_server(
+    arg0_paths: Arg0DispatchPaths,
+    config: Config,
+    cli_kv_overrides: Vec<(String, toml::Value)>,
+    loader_overrides: LoaderOverrides,
+    cloud_requirements: CloudRequirementsLoader,
+    feedback: codex_feedback::CodexFeedback,
+) -> color_eyre::Result<InProcessAppServerClient> {
+    start_embedded_app_server_with(
+        arg0_paths,
+        config,
+        cli_kv_overrides,
+        loader_overrides,
+        cloud_requirements,
+        feedback,
+        InProcessAppServerClient::start,
+    )
+    .await
+}
+
+#[allow(dead_code)]
+async fn start_embedded_app_server_with<F, Fut>(
+    arg0_paths: Arg0DispatchPaths,
+    config: Config,
+    cli_kv_overrides: Vec<(String, toml::Value)>,
+    loader_overrides: LoaderOverrides,
+    cloud_requirements: CloudRequirementsLoader,
+    feedback: codex_feedback::CodexFeedback,
+    start_client: F,
+) -> color_eyre::Result<InProcessAppServerClient>
+where
+    F: FnOnce(InProcessClientStartArgs) -> Fut,
+    Fut: Future<Output = std::io::Result<InProcessAppServerClient>>,
+{
+    let config_warnings = config
+        .startup_warnings
+        .iter()
+        .map(|warning| ConfigWarningNotification {
+            summary: warning.clone(),
+            details: None,
+            path: None,
+            range: None,
+        })
+        .collect();
+    let client = start_client(InProcessClientStartArgs {
+        arg0_paths,
+        config: Arc::new(config),
+        cli_overrides: cli_kv_overrides,
+        loader_overrides,
+        cloud_requirements,
+        feedback,
+        config_warnings,
+        session_source: codex_protocol::protocol::SessionSource::Cli,
+        enable_codex_api_key_env: false,
+        client_name: "codex-tui".to_string(),
+        client_version: env!("CARGO_PKG_VERSION").to_string(),
+        experimental_api: true,
+        opt_out_notification_methods: Vec::new(),
+        channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
+    })
+    .await
+    .wrap_err("failed to start embedded app server")?;
+    Ok(client)
+}
+
+pub(crate) fn user_config_toml_path(config: &Config) -> Option<PathBuf> {
+    config
+        .config_layer_stack
+        .get_user_layer()
+        .and_then(|layer| match &layer.name {
+            ConfigLayerSource::User { file } => Some(file.as_path().to_path_buf()),
+            _ => None,
+        })
+}
+
 pub async fn run_main(
     mut cli: Cli,
     arg0_paths: Arg0DispatchPaths,
-    _loader_overrides: LoaderOverrides,
+    loader_overrides: LoaderOverrides,
+    agents_md: Vec<PathBuf>,
 ) -> std::io::Result<AppExitInfo> {
     let (sandbox_mode, approval_policy) = if cli.full_auto {
         (
@@ -321,10 +403,11 @@ pub async fn run_main(
     };
 
     #[allow(clippy::print_stderr)]
-    let config_toml = match load_config_as_toml_with_cli_overrides(
+    let config_toml = match load_config_as_toml_with_cli_overrides_and_loader_overrides(
         &codex_home,
         &config_cwd,
         cli_kv_overrides.clone(),
+        loader_overrides.clone(),
     )
     .await
     {
@@ -417,11 +500,13 @@ pub async fn run_main(
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
         show_raw_agent_reasoning: cli.oss.then_some(true),
         additional_writable_roots: additional_dirs,
+        project_doc_paths: agents_md,
         ..Default::default()
     };
 
     let config = load_config_or_exit(
         cli_kv_overrides.clone(),
+        loader_overrides.clone(),
         overrides.clone(),
         cloud_requirements.clone(),
     )
@@ -562,6 +647,7 @@ pub async fn run_main(
     run_ratatui_app(
         cli,
         config,
+        loader_overrides,
         overrides,
         cli_kv_overrides,
         cloud_requirements,
@@ -575,6 +661,7 @@ pub async fn run_main(
 async fn run_ratatui_app(
     cli: Cli,
     initial_config: Config,
+    loader_overrides: LoaderOverrides,
     overrides: ConfigOverrides,
     cli_kv_overrides: Vec<(String, toml::Value)>,
     mut cloud_requirements: CloudRequirementsLoader,
@@ -676,6 +763,7 @@ async fn run_ratatui_app(
         if onboarding_result.directory_trust_decision.is_some() || show_login_screen {
             load_config_or_exit(
                 cli_kv_overrides.clone(),
+                loader_overrides.clone(),
                 overrides.clone(),
                 cloud_requirements.clone(),
             )
@@ -936,6 +1024,7 @@ async fn run_ratatui_app(
         resume_picker::SessionSelection::Resume(_) | resume_picker::SessionSelection::Fork(_) => {
             load_config_or_exit_with_fallback_cwd(
                 cli_kv_overrides.clone(),
+                loader_overrides.clone(),
                 overrides.clone(),
                 cloud_requirements.clone(),
                 fallback_cwd,
@@ -1168,22 +1257,25 @@ fn get_login_status(config: &Config) -> LoginStatus {
     }
 }
 
-async fn load_config_or_exit(
+pub(crate) async fn load_config_or_exit(
     cli_kv_overrides: Vec<(String, toml::Value)>,
+    loader_overrides: LoaderOverrides,
     overrides: ConfigOverrides,
     cloud_requirements: CloudRequirementsLoader,
 ) -> Config {
     load_config_or_exit_with_fallback_cwd(
         cli_kv_overrides,
+        loader_overrides,
         overrides,
         cloud_requirements,
-        /*fallback_cwd*/ None,
+        None,
     )
     .await
 }
 
-async fn load_config_or_exit_with_fallback_cwd(
+pub(crate) async fn load_config_or_exit_with_fallback_cwd(
     cli_kv_overrides: Vec<(String, toml::Value)>,
+    loader_overrides: LoaderOverrides,
     overrides: ConfigOverrides,
     cloud_requirements: CloudRequirementsLoader,
     fallback_cwd: Option<PathBuf>,
@@ -1192,6 +1284,7 @@ async fn load_config_or_exit_with_fallback_cwd(
     match ConfigBuilder::default()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
+        .loader_overrides(loader_overrides)
         .cloud_requirements(cloud_requirements)
         .fallback_cwd(fallback_cwd)
         .build()
@@ -1495,20 +1588,24 @@ trust_level = "untrusted"
         // Simulate resume/fork reload: the final config has an invalid theme.
         let mut config = build_config(&temp_dir).await?;
         config.tui_theme = Some("bogus-theme".into());
+        let initial_warning_count = config.startup_warnings.len();
 
         // Theme override must use the final config (not initial_config).
         // This mirrors the real call site in run_ratatui_app.
-        if let Some(w) = validate_theme_name(config.tui_theme.as_deref(), Some(temp_dir.path())) {
-            config.startup_warnings.push(w);
-        }
+        let warning = validate_theme_name(config.tui_theme.as_deref(), Some(temp_dir.path()))
+            .expect("expected warning for invalid theme name");
+        config.startup_warnings.push(warning);
 
         assert_eq!(
             config.startup_warnings.len(),
-            1,
-            "warning from final config's invalid theme should be present"
+            initial_warning_count + 1,
+            "expected theme warning to be appended"
         );
         assert!(
-            config.startup_warnings[0].contains("bogus-theme"),
+            config
+                .startup_warnings
+                .iter()
+                .any(|warning| warning.contains("bogus-theme")),
             "warning should reference the final config's theme name"
         );
         Ok(())
@@ -1605,3 +1702,7 @@ trust_level = "untrusted"
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "custom_config_loader_tests.rs"]
+mod custom_config_loader_tests;

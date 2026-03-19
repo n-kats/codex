@@ -479,7 +479,7 @@ pub enum ConfigLayerSource {
         dot_codex_folder: AbsolutePathBuf,
     },
 
-    /// Session-layer overrides supplied via `-c`/`--config`.
+    /// Session-layer overrides supplied via `-c`.
     SessionFlags,
 
     /// `managed_config.toml` was designed to be a config that was loaded

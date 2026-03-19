@@ -630,6 +630,11 @@ impl TranscriptOverlay {
         self.view.is_scrolled_to_bottom()
     }
 
+    #[cfg(test)]
+    pub(crate) fn committed_cell_count(&self) -> usize {
+        self.cells.len()
+    }
+
     fn rebuild_renderables(&mut self) {
         let tail_renderable = self.take_live_tail_renderable();
         self.view.renderables = Self::render_cells(&self.cells, self.highlight_cell);
@@ -711,11 +716,6 @@ impl TranscriptOverlay {
     }
     pub(crate) fn is_done(&self) -> bool {
         self.is_done
-    }
-
-    #[cfg(test)]
-    pub(crate) fn committed_cell_count(&self) -> usize {
-        self.cells.len()
     }
 }
 

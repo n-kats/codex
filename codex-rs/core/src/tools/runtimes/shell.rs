@@ -251,6 +251,7 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
             &req.cwd,
             &req.env,
             req.timeout_ms.into(),
+            ctx.turn.config.exec_run_as.clone(),
             req.sandbox_permissions,
             req.additional_permissions.clone(),
             req.justification.clone(),

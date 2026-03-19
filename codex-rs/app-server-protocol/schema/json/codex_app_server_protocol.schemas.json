@@ -6548,7 +6548,7 @@
             "type": "object"
           },
           {
-            "description": "Session-layer overrides supplied via `-c`/`--config`.",
+            "description": "Session-layer overrides supplied via `-c`.",
             "properties": {
               "type": {
                 "enum": [
