@@ -53,11 +53,13 @@ use codex_core::config::ConfigOverrides;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_as_toml_with_cli_overrides_and_loader_overrides;
 use codex_core::config::resolve_oss_provider;
+use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::config_loader::ConfigLoadError;
 use codex_core::config_loader::LoaderOverrides;
 use codex_core::config_loader::format_config_error_with_source;
 use codex_core::format_exec_policy_error_with_source;
 use codex_core::git_info::get_git_repo_root;
+use codex_core::read_session_meta_line;
 use codex_feedback::CodexFeedback;
 use codex_otel::set_parent_from_context;
 use codex_otel::traceparent_context_from_env;
@@ -132,6 +134,9 @@ impl RequestIdSequencer {
 }
 
 struct ExecRunArgs {
+    cli_kv_overrides: Vec<(String, toml::Value)>,
+    cloud_requirements: CloudRequirementsLoader,
+    config_overrides: ConfigOverrides,
     in_process_start_args: InProcessClientStartArgs,
     command: Option<ExecCommand>,
     config: Config,
@@ -147,6 +152,7 @@ struct ExecRunArgs {
     prompt: Option<String>,
     skip_git_repo_check: bool,
     stderr_with_ansi: bool,
+    loader_overrides: LoaderOverrides,
 }
 
 fn exec_root_span() -> tracing::Span {
@@ -388,7 +394,7 @@ pub async fn run_main_with_agents_md(
 
     let config = ConfigBuilder::default()
         .cli_overrides(cli_kv_overrides)
-        .harness_overrides(overrides)
+        .harness_overrides(overrides.clone())
         .cloud_requirements(cloud_requirements)
         .build()
         .await?;
@@ -445,22 +451,13 @@ pub async fn run_main_with_agents_md(
     if let Some(context) = traceparent_context_from_env() {
         set_parent_from_context(&exec_span, context);
     }
-    let config_warnings: Vec<ConfigWarningNotification> = config
-        .startup_warnings
-        .iter()
-        .map(|warning| ConfigWarningNotification {
-            summary: warning.clone(),
-            details: None,
-            path: None,
-            range: None,
-        })
-        .collect();
+    let config_warnings = config_warning_notifications(&config);
     let in_process_start_args = InProcessClientStartArgs {
         arg0_paths,
         config: std::sync::Arc::new(config.clone()),
-        cli_overrides: run_cli_overrides,
-        loader_overrides: run_loader_overrides,
-        cloud_requirements: run_cloud_requirements,
+        cli_overrides: run_cli_overrides.clone(),
+        loader_overrides: run_loader_overrides.clone(),
+        cloud_requirements: run_cloud_requirements.clone(),
         feedback: CodexFeedback::new(),
         config_warnings,
         session_source: SessionSource::Exec,
@@ -472,6 +469,9 @@ pub async fn run_main_with_agents_md(
         channel_capacity: DEFAULT_IN_PROCESS_CHANNEL_CAPACITY,
     };
     run_exec_session(ExecRunArgs {
+        cli_kv_overrides: run_cli_overrides,
+        cloud_requirements: run_cloud_requirements,
+        config_overrides: overrides,
         in_process_start_args,
         command,
         config,
@@ -487,16 +487,33 @@ pub async fn run_main_with_agents_md(
         prompt,
         skip_git_repo_check,
         stderr_with_ansi,
+        loader_overrides: run_loader_overrides,
     })
     .instrument(exec_span)
     .await
 }
 
+fn config_warning_notifications(config: &Config) -> Vec<ConfigWarningNotification> {
+    config
+        .startup_warnings
+        .iter()
+        .map(|warning| ConfigWarningNotification {
+            summary: warning.clone(),
+            details: None,
+            path: None,
+            range: None,
+        })
+        .collect()
+}
+
 async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     let ExecRunArgs {
-        in_process_start_args,
+        cli_kv_overrides,
+        cloud_requirements,
+        config_overrides,
+        mut in_process_start_args,
         command,
-        config,
+        mut config,
         cursor_ansi,
         dangerously_bypass_approvals_and_sandbox,
         exec_span,
@@ -509,7 +526,31 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         prompt,
         skip_git_repo_check,
         stderr_with_ansi,
+        loader_overrides,
     } = args;
+
+    // For resume, rebuild the effective config using the session's cwd before starting the
+    // in-process app-server client. The client bootstraps core managers from the config, so
+    // starting it too early can lock in the wrong config stack.
+    let mut resolved_resume_path: Option<PathBuf> = None;
+    if let Some(ExecCommand::Resume(resume_args)) = command.as_ref() {
+        resolved_resume_path = resolve_resume_path(&config, resume_args).await?;
+        if let Some(path) = resolved_resume_path.as_ref() {
+            config = resume_config_for_path(
+                &config,
+                &config_overrides,
+                &cli_kv_overrides,
+                &loader_overrides,
+                &cloud_requirements,
+                path.as_path(),
+            )
+            .await?;
+        }
+    }
+
+    // Ensure the app-server client uses the final effective config (including resume cwd).
+    in_process_start_args.config = std::sync::Arc::new(config.clone());
+    in_process_start_args.config_warnings = config_warning_notifications(&config);
 
     let mut event_processor: Box<dyn EventProcessor> = match json_mode {
         true => Box::new(EventProcessorWithJsonOutput::new(last_message_file.clone())),
@@ -547,7 +588,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
 
     let default_cwd = config.cwd.to_path_buf();
     let default_approval_policy = config.permissions.approval_policy.value();
-    let default_sandbox_policy = config.permissions.sandbox_policy.get();
+    let default_sandbox_policy = config.permissions.sandbox_policy.get().clone();
     let default_effort = config.model_reasoning_effort;
 
     // When --yolo (dangerously_bypass_approvals_and_sandbox) is set, also skip the git repo check
@@ -569,10 +610,8 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
 
     // Handle resume subcommand by resolving a rollout path and using explicit resume API.
     let (primary_thread_id, fallback_session_configured) =
-        if let Some(ExecCommand::Resume(args)) = command.as_ref() {
-            let resume_path = resolve_resume_path(&config, args).await?;
-
-            if let Some(path) = resume_path {
+        if let Some(ExecCommand::Resume(_args)) = command.as_ref() {
+            if let Some(path) = resolved_resume_path.clone() {
                 let response: ThreadResumeResponse = send_request_with_response(
                     &client,
                     ClientRequest::ThreadResume {
@@ -982,6 +1021,36 @@ fn approvals_reviewer_override_from_config(
     config: &Config,
 ) -> Option<codex_app_server_protocol::ApprovalsReviewer> {
     Some(config.approvals_reviewer.into())
+}
+
+async fn resume_config_for_path(
+    current_config: &Config,
+    config_overrides: &ConfigOverrides,
+    cli_kv_overrides: &[(String, toml::Value)],
+    loader_overrides: &LoaderOverrides,
+    cloud_requirements: &CloudRequirementsLoader,
+    resume_path: &std::path::Path,
+) -> anyhow::Result<Config> {
+    let session_meta = read_session_meta_line(resume_path).await?;
+    // Use the session's recorded cwd to resolve project config layers, but keep the current
+    // invocation cwd as the runtime cwd so the resumed session is associated with where the user
+    // ran `resume` from (this also drives `resume --last` cwd filtering).
+    let runtime_cwd = current_config.cwd.clone();
+    let mut resume_overrides = config_overrides.clone();
+    resume_overrides.cwd = Some(session_meta.meta.cwd.clone());
+
+    let mut config = ConfigBuilder::default()
+        .codex_home(current_config.codex_home.clone())
+        .cli_overrides(cli_kv_overrides.to_vec())
+        .harness_overrides(resume_overrides)
+        .loader_overrides(loader_overrides.clone())
+        .cloud_requirements(cloud_requirements.clone())
+        .build()
+        .await
+        .map_err(anyhow::Error::from)?;
+
+    config.cwd = runtime_cwd;
+    Ok(config)
 }
 
 async fn send_request_with_response<T>(
@@ -1955,3 +2024,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod custom_tests;

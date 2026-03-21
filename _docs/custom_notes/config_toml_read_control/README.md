@@ -41,6 +41,19 @@
 - `error: unexpected argument '--config' found` が出る
   - `codex-rs/cli` の clap 定義からフラグが消えている／`LoaderOverrides` が TUI 起動に伝播していない可能性が高い。
 
+## 追記（2026-03-21）
+
+- `codex resume` は、再開対象 session の cwd で `config.toml` を再評価しつつ、実行時 cwd は保持する必要がある。
+- これを壊すと、`compact_prompt` のような session cwd 依存の設定が resume 後の compaction に反映されないことがある。
+- TUI 側でも resume 後に runtime cwd を維持しないと、`new` が resume 元の cwd を引きずってしまう。
+- 回帰防止として `exec/src/custom_tests.rs` の `custom__resume_config__...`、`core/tests/suite/compact.rs` の resume compaction テスト、`tui_app_server/src/app.rs` の resume config テストを追加した。
+
+## 追記（2026-03-21 再確認）
+
+- `new` / `resume` で config を再構成するときも、起動時に渡された `LoaderOverrides`（`--config` / `--no-config`）を保持する必要がある。
+- これを持ち回らないと、`resume` / `new` のたびに user config の参照先がデフォルトへ戻り、`custom.user_shell.no_inject` が false と判定される。
+- 回帰防止として `tui_app_server/src/app.rs` に、`LoaderOverrides.user_config_path` が `refresh` / `resume` の両経路で維持されることを確認するテストを追加した。
+
 ## 関連ファイル一覧
 
 - `codex-rs/cli/src/main.rs`

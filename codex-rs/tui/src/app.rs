@@ -51,6 +51,7 @@ use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::types::ApprovalsReviewer;
 use codex_core::config::types::ModelAvailabilityNuxConfig;
 use codex_core::config_loader::ConfigLayerStackOrdering;
+use codex_core::config_loader::LoaderOverrides;
 use codex_core::features::Feature;
 use codex_core::models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use codex_core::models_manager::manager::RefreshStrategy;
@@ -706,6 +707,7 @@ pub(crate) struct App {
     pub(crate) active_profile: Option<String>,
     cli_kv_overrides: Vec<(String, TomlValue)>,
     harness_overrides: ConfigOverrides,
+    loader_overrides: LoaderOverrides,
     runtime_approval_policy_override: Option<AskForApproval>,
     runtime_sandbox_policy_override: Option<SandboxPolicy>,
 
@@ -821,6 +823,7 @@ impl App {
         ConfigBuilder::default()
             .codex_home(self.config.codex_home.clone())
             .cli_overrides(self.cli_kv_overrides.clone())
+            .loader_overrides(self.loader_overrides.clone())
             .harness_overrides(overrides)
             .build()
             .await
@@ -1989,6 +1992,7 @@ impl App {
         mut config: Config,
         cli_kv_overrides: Vec<(String, TomlValue)>,
         harness_overrides: ConfigOverrides,
+        loader_overrides: LoaderOverrides,
         active_profile: Option<String>,
         initial_prompt: Option<String>,
         initial_images: Vec<PathBuf>,
@@ -2209,6 +2213,7 @@ impl App {
             active_profile,
             cli_kv_overrides,
             harness_overrides,
+            loader_overrides,
             runtime_approval_policy_override: None,
             runtime_sandbox_policy_override: None,
             file_search,
@@ -6472,6 +6477,7 @@ guardian_approval = true
             active_profile: None,
             cli_kv_overrides: Vec::new(),
             harness_overrides: ConfigOverrides::default(),
+            loader_overrides: LoaderOverrides::default(),
             runtime_approval_policy_override: None,
             runtime_sandbox_policy_override: None,
             file_search,
@@ -6532,6 +6538,7 @@ guardian_approval = true
                 active_profile: None,
                 cli_kv_overrides: Vec::new(),
                 harness_overrides: ConfigOverrides::default(),
+                loader_overrides: LoaderOverrides::default(),
                 runtime_approval_policy_override: None,
                 runtime_sandbox_policy_override: None,
                 file_search,
@@ -6963,6 +6970,144 @@ guardian_approval = true
         assert_eq!(
             app_enabled_in_effective_config(&app.config, &app_id),
             Some(false)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn refresh_in_memory_config_from_disk_preserves_loader_overrides_user_config_path()
+    -> Result<()> {
+        let mut app = make_test_app().await;
+        let codex_home = tempdir()?;
+        let custom_user_config = tempdir()?;
+        let cwd = tempdir()?;
+        let override_config_path = custom_user_config.path().join("override.toml");
+
+        std::fs::write(
+            codex_home.path().join("config.toml"),
+            r#"
+model = "gpt-default"
+
+[custom.user_shell]
+no_inject = false
+"#,
+        )?;
+        std::fs::write(
+            &override_config_path,
+            r#"
+model = "gpt-override"
+
+[custom.user_shell]
+no_inject = true
+"#,
+        )?;
+
+        app.config.codex_home = codex_home.path().to_path_buf();
+        app.loader_overrides.user_config_path = Some(override_config_path);
+        app.chat_widget.handle_codex_event(Event {
+            id: String::new(),
+            msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
+                session_id: ThreadId::new(),
+                forked_from_id: None,
+                thread_name: None,
+                model: "gpt-test".to_string(),
+                model_provider_id: "test-provider".to_string(),
+                service_tier: None,
+                approval_policy: AskForApproval::Never,
+                approvals_reviewer: ApprovalsReviewer::User,
+                sandbox_policy: SandboxPolicy::new_read_only_policy(),
+                cwd: cwd.path().to_path_buf(),
+                reasoning_effort: None,
+                history_log_id: 0,
+                history_entry_count: 0,
+                initial_messages: None,
+                network_proxy: None,
+                rollout_path: Some(PathBuf::new()),
+            }),
+        });
+
+        app.refresh_in_memory_config_from_disk().await?;
+
+        assert_eq!(app.config.model.as_deref(), Some("gpt-override"));
+        assert!(app.config.user_shell_no_inject);
+        assert!(
+            !app.config
+                .startup_warnings
+                .iter()
+                .any(|warning| warning == "custom.user_shell.no_inject is false (default); `!` (UserShell) commands and their outputs will be injected into the model context and recorded to the local session history. Set custom.user_shell.no_inject=true to disable injection/recording, and avoid secrets in `!` commands/output.")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rebuild_config_for_resume_or_fallback_preserves_loader_overrides_user_config_path()
+    -> Result<()> {
+        let mut app = make_test_app().await;
+        let codex_home = tempdir()?;
+        let custom_user_config = tempdir()?;
+        let current_cwd = tempdir()?;
+        let resume_cwd = tempdir()?;
+        let override_config_path = custom_user_config.path().join("override.toml");
+
+        std::fs::write(
+            codex_home.path().join("config.toml"),
+            r#"
+model = "gpt-default"
+
+[custom.user_shell]
+no_inject = false
+"#,
+        )?;
+        std::fs::write(
+            &override_config_path,
+            r#"
+model = "gpt-override"
+
+[custom.user_shell]
+no_inject = true
+"#,
+        )?;
+
+        app.config.codex_home = codex_home.path().to_path_buf();
+        app.loader_overrides.user_config_path = Some(override_config_path);
+        app.config.cwd = current_cwd.path().to_path_buf();
+        app.chat_widget.handle_codex_event(Event {
+            id: String::new(),
+            msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
+                session_id: ThreadId::new(),
+                forked_from_id: None,
+                thread_name: None,
+                model: "gpt-test".to_string(),
+                model_provider_id: "test-provider".to_string(),
+                service_tier: None,
+                approval_policy: AskForApproval::Never,
+                approvals_reviewer: ApprovalsReviewer::User,
+                sandbox_policy: SandboxPolicy::new_read_only_policy(),
+                cwd: current_cwd.path().to_path_buf(),
+                reasoning_effort: None,
+                history_log_id: 0,
+                history_entry_count: 0,
+                initial_messages: None,
+                network_proxy: None,
+                rollout_path: Some(PathBuf::new()),
+            }),
+        });
+
+        let resume_config = app
+            .rebuild_config_for_resume_or_fallback(
+                current_cwd.path(),
+                resume_cwd.path().to_path_buf(),
+            )
+            .await?;
+
+        assert_eq!(resume_config.cwd, resume_cwd.path().to_path_buf());
+        assert_eq!(resume_config.model.as_deref(), Some("gpt-override"));
+        assert!(resume_config.user_shell_no_inject);
+        assert!(
+            !resume_config
+                .startup_warnings
+                .iter()
+                .any(|warning| warning == "custom.user_shell.no_inject is false (default); `!` (UserShell) commands and their outputs will be injected into the model context and recorded to the local session history. Set custom.user_shell.no_inject=true to disable injection/recording, and avoid secrets in `!` commands/output.")
         );
         Ok(())
     }

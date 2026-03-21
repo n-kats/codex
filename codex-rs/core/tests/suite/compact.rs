@@ -81,6 +81,10 @@ fn set_test_compact_prompt(config: &mut Config) {
     config.compact_prompt = Some(SUMMARIZATION_PROMPT.to_string());
 }
 
+fn set_custom_compact_prompt(config: &mut Config, compact_prompt: &str) {
+    config.compact_prompt = Some(compact_prompt.to_string());
+}
+
 fn body_contains_text(body: &str, text: &str) -> bool {
     body.contains(&json_fragment(text))
 }
@@ -118,6 +122,7 @@ fn assert_pre_sampling_switch_compaction_requests(
     follow_up: &serde_json::Value,
     previous_model: &str,
     next_model: &str,
+    expected_prompt: &str,
 ) {
     assert_eq!(first["model"].as_str(), Some(previous_model));
     assert_eq!(compact["model"].as_str(), Some(previous_model));
@@ -125,8 +130,8 @@ fn assert_pre_sampling_switch_compaction_requests(
 
     let compact_body = compact.to_string();
     assert!(
-        body_contains_text(&compact_body, SUMMARIZATION_PROMPT),
-        "pre-sampling compact request should include summarization prompt"
+        body_contains_text(&compact_body, expected_prompt),
+        "pre-sampling compact request should include the expected compact prompt"
     );
     assert!(
         !compact_body.contains("<model_switch>"),
@@ -1808,6 +1813,7 @@ async fn pre_sampling_compact_runs_on_switch_to_smaller_context_model() {
         &requests[2].body_json(),
         previous_model,
         next_model,
+        SUMMARIZATION_PROMPT,
     );
 
     insta::assert_snapshot!(
@@ -1966,6 +1972,164 @@ async fn pre_sampling_compact_runs_after_resume_and_switch_to_smaller_model() {
         &requests[2].body_json(),
         previous_model,
         next_model,
+        SUMMARIZATION_PROMPT,
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pre_sampling_compact_after_resume_uses_resumed_custom_prompt() {
+    skip_if_no_network!();
+
+    let server = MockServer::start().await;
+    let previous_model = "gpt-5.2-codex";
+    let next_model = "gpt-5.1-codex-max";
+    let initial_prompt = "INITIAL_RESUME_COMPACT_PROMPT";
+    let resumed_prompt = "RESUMED_RESUME_COMPACT_PROMPT";
+
+    let models_mock = mount_models_once(
+        &server,
+        ModelsResponse {
+            models: vec![
+                model_info_with_context_window(previous_model, 273_000),
+                model_info_with_context_window(next_model, 125_000),
+            ],
+        },
+    )
+    .await;
+
+    let request_log = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_assistant_message("m1", "before resume"),
+                ev_completed_with_tokens("r1", 120_000),
+            ]),
+            sse(vec![
+                ev_assistant_message("m2", "RESUME_COMPACT_SUMMARY"),
+                ev_completed_with_tokens("r2", 10),
+            ]),
+            sse(vec![
+                ev_assistant_message("m3", "after resume"),
+                ev_completed_with_tokens("r3", 100),
+            ]),
+        ],
+    )
+    .await;
+
+    let model_provider = non_openai_model_provider(&server);
+    let mut initial_builder = test_codex()
+        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_model(previous_model)
+        .with_config({
+            let model_provider = model_provider.clone();
+            move |config| {
+                config.model_provider = model_provider;
+                set_custom_compact_prompt(config, initial_prompt);
+            }
+        });
+    let initial = initial_builder
+        .build(&server)
+        .await
+        .expect("build initial test codex");
+    let home = initial.home.clone();
+    let rollout_path = initial
+        .session_configured
+        .rollout_path
+        .clone()
+        .expect("rollout path");
+
+    initial
+        .codex
+        .submit(Op::UserTurn {
+            items: vec![UserInput::Text {
+                text: "before resume".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            cwd: initial.cwd.path().to_path_buf(),
+            approval_policy: AskForApproval::Never,
+            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            model: previous_model.to_string(),
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+        })
+        .await
+        .expect("submit pre-resume turn");
+    wait_for_event(&initial.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    initial
+        .codex
+        .submit(Op::Shutdown)
+        .await
+        .expect("shutdown initial session");
+    wait_for_event(&initial.codex, |event| {
+        matches!(event, EventMsg::ShutdownComplete)
+    })
+    .await;
+
+    let mut resumed_builder = test_codex()
+        .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_model(previous_model)
+        .with_config({
+            let model_provider = model_provider.clone();
+            move |config| {
+                config.model_provider = model_provider;
+                set_custom_compact_prompt(config, resumed_prompt);
+            }
+        });
+    let resumed = resumed_builder
+        .resume(&server, home, rollout_path)
+        .await
+        .expect("resume codex");
+
+    resumed
+        .codex
+        .submit(Op::UserTurn {
+            items: vec![UserInput::Text {
+                text: "after resume".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            cwd: resumed.cwd.path().to_path_buf(),
+            approval_policy: AskForApproval::Never,
+            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            model: next_model.to_string(),
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+        })
+        .await
+        .expect("submit resumed user turn");
+    assert_compaction_uses_turn_lifecycle_id(&resumed.codex).await;
+
+    let requests = request_log.requests();
+    assert_eq!(models_mock.requests().len(), 1);
+    assert_eq!(
+        requests.len(),
+        3,
+        "expected user, compact, and follow-up requests"
+    );
+    assert_pre_sampling_switch_compaction_requests(
+        &requests[0].body_json(),
+        &requests[1].body_json(),
+        &requests[2].body_json(),
+        previous_model,
+        next_model,
+        resumed_prompt,
+    );
+
+    let compact_body = requests[1].body_json().to_string();
+    assert!(
+        !body_contains_text(&compact_body, initial_prompt),
+        "resume compaction should not keep the initial session compact prompt"
     );
 }
 

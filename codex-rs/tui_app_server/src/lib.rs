@@ -1288,7 +1288,7 @@ async fn run_ratatui_app(
         arg0_paths,
         config.clone(),
         cli_kv_overrides.clone(),
-        loader_overrides,
+        loader_overrides.clone(),
         cloud_requirements.clone(),
         feedback.clone(),
     )
@@ -1308,6 +1308,7 @@ async fn run_ratatui_app(
         config,
         cli_kv_overrides.clone(),
         overrides.clone(),
+        loader_overrides,
         active_profile,
         prompt,
         images,

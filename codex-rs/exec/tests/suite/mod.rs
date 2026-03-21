@@ -2,6 +2,7 @@
 mod add_dir;
 mod apply_patch;
 mod auth_env;
+mod custom_resume;
 mod ephemeral;
 mod mcp_required_exit;
 mod originator;

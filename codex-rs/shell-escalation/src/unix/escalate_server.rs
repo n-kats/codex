@@ -397,6 +397,7 @@ mod tests {
     use tempfile::TempDir;
     use tokio::time::Instant;
     use tokio::time::sleep;
+    use tokio::time::timeout;
 
     struct DeterministicEscalationPolicy {
         decision: EscalationDecision,
@@ -468,7 +469,7 @@ mod tests {
     }
 
     struct PermissionAssertingShellCommandExecutor {
-        expected_permissions: EscalationPermissions,
+        captured_execution: Arc<Mutex<Option<EscalationExecution>>>,
     }
 
     #[async_trait::async_trait]
@@ -492,10 +493,7 @@ mod tests {
             env: HashMap<String, String>,
             execution: EscalationExecution,
         ) -> anyhow::Result<PreparedExec> {
-            assert_eq!(
-                execution,
-                EscalationExecution::Permissions(self.expected_permissions.clone())
-            );
+            *self.captured_execution.lock().unwrap() = Some(execution);
             Ok(PreparedExec {
                 command: std::iter::once(program.to_string_lossy().to_string())
                     .chain(argv.iter().skip(1).cloned())
@@ -788,10 +786,14 @@ mod tests {
             .send_with_fds(SuperExecMessage { fds: Vec::new() }, &[])
             .await?;
 
-        let result = client.receive::<SuperExecResult>().await?;
+        let result = timeout(Duration::from_secs(5), client.receive::<SuperExecResult>())
+            .await
+            .expect("timed out waiting for escalated command result")?;
         assert_eq!(42, result.exit_code);
 
-        server_task.await?
+        timeout(Duration::from_secs(5), server_task)
+            .await
+            .expect("timed out waiting for escalate session task")?
     }
 
     /// Saves a target descriptor, closes it, and restores it when dropped.
@@ -916,6 +918,7 @@ mod tests {
     #[tokio::test]
     async fn handle_escalate_session_passes_permissions_to_executor() -> anyhow::Result<()> {
         let (server, client) = AsyncSocket::pair()?;
+        let captured_execution = Arc::new(Mutex::new(None));
         let server_task = tokio::spawn(handle_escalate_session_with_policy(
             server,
             Arc::new(DeterministicEscalationPolicy {
@@ -929,12 +932,7 @@ mod tests {
                 )),
             }),
             Arc::new(PermissionAssertingShellCommandExecutor {
-                expected_permissions: EscalationPermissions::PermissionProfile(PermissionProfile {
-                    network: Some(NetworkPermissions {
-                        enabled: Some(true),
-                    }),
-                    ..Default::default()
-                }),
+                captured_execution: Arc::clone(&captured_execution),
             }),
             CancellationToken::new(),
             CancellationToken::new(),
@@ -961,10 +959,27 @@ mod tests {
             .send_with_fds(SuperExecMessage { fds: Vec::new() }, &[])
             .await?;
 
-        let result = client.receive::<SuperExecResult>().await?;
+        let result = timeout(Duration::from_secs(5), client.receive::<SuperExecResult>())
+            .await
+            .expect("timed out waiting for escalated command result")?;
         assert_eq!(0, result.exit_code);
 
-        server_task.await?
+        let execution = captured_execution.lock().unwrap().clone();
+        assert_eq!(
+            Some(EscalationExecution::Permissions(
+                EscalationPermissions::PermissionProfile(PermissionProfile {
+                    network: Some(NetworkPermissions {
+                        enabled: Some(true),
+                    }),
+                    ..Default::default()
+                })
+            )),
+            execution
+        );
+
+        timeout(Duration::from_secs(5), server_task)
+            .await
+            .expect("timed out waiting for escalate session task")?
     }
 
     #[tokio::test]

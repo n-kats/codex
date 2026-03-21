@@ -1069,6 +1069,7 @@ async fn run_ratatui_app(
         config,
         cli_kv_overrides.clone(),
         overrides.clone(),
+        loader_overrides,
         active_profile,
         prompt,
         images,
