@@ -2,8 +2,34 @@ use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::ModeKind;
 
 use crate::model_catalog::ModelCatalog;
+use codex_core::models_manager::manager::ModelsManager;
 
-fn filtered_presets(model_catalog: &ModelCatalog) -> Vec<CollaborationModeMask> {
+pub(crate) trait CollaborationModeCatalog {
+    fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask>;
+}
+
+impl CollaborationModeCatalog for ModelCatalog {
+    fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask> {
+        ModelCatalog::list_collaboration_modes(self)
+    }
+}
+
+impl CollaborationModeCatalog for ModelsManager {
+    fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask> {
+        ModelsManager::list_collaboration_modes(self)
+    }
+}
+
+impl<T> CollaborationModeCatalog for &T
+where
+    T: CollaborationModeCatalog + ?Sized,
+{
+    fn list_collaboration_modes(&self) -> Vec<CollaborationModeMask> {
+        (**self).list_collaboration_modes()
+    }
+}
+
+fn filtered_presets(model_catalog: &impl CollaborationModeCatalog) -> Vec<CollaborationModeMask> {
     model_catalog
         .list_collaboration_modes()
         .into_iter()
@@ -11,11 +37,15 @@ fn filtered_presets(model_catalog: &ModelCatalog) -> Vec<CollaborationModeMask> 
         .collect()
 }
 
-pub(crate) fn presets_for_tui(model_catalog: &ModelCatalog) -> Vec<CollaborationModeMask> {
+pub(crate) fn presets_for_tui(
+    model_catalog: &impl CollaborationModeCatalog,
+) -> Vec<CollaborationModeMask> {
     filtered_presets(model_catalog)
 }
 
-pub(crate) fn default_mask(model_catalog: &ModelCatalog) -> Option<CollaborationModeMask> {
+pub(crate) fn default_mask(
+    model_catalog: &impl CollaborationModeCatalog,
+) -> Option<CollaborationModeMask> {
     let presets = filtered_presets(model_catalog);
     presets
         .iter()
@@ -25,7 +55,7 @@ pub(crate) fn default_mask(model_catalog: &ModelCatalog) -> Option<Collaboration
 }
 
 pub(crate) fn mask_for_kind(
-    model_catalog: &ModelCatalog,
+    model_catalog: &impl CollaborationModeCatalog,
     kind: ModeKind,
 ) -> Option<CollaborationModeMask> {
     if !kind.is_tui_visible() {
@@ -38,7 +68,7 @@ pub(crate) fn mask_for_kind(
 
 /// Cycle to the next collaboration mode preset in list order.
 pub(crate) fn next_mask(
-    model_catalog: &ModelCatalog,
+    model_catalog: &impl CollaborationModeCatalog,
     current: Option<&CollaborationModeMask>,
 ) -> Option<CollaborationModeMask> {
     let presets = filtered_presets(model_catalog);
@@ -53,10 +83,14 @@ pub(crate) fn next_mask(
     presets.get(next_index).cloned()
 }
 
-pub(crate) fn default_mode_mask(model_catalog: &ModelCatalog) -> Option<CollaborationModeMask> {
+pub(crate) fn default_mode_mask(
+    model_catalog: &impl CollaborationModeCatalog,
+) -> Option<CollaborationModeMask> {
     mask_for_kind(model_catalog, ModeKind::Default)
 }
 
-pub(crate) fn plan_mask(model_catalog: &ModelCatalog) -> Option<CollaborationModeMask> {
+pub(crate) fn plan_mask(
+    model_catalog: &impl CollaborationModeCatalog,
+) -> Option<CollaborationModeMask> {
     mask_for_kind(model_catalog, ModeKind::Plan)
 }

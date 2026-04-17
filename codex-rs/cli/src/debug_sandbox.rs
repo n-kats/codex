@@ -4,6 +4,7 @@ mod pid_tracker;
 mod seatbelt;
 
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
 use std::process::Stdio;
 
 use codex_core::config::Config;
@@ -11,19 +12,21 @@ use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::NetworkProxyAuditMetadata;
 use codex_core::exec_env::create_env;
+use codex_core::landlock::spawn_command_under_linux_sandbox;
 #[cfg(target_os = "macos")]
 use codex_core::spawn::CODEX_SANDBOX_ENV_VAR;
+#[cfg(target_os = "macos")]
 use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
+use codex_core::spawn::StdioPolicy;
 use codex_protocol::config_types::SandboxMode;
+#[cfg(target_os = "macos")]
 use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_sandboxing::landlock::create_linux_sandbox_command_args_for_policies;
 #[cfg(target_os = "macos")]
-use codex_sandboxing::seatbelt::CreateSeatbeltCommandArgsParams;
-#[cfg(target_os = "macos")]
-use codex_sandboxing::seatbelt::create_seatbelt_command_args;
-use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_sandboxing::seatbelt::create_seatbelt_command_args_for_policies_with_extensions;
 use codex_utils_cli::CliConfigOverrides;
+#[cfg(target_os = "macos")]
 use tokio::process::Child;
+#[cfg(target_os = "macos")]
 use tokio::process::Command as TokioCommand;
 use toml::Value as TomlValue;
 
@@ -42,7 +45,6 @@ pub async fn run_command_under_seatbelt(
 ) -> anyhow::Result<()> {
     let SeatbeltCommand {
         full_auto,
-        allow_unix_sockets,
         log_denials,
         config_overrides,
         command,
@@ -54,7 +56,6 @@ pub async fn run_command_under_seatbelt(
         codex_linux_sandbox_exe,
         SandboxType::Seatbelt,
         log_denials,
-        &allow_unix_sockets,
     )
     .await
 }
@@ -83,7 +84,6 @@ pub async fn run_command_under_landlock(
         codex_linux_sandbox_exe,
         SandboxType::Landlock,
         /*log_denials*/ false,
-        &[],
     )
     .await
 }
@@ -104,7 +104,6 @@ pub async fn run_command_under_windows(
         codex_linux_sandbox_exe,
         SandboxType::Windows,
         /*log_denials*/ false,
-        &[],
     )
     .await
 }
@@ -123,8 +122,6 @@ async fn run_command_under_sandbox(
     codex_linux_sandbox_exe: Option<PathBuf>,
     sandbox_type: SandboxType,
     log_denials: bool,
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
-    allow_unix_sockets: &[AbsolutePathBuf],
 ) -> anyhow::Result<()> {
     let config = load_debug_sandbox_config(
         config_overrides
@@ -147,6 +144,7 @@ async fn run_command_under_sandbox(
         &config.permissions.shell_environment_policy,
         /*thread_id*/ None,
     );
+    let stdio_policy = StdioPolicy::Inherit;
 
     // Special-case Windows sandbox: execute and exit the process to emulate inherited stdio.
     if let SandboxType::Windows = sandbox_type {
@@ -173,20 +171,14 @@ async fn run_command_under_sandbox(
             let res = tokio::task::spawn_blocking(move || {
                 if use_elevated {
                     run_windows_sandbox_capture_elevated(
-                        codex_windows_sandbox::ElevatedSandboxCaptureRequest {
-                            policy_json_or_preset: policy_str.as_str(),
-                            sandbox_policy_cwd: &sandbox_cwd,
-                            codex_home: base_dir.as_path(),
-                            command: command_vec,
-                            cwd: &cwd_clone,
-                            env_map,
-                            timeout_ms: None,
-                            use_private_desktop: config.permissions.windows_sandbox_private_desktop,
-                            proxy_enforced: false,
-                            read_roots_override: None,
-                            write_roots_override: None,
-                            deny_write_paths_override: &[],
-                        },
+                        policy_str.as_str(),
+                        &sandbox_cwd,
+                        base_dir.as_path(),
+                        command_vec,
+                        &cwd_clone,
+                        env_map,
+                        /*timeout_ms*/ None,
+                        config.permissions.windows_sandbox_private_desktop,
                     )
                 } else {
                     run_windows_sandbox_capture(
@@ -261,21 +253,21 @@ async fn run_command_under_sandbox(
     let mut child = match sandbox_type {
         #[cfg(target_os = "macos")]
         SandboxType::Seatbelt => {
-            let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
+            let args = create_seatbelt_command_args_for_policies_with_extensions(
                 command,
-                file_system_sandbox_policy: &config.permissions.file_system_sandbox_policy,
-                network_sandbox_policy: config.permissions.network_sandbox_policy,
-                sandbox_policy_cwd: sandbox_policy_cwd.as_path(),
-                enforce_managed_network: false,
-                network: network.as_ref(),
-                extra_allow_unix_sockets: allow_unix_sockets,
-            });
+                &config.permissions.file_system_sandbox_policy,
+                config.permissions.network_sandbox_policy,
+                sandbox_policy_cwd.as_path(),
+                /*enforce_managed_network*/ false,
+                network.as_ref(),
+                /*extensions*/ None,
+            );
             let network_policy = config.permissions.network_sandbox_policy;
             spawn_debug_sandbox_child(
                 PathBuf::from("/usr/bin/sandbox-exec"),
                 args,
                 /*arg0*/ None,
-                cwd.to_path_buf(),
+                cwd,
                 network_policy,
                 env,
                 |env_map| {
@@ -293,29 +285,20 @@ async fn run_command_under_sandbox(
                 .codex_linux_sandbox_exe
                 .expect("codex-linux-sandbox executable not found");
             let use_legacy_landlock = config.features.use_legacy_landlock();
-            let args = create_linux_sandbox_command_args_for_policies(
+            let mut env = env;
+            if let Some(network) = network.as_ref() {
+                network.apply_to_env(&mut env);
+            }
+            spawn_command_under_linux_sandbox(
+                codex_linux_sandbox_exe,
                 command,
-                cwd.as_path(),
+                cwd,
                 config.permissions.sandbox_policy.get(),
-                &config.permissions.file_system_sandbox_policy,
-                config.permissions.network_sandbox_policy,
                 sandbox_policy_cwd.as_path(),
                 use_legacy_landlock,
-                /*allow_network_for_proxy*/ false,
-            );
-            let network_policy = config.permissions.network_sandbox_policy;
-            spawn_debug_sandbox_child(
-                codex_linux_sandbox_exe,
-                args,
-                Some("codex-linux-sandbox"),
-                cwd.to_path_buf(),
-                network_policy,
+                stdio_policy,
+                network.as_ref(),
                 env,
-                |env_map| {
-                    if let Some(network) = network.as_ref() {
-                        network.apply_to_env(env_map);
-                    }
-                },
             )
             .await?
         }
@@ -355,6 +338,7 @@ pub fn create_sandbox_mode(full_auto: bool) -> SandboxMode {
     }
 }
 
+#[cfg(target_os = "macos")]
 async fn spawn_debug_sandbox_child(
     program: PathBuf,
     args: Vec<String>,
@@ -511,7 +495,7 @@ mod tests {
         let legacy_config = build_debug_sandbox_config(
             Vec::new(),
             ConfigOverrides {
-                sandbox_mode: Some(create_sandbox_mode(/*full_auto*/ false)),
+                sandbox_mode: Some(create_sandbox_mode(false)),
                 ..Default::default()
             },
             Some(codex_home_path.clone()),
@@ -520,8 +504,8 @@ mod tests {
 
         let config = load_debug_sandbox_config_with_codex_home(
             Vec::new(),
-            /*codex_linux_sandbox_exe*/ None,
-            /*full_auto*/ false,
+            None,
+            false,
             Some(codex_home_path),
         )
         .await?;
@@ -554,8 +538,8 @@ mod tests {
 
         let err = load_debug_sandbox_config_with_codex_home(
             Vec::new(),
-            /*codex_linux_sandbox_exe*/ None,
-            /*full_auto*/ true,
+            None,
+            true,
             Some(codex_home.path().to_path_buf()),
         )
         .await

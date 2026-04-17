@@ -10,6 +10,8 @@ use super::slash_commands;
 use crate::render::Insets;
 use crate::render::RectExt;
 use crate::slash_command::SlashCommand;
+use codex_protocol::custom_prompts::CustomPrompt;
+use codex_protocol::custom_prompts::PROMPTS_CMD_PREFIX;
 
 // Hide alias commands in the default popup list so each unique action appears once.
 // `quit` is an alias of `exit`, so we skip `quit` here.
@@ -20,11 +22,13 @@ const ALIAS_COMMANDS: &[SlashCommand] = &[SlashCommand::Quit, SlashCommand::Appr
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CommandItem {
     Builtin(SlashCommand),
+    UserPrompt(usize),
 }
 
 pub(crate) struct CommandPopup {
     command_filter: String,
     builtins: Vec<(&'static str, SlashCommand)>,
+    prompts: Vec<CustomPrompt>,
     state: ScrollState,
 }
 
@@ -56,7 +60,7 @@ impl From<CommandPopupFlags> for slash_commands::BuiltinCommandFlags {
 }
 
 impl CommandPopup {
-    pub(crate) fn new(flags: CommandPopupFlags) -> Self {
+    pub(crate) fn new(prompts: Vec<CustomPrompt>, flags: CommandPopupFlags) -> Self {
         // Keep built-in availability in sync with the composer.
         let builtins: Vec<(&'static str, SlashCommand)> =
             slash_commands::builtins_for_input(flags.into())
@@ -67,8 +71,21 @@ impl CommandPopup {
         Self {
             command_filter: String::new(),
             builtins,
+            prompts,
             state: ScrollState::new(),
         }
+    }
+
+    pub(crate) fn set_prompts(&mut self, prompts: Vec<CustomPrompt>) {
+        self.prompts = prompts;
+        let matches_len = self.filtered_items().len();
+        self.state.clamp_selection(matches_len);
+        self.state
+            .ensure_visible(matches_len, MAX_POPUP_ROWS.min(matches_len));
+    }
+
+    pub(crate) fn prompt(&self, idx: usize) -> Option<&CustomPrompt> {
+        self.prompts.get(idx)
     }
 
     /// Update the filter string based on the current composer text. The text
@@ -157,6 +174,15 @@ impl CommandPopup {
         for (_, cmd) in self.builtins.iter() {
             push_match(CommandItem::Builtin(*cmd), cmd.command(), None, 0);
         }
+        for (idx, prompt) in self.prompts.iter().enumerate() {
+            let display = format!("{}:{}", PROMPTS_CMD_PREFIX, prompt.name);
+            push_match(
+                CommandItem::UserPrompt(idx),
+                &display,
+                Some(&prompt.name),
+                0,
+            );
+        }
 
         out.extend(exact);
         out.extend(prefix);
@@ -173,20 +199,31 @@ impl CommandPopup {
     ) -> Vec<GenericDisplayRow> {
         matches
             .into_iter()
-            .map(|(item, indices)| {
-                let CommandItem::Builtin(cmd) = item;
-                let name = format!("/{}", cmd.command());
-                let description = cmd.description().to_string();
-                GenericDisplayRow {
-                    name,
+            .map(|(item, indices)| match item {
+                CommandItem::Builtin(cmd) => GenericDisplayRow {
+                    name: format!("/{}", cmd.command()),
                     name_prefix_spans: Vec::new(),
                     match_indices: indices.map(|v| v.into_iter().map(|i| i + 1).collect()),
                     display_shortcut: None,
-                    description: Some(description),
+                    description: Some(cmd.description().to_string()),
                     category_tag: None,
                     wrap_indent: None,
                     is_disabled: false,
                     disabled_reason: None,
+                },
+                CommandItem::UserPrompt(idx) => {
+                    let prompt = &self.prompts[idx];
+                    GenericDisplayRow {
+                        name: format!("/{}:{}", PROMPTS_CMD_PREFIX, prompt.name),
+                        name_prefix_spans: Vec::new(),
+                        match_indices: indices.map(|v| v.into_iter().map(|i| i + 1).collect()),
+                        display_shortcut: None,
+                        description: prompt.description.clone(),
+                        category_tag: None,
+                        wrap_indent: None,
+                        is_disabled: false,
+                        disabled_reason: None,
+                    }
                 }
             })
             .collect()
@@ -239,7 +276,7 @@ mod tests {
 
     #[test]
     fn filter_includes_init_when_typing_prefix() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default());
+        let mut popup = CommandPopup::new(Vec::new(), CommandPopupFlags::default());
         // Simulate the composer line starting with '/in' so the popup filters
         // matching commands by prefix.
         popup.on_composer_text_change("/in".to_string());
@@ -249,6 +286,7 @@ mod tests {
         let matches = popup.filtered_items();
         let has_init = matches.iter().any(|item| match item {
             CommandItem::Builtin(cmd) => cmd.command() == "init",
+            CommandItem::UserPrompt(_) => false,
         });
         assert!(
             has_init,
@@ -258,7 +296,7 @@ mod tests {
 
     #[test]
     fn selecting_init_by_exact_match() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default());
+        let mut popup = CommandPopup::new(Vec::new(), CommandPopupFlags::default());
         popup.on_composer_text_change("/init".to_string());
 
         // When an exact match exists, the selected command should be that
@@ -266,24 +304,26 @@ mod tests {
         let selected = popup.selected_item();
         match selected {
             Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "init"),
+            Some(CommandItem::UserPrompt(_)) => panic!("expected builtin command"),
             None => panic!("expected a selected command for exact match"),
         }
     }
 
     #[test]
     fn model_is_first_suggestion_for_mo() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default());
+        let mut popup = CommandPopup::new(Vec::new(), CommandPopupFlags::default());
         popup.on_composer_text_change("/mo".to_string());
         let matches = popup.filtered_items();
         match matches.first() {
             Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "model"),
+            Some(CommandItem::UserPrompt(_)) => panic!("expected builtin command"),
             None => panic!("expected at least one match for '/mo'"),
         }
     }
 
     #[test]
     fn filtered_commands_keep_presentation_order_for_prefix() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default());
+        let mut popup = CommandPopup::new(Vec::new(), CommandPopupFlags::default());
         popup.on_composer_text_change("/m".to_string());
 
         let cmds: Vec<&str> = popup
@@ -291,6 +331,7 @@ mod tests {
             .into_iter()
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command(),
+                CommandItem::UserPrompt(_) => unreachable!("user prompt items are not builtins"),
             })
             .collect();
         assert_eq!(cmds, vec!["model", "memories", "mention", "mcp"]);
@@ -298,7 +339,7 @@ mod tests {
 
     #[test]
     fn prefix_filter_limits_matches_for_ac() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default());
+        let mut popup = CommandPopup::new(Vec::new(), CommandPopupFlags::default());
         popup.on_composer_text_change("/ac".to_string());
 
         let cmds: Vec<&str> = popup
@@ -306,6 +347,7 @@ mod tests {
             .into_iter()
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command(),
+                CommandItem::UserPrompt(_) => unreachable!("user prompt items are not builtins"),
             })
             .collect();
         assert!(
@@ -316,7 +358,7 @@ mod tests {
 
     #[test]
     fn quit_hidden_in_empty_filter_but_shown_for_prefix() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default());
+        let mut popup = CommandPopup::new(Vec::new(), CommandPopupFlags::default());
         popup.on_composer_text_change("/".to_string());
         let items = popup.filtered_items();
         assert!(!items.contains(&CommandItem::Builtin(SlashCommand::Quit)));
@@ -328,7 +370,7 @@ mod tests {
 
     #[test]
     fn collab_command_hidden_when_collaboration_modes_disabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags::default());
+        let mut popup = CommandPopup::new(Vec::new(), CommandPopupFlags::default());
         popup.on_composer_text_change("/".to_string());
 
         let cmds: Vec<&str> = popup
@@ -336,6 +378,7 @@ mod tests {
             .into_iter()
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command(),
+                CommandItem::UserPrompt(_) => unreachable!("user prompt items are not builtins"),
             })
             .collect();
         assert!(
@@ -350,56 +393,67 @@ mod tests {
 
     #[test]
     fn collab_command_visible_when_collaboration_modes_enabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags {
-            collaboration_modes_enabled: true,
-            connectors_enabled: false,
-            plugins_command_enabled: false,
-            fast_command_enabled: false,
-            personality_command_enabled: true,
-            realtime_conversation_enabled: false,
-            audio_device_selection_enabled: false,
-            windows_degraded_sandbox_active: false,
-        });
+        let mut popup = CommandPopup::new(
+            Vec::new(),
+            CommandPopupFlags {
+                collaboration_modes_enabled: true,
+                connectors_enabled: false,
+                plugins_command_enabled: false,
+                fast_command_enabled: false,
+                personality_command_enabled: true,
+                realtime_conversation_enabled: false,
+                audio_device_selection_enabled: false,
+                windows_degraded_sandbox_active: false,
+            },
+        );
         popup.on_composer_text_change("/collab".to_string());
 
         match popup.selected_item() {
             Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "collab"),
+            Some(CommandItem::UserPrompt(_)) => panic!("expected builtin command"),
             other => panic!("expected collab to be selected for exact match, got {other:?}"),
         }
     }
 
     #[test]
     fn plan_command_visible_when_collaboration_modes_enabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags {
-            collaboration_modes_enabled: true,
-            connectors_enabled: false,
-            plugins_command_enabled: false,
-            fast_command_enabled: false,
-            personality_command_enabled: true,
-            realtime_conversation_enabled: false,
-            audio_device_selection_enabled: false,
-            windows_degraded_sandbox_active: false,
-        });
+        let mut popup = CommandPopup::new(
+            Vec::new(),
+            CommandPopupFlags {
+                collaboration_modes_enabled: true,
+                connectors_enabled: false,
+                plugins_command_enabled: false,
+                fast_command_enabled: false,
+                personality_command_enabled: true,
+                realtime_conversation_enabled: false,
+                audio_device_selection_enabled: false,
+                windows_degraded_sandbox_active: false,
+            },
+        );
         popup.on_composer_text_change("/plan".to_string());
 
         match popup.selected_item() {
             Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "plan"),
+            Some(CommandItem::UserPrompt(_)) => panic!("expected builtin command"),
             other => panic!("expected plan to be selected for exact match, got {other:?}"),
         }
     }
 
     #[test]
     fn personality_command_hidden_when_disabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags {
-            collaboration_modes_enabled: true,
-            connectors_enabled: false,
-            plugins_command_enabled: false,
-            fast_command_enabled: false,
-            personality_command_enabled: false,
-            realtime_conversation_enabled: false,
-            audio_device_selection_enabled: false,
-            windows_degraded_sandbox_active: false,
-        });
+        let mut popup = CommandPopup::new(
+            Vec::new(),
+            CommandPopupFlags {
+                collaboration_modes_enabled: true,
+                connectors_enabled: false,
+                plugins_command_enabled: false,
+                fast_command_enabled: false,
+                personality_command_enabled: false,
+                realtime_conversation_enabled: false,
+                audio_device_selection_enabled: false,
+                windows_degraded_sandbox_active: false,
+            },
+        );
         popup.on_composer_text_change("/pers".to_string());
 
         let cmds: Vec<&str> = popup
@@ -407,6 +461,7 @@ mod tests {
             .into_iter()
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command(),
+                CommandItem::UserPrompt(_) => unreachable!("user prompt items are not builtins"),
             })
             .collect();
         assert!(
@@ -417,36 +472,43 @@ mod tests {
 
     #[test]
     fn personality_command_visible_when_enabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags {
-            collaboration_modes_enabled: true,
-            connectors_enabled: false,
-            plugins_command_enabled: false,
-            fast_command_enabled: false,
-            personality_command_enabled: true,
-            realtime_conversation_enabled: false,
-            audio_device_selection_enabled: false,
-            windows_degraded_sandbox_active: false,
-        });
+        let mut popup = CommandPopup::new(
+            Vec::new(),
+            CommandPopupFlags {
+                collaboration_modes_enabled: true,
+                connectors_enabled: false,
+                plugins_command_enabled: false,
+                fast_command_enabled: false,
+                personality_command_enabled: true,
+                realtime_conversation_enabled: false,
+                audio_device_selection_enabled: false,
+                windows_degraded_sandbox_active: false,
+            },
+        );
         popup.on_composer_text_change("/personality".to_string());
 
         match popup.selected_item() {
             Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "personality"),
+            Some(CommandItem::UserPrompt(_)) => panic!("expected builtin command"),
             other => panic!("expected personality to be selected for exact match, got {other:?}"),
         }
     }
 
     #[test]
     fn settings_command_hidden_when_audio_device_selection_is_disabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags {
-            collaboration_modes_enabled: false,
-            connectors_enabled: false,
-            plugins_command_enabled: false,
-            fast_command_enabled: false,
-            personality_command_enabled: true,
-            realtime_conversation_enabled: true,
-            audio_device_selection_enabled: false,
-            windows_degraded_sandbox_active: false,
-        });
+        let mut popup = CommandPopup::new(
+            Vec::new(),
+            CommandPopupFlags {
+                collaboration_modes_enabled: false,
+                connectors_enabled: false,
+                plugins_command_enabled: false,
+                fast_command_enabled: false,
+                personality_command_enabled: true,
+                realtime_conversation_enabled: true,
+                audio_device_selection_enabled: false,
+                windows_degraded_sandbox_active: false,
+            },
+        );
         popup.on_composer_text_change("/aud".to_string());
 
         let cmds: Vec<&str> = popup
@@ -454,6 +516,7 @@ mod tests {
             .into_iter()
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command(),
+                CommandItem::UserPrompt(_) => unreachable!("user prompt items are not builtins"),
             })
             .collect();
 
@@ -465,12 +528,13 @@ mod tests {
 
     #[test]
     fn debug_commands_are_hidden_from_popup() {
-        let popup = CommandPopup::new(CommandPopupFlags::default());
+        let popup = CommandPopup::new(Vec::new(), CommandPopupFlags::default());
         let cmds: Vec<&str> = popup
             .filtered_items()
             .into_iter()
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command(),
+                CommandItem::UserPrompt(_) => unreachable!("user prompt items are not builtins"),
             })
             .collect();
 

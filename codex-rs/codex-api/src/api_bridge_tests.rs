@@ -1,6 +1,35 @@
 use super::*;
 use base64::Engine;
 use pretty_assertions::assert_eq;
+use serial_test::serial;
+
+struct EnvGuard {
+    key: &'static str,
+    original: Option<String>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &str) -> Self {
+        let original = std::env::var(key).ok();
+        unsafe {
+            std::env::set_var(key, value);
+        }
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(value) => unsafe {
+                std::env::set_var(self.key, value);
+            },
+            None => unsafe {
+                std::env::remove_var(self.key);
+            },
+        }
+    }
+}
 
 #[test]
 fn map_api_error_maps_server_overloaded() {
@@ -136,7 +165,6 @@ fn core_auth_provider_reports_when_auth_header_will_attach() {
     let auth = CoreAuthProvider {
         token: Some("access-token".to_string()),
         account_id: None,
-        is_fedramp_account: false,
     };
 
     assert!(auth.auth_header_attached());
@@ -144,41 +172,14 @@ fn core_auth_provider_reports_when_auth_header_will_attach() {
 }
 
 #[test]
-fn core_auth_provider_adds_auth_headers() {
-    let auth = CoreAuthProvider::for_test(Some("access-token"), Some("workspace-123"));
-    let mut headers = HeaderMap::new();
+#[serial]
+fn auth_provider_from_auth_uses_openai_env_key_when_storage_auth_is_missing() {
+    let _guard = EnvGuard::set("OPENAI_API_KEY", "sk-env-test");
 
-    crate::AuthProvider::add_auth_headers(&auth, &mut headers);
+    let provider = crate::model_provider_info::ModelProviderInfo::create_openai_provider(None);
+    let auth =
+        auth_provider_from_auth(None, &provider).expect("openai env fallback should be accepted");
 
-    assert_eq!(
-        headers
-            .get(http::header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok()),
-        Some("Bearer access-token")
-    );
-    assert_eq!(
-        headers
-            .get("ChatGPT-Account-ID")
-            .and_then(|value| value.to_str().ok()),
-        Some("workspace-123")
-    );
-}
-
-#[test]
-fn core_auth_provider_adds_fedramp_routing_header_for_fedramp_accounts() {
-    let auth = CoreAuthProvider {
-        token: Some("access-token".to_string()),
-        account_id: Some("workspace-123".to_string()),
-        is_fedramp_account: true,
-    };
-    let mut headers = HeaderMap::new();
-
-    crate::AuthProvider::add_auth_headers(&auth, &mut headers);
-
-    assert_eq!(
-        headers
-            .get("X-OpenAI-Fedramp")
-            .and_then(|value| value.to_str().ok()),
-        Some("true")
-    );
+    assert!(auth.auth_header_attached());
+    assert_eq!(auth.auth_header_name(), Some("authorization"));
 }

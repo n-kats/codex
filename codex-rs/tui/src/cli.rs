@@ -53,6 +53,12 @@ pub struct Cli {
     #[clap(skip)]
     pub fork_show_all: bool,
 
+    #[clap(skip)]
+    pub config_toml_file: Option<PathBuf>,
+
+    #[clap(skip)]
+    pub no_config: bool,
+
     /// Model the agent should use.
     #[arg(long, short = 'm')]
     pub model: Option<String>,

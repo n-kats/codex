@@ -70,6 +70,45 @@ async fn ctrl_d_with_modal_open_does_not_quit() {
 }
 
 #[tokio::test]
+async fn ctrl_d_quits_with_queued_messages_visible() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.bottom_pane.set_task_running(true);
+    chat.queued_user_messages
+        .push_back(UserMessage::from("queued follow-up".to_string()));
+    chat.refresh_pending_input_preview();
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+
+    assert_matches!(rx.try_recv(), Ok(AppEvent::Exit(ExitMode::ShutdownFirst)));
+}
+
+#[tokio::test]
+async fn slash_exit_requests_exit_while_task_running() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.on_task_started();
+
+    for ch in "/exit".chars() {
+        chat.handle_key_event(KeyEvent::from(KeyCode::Char(ch)));
+    }
+    chat.handle_key_event(submit_key_event());
+
+    assert_matches!(rx.try_recv(), Ok(AppEvent::Exit(ExitMode::ShutdownFirst)));
+}
+
+#[tokio::test]
+async fn slash_exit_requests_exit_even_when_slash_commands_disabled() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.config.slash_commands_enabled = false;
+    chat.bottom_pane
+        .set_composer_text("/exit".to_string(), Vec::new(), Vec::new());
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert_matches!(rx.try_recv(), Ok(AppEvent::Exit(ExitMode::ShutdownFirst)));
+}
+
+#[tokio::test]
 async fn slash_init_skips_when_project_doc_exists() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let tempdir = tempdir().unwrap();

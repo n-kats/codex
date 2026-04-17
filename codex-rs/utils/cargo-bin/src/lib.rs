@@ -1,7 +1,10 @@
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
+use std::sync::OnceLock;
 
 pub use runfiles;
 
@@ -43,6 +46,15 @@ pub fn cargo_bin(name: &str) -> Result<PathBuf, CargoBinError> {
             return resolve_bin_from_env(key, value);
         }
     }
+
+    if let Ok(Some(path)) = infer_bin_from_current_exe(name) {
+        return Ok(path);
+    }
+
+    if let Ok(Some(path)) = build_and_infer_bin_from_current_exe(name) {
+        return Ok(path);
+    }
+
     match assert_cmd::Command::cargo_bin(name) {
         Ok(cmd) => {
             let mut path = PathBuf::from(cmd.get_program());
@@ -66,6 +78,116 @@ pub fn cargo_bin(name: &str) -> Result<PathBuf, CargoBinError> {
             fallback: format!("assert_cmd fallback failed: {err}"),
         }),
     }
+}
+
+fn infer_bin_from_current_exe(name: &str) -> Result<Option<PathBuf>, CargoBinError> {
+    let Some(target_dir) = target_dir_from_current_exe()? else {
+        return Ok(None);
+    };
+    Ok(infer_bin_from_target_dir(&target_dir, name))
+}
+
+fn build_and_infer_bin_from_current_exe(name: &str) -> Result<Option<PathBuf>, CargoBinError> {
+    let Some(target_dir) = target_dir_from_current_exe()? else {
+        return Ok(None);
+    };
+    if infer_bin_from_target_dir(&target_dir, name).is_some() {
+        return Ok(infer_bin_from_target_dir(&target_dir, name));
+    }
+
+    let Some(workspace_root) = find_workspace_root()? else {
+        return Ok(None);
+    };
+
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let package =
+        cargo_bin_package(&workspace_root, &cargo, name).unwrap_or_else(|| name.to_owned());
+    let output = Command::new(&cargo)
+        .current_dir(&workspace_root)
+        .args(["build", "-p", &package, "--bin", name])
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .output();
+    let Ok(output) = output else {
+        return Ok(None);
+    };
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    Ok(infer_bin_from_target_dir(&target_dir, name))
+}
+
+fn infer_bin_from_target_dir(target_dir: &Path, name: &str) -> Option<PathBuf> {
+    let candidates = [
+        target_dir.join("debug").join(name),
+        target_dir.join("debug").join(format!("{name}.exe")),
+    ];
+    candidates.into_iter().find(|path| path.exists())
+}
+
+fn target_dir_from_current_exe() -> Result<Option<PathBuf>, CargoBinError> {
+    let exe = std::env::current_exe().map_err(|source| CargoBinError::CurrentExe { source })?;
+    let Some(deps_dir) = exe.parent() else {
+        return Ok(None);
+    };
+    let Some(profile_dir) = deps_dir.parent() else {
+        return Ok(None);
+    };
+    let Some(target_dir) = profile_dir.parent() else {
+        return Ok(None);
+    };
+    Ok(Some(target_dir.to_path_buf()))
+}
+
+fn find_workspace_root() -> Result<Option<PathBuf>, CargoBinError> {
+    let mut dir = std::env::current_dir().map_err(|source| CargoBinError::CurrentDir { source })?;
+    loop {
+        if dir.join("Cargo.toml").exists() {
+            return Ok(Some(dir));
+        }
+        if !dir.pop() {
+            return Ok(None);
+        }
+    }
+}
+
+fn cargo_bin_package(workspace_root: &Path, cargo: &OsString, bin_name: &str) -> Option<String> {
+    static CACHE: OnceLock<HashMap<String, String>> = OnceLock::new();
+    if let Some(package) = CACHE.get().and_then(|m| m.get(bin_name)) {
+        return Some(package.clone());
+    }
+
+    let output = Command::new(cargo)
+        .current_dir(workspace_root)
+        .args(["metadata", "--no-deps", "--format-version", "1"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let mut mapping = HashMap::new();
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let packages = value.get("packages")?.as_array()?;
+    for package in packages {
+        let package_name = package.get("name")?.as_str()?;
+        let targets = package.get("targets")?.as_array()?;
+        for target in targets {
+            let kinds = target.get("kind")?.as_array()?;
+            let is_bin = kinds.iter().any(|k| k.as_str() == Some("bin"));
+            if !is_bin {
+                continue;
+            }
+            let target_name = target.get("name")?.as_str()?;
+            mapping
+                .entry(target_name.to_owned())
+                .or_insert_with(|| package_name.to_owned());
+        }
+    }
+
+    let _ = CACHE.set(mapping);
+    CACHE.get()?.get(bin_name).cloned()
 }
 
 fn cargo_bin_env_keys(name: &str) -> Vec<String> {

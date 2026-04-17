@@ -1177,6 +1177,18 @@ pub async fn mount_models_once(server: &MockServer, body: ModelsResponse) -> Mod
     models_mock
 }
 
+pub async fn mount_models(server: &MockServer, body: ModelsResponse) -> ModelsMock {
+    let (mock, models_mock) = models_mock();
+    mock.respond_with(
+        ResponseTemplate::new(200)
+            .insert_header("content-type", "application/json")
+            .set_body_json(body.clone()),
+    )
+    .mount(server)
+    .await;
+    models_mock
+}
+
 pub async fn mount_models_once_with_delay(
     server: &MockServer,
     body: ModelsResponse,

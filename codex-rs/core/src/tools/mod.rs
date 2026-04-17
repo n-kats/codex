@@ -1,21 +1,24 @@
-pub(crate) mod code_mode;
-pub(crate) mod context;
-pub(crate) mod events;
+pub mod code_mode;
+pub mod context;
+pub mod events;
 pub(crate) mod handlers;
-pub(crate) mod js_repl;
+pub mod js_repl;
 pub(crate) mod network_approval;
-pub(crate) mod orchestrator;
-pub(crate) mod parallel;
-pub(crate) mod registry;
-pub(crate) mod router;
-pub(crate) mod runtimes;
-pub(crate) mod sandboxing;
-pub(crate) mod spec;
+pub mod orchestrator;
+pub mod discoverable {
+    pub use codex_tools::filter_tool_suggest_discoverable_tools_for_client;
+}
+pub mod parallel;
+pub mod registry;
+pub mod router;
+pub mod runtimes;
+pub mod sandboxing;
+pub mod spec;
 
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_utils_output_truncation::TruncationPolicy;
-use codex_utils_output_truncation::formatted_truncate_text;
-use codex_utils_output_truncation::truncate_text;
+use crate::exec::ExecToolCallOutput;
+use crate::truncate::TruncationPolicy;
+use crate::truncate::formatted_truncate_text;
+use crate::truncate::truncate_text;
 pub use router::ToolRouter;
 use serde::Serialize;
 

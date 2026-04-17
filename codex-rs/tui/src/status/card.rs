@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::history_cell::CompositeHistoryCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
@@ -144,7 +146,6 @@ pub(crate) fn new_status_output(
     )
 }
 
-#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn new_status_output_with_rate_limits(
     config: &Config,

@@ -8,7 +8,7 @@ For a full configuration reference, see [this documentation](https://developers.
 
 ## Connecting to MCP servers
 
-Codex can connect to MCP servers configured in `~/.codex/config.toml`. See the configuration reference for the latest MCP server options:
+Codex can connect to MCP servers configured in `$CODEX_HOME/config.toml` (defaults to `~/.codex`; override with `CODEX_HOME` or `codex --codex-home PATH`). You can also load the user layer from an arbitrary path via `--config <FILE>` or ignore user + project config files entirely via `--no-config`. See the configuration reference for the latest MCP server options:
 
 - https://developers.openai.com/codex/config-reference
 
@@ -109,3 +109,32 @@ the realtime start message in prompt history and does not change websocket
 backend prompt settings or the realtime end/inactive message.
 
 Ctrl+C/Ctrl+D quitting uses a ~1 second double-press hint (`ctrl + c again to quit`).
+
+## Custom diff colors (fork)
+
+This fork supports overriding TUI diff background colors:
+
+```toml
+[custom.theme.diff]
+add_line_bg = "#102030"
+del_line_bg = "#402010"
+```
+
+Values must be 6-digit hex colors (`#RRGGBB` or `RRGGBB`).
+
+You can also disable diff coloring globally or per part:
+
+```toml
+[custom.theme.diff]
+# Global toggle (default: true)
+enabled = false
+```
+
+```toml
+[custom.theme.diff]
+# Per-part toggles (all default: true)
+line_bg = false
+gutter = false
+sign = false
+content = true
+```

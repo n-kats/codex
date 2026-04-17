@@ -136,6 +136,8 @@ async fn refresh_models_on_models_etag_mismatch_and_avoid_duplicate_models_fetch
     let tool_req = tool_output_mock.single_request();
     let _ = tool_req.function_call_output(CALL_ID);
     assert_eq!(refresh_models_mock.requests().len(), 1);
+    // Keep the mock server alive until after async assertions complete.
+    drop(server);
 
     Ok(())
 }

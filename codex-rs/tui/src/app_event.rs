@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Application-level events used to coordinate UI actions.
 //!
 //! `AppEvent` is the internal message bus between UI components and the top-level `App` loop.
@@ -20,6 +22,7 @@ use codex_app_server_protocol::PluginUninstallResponse;
 use codex_file_search::FileMatch;
 use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::protocol::Event;
 use codex_protocol::protocol::GetHistoryEntryResponseEvent;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RateLimitSnapshot;
@@ -147,6 +150,15 @@ pub(crate) enum AppEvent {
     /// bubbling channels through layers of widgets.
     CodexOp(Op),
 
+    /// Forward a protocol event to the primary thread.
+    CodexEvent(Event),
+
+    /// Forward a protocol event to a specific thread channel.
+    ThreadEvent {
+        thread_id: ThreadId,
+        event: Event,
+    },
+
     /// Kick off an asynchronous file search for the given query (text after
     /// the `@`). Previous searches may be cancelled by the app layer so there
     /// is at most one in-flight search.
@@ -170,6 +182,9 @@ pub(crate) enum AppEvent {
         origin: RateLimitRefreshOrigin,
         result: Result<Vec<RateLimitSnapshot>, String>,
     },
+
+    /// Result of fetching a single rate-limit snapshot for the current UI.
+    RateLimitSnapshotFetched(RateLimitSnapshot),
 
     /// Result of prefetching connectors.
     ConnectorsLoaded {
@@ -542,6 +557,18 @@ pub(crate) enum AppEvent {
     UpdateRecordingMeter {
         id: String,
         text: String,
+    },
+
+    /// Result of a completed realtime transcription request.
+    TranscriptionComplete {
+        id: String,
+        text: String,
+    },
+
+    /// Result of a failed realtime transcription request.
+    TranscriptionFailed {
+        id: String,
+        error: String,
     },
 
     /// Open the branch picker option from the review popup.

@@ -715,7 +715,7 @@ async fn interrupt_active_exec_stops_aborted_kernel_before_later_exec() -> anyho
 
     let dir = tempdir()?;
     let (session, mut turn) = make_session_and_context().await;
-    turn.cwd = dir.abs();
+    turn.cwd = dir.abs().to_path_buf();
     set_danger_full_access(&mut turn);
     let session = Arc::new(session);
     let turn = Arc::new(turn);
@@ -2077,7 +2077,7 @@ async fn js_repl_prefers_env_node_module_dirs_over_config() -> anyhow::Result<()
         "CODEX_JS_REPL_NODE_MODULE_DIRS".to_string(),
         env_base.path().to_string_lossy().to_string(),
     );
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         vec![config_base.path().to_path_buf()],
@@ -2121,7 +2121,7 @@ async fn js_repl_resolves_from_first_config_dir() -> anyhow::Result<()> {
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         vec![
@@ -2165,7 +2165,7 @@ async fn js_repl_falls_back_to_cwd_node_modules() -> anyhow::Result<()> {
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         vec![config_base.path().to_path_buf()],
@@ -2206,7 +2206,7 @@ async fn js_repl_accepts_node_modules_dir_entries() -> anyhow::Result<()> {
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         vec![base_dir.path().join("node_modules")],
@@ -2260,7 +2260,7 @@ async fn js_repl_supports_relative_file_imports() -> anyhow::Result<()> {
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         Vec::new(),
@@ -2307,7 +2307,7 @@ async fn js_repl_supports_absolute_file_imports() -> anyhow::Result<()> {
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         Vec::new(),
@@ -2361,7 +2361,7 @@ async fn js_repl_imported_local_files_can_access_repl_globals() -> anyhow::Resul
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         Vec::new(),
@@ -2405,7 +2405,7 @@ async fn js_repl_reimports_local_files_after_edit() -> anyhow::Result<()> {
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         Vec::new(),
@@ -2461,7 +2461,7 @@ async fn js_repl_reimports_local_files_after_fixing_failure() -> anyhow::Result<
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         Vec::new(),
@@ -2539,7 +2539,7 @@ async fn js_repl_local_files_expose_node_like_import_meta() -> anyhow::Result<()
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         Vec::new(),
@@ -2624,7 +2624,7 @@ async fn js_repl_local_files_reject_static_bare_imports() -> anyhow::Result<()> 
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         Vec::new(),
@@ -2669,7 +2669,7 @@ async fn js_repl_rejects_unsupported_file_specifiers() -> anyhow::Result<()> {
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         Vec::new(),
@@ -2771,7 +2771,7 @@ async fn js_repl_blocks_sensitive_builtin_imports_from_local_files() -> anyhow::
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         Vec::new(),
@@ -2821,7 +2821,7 @@ async fn js_repl_local_files_do_not_escape_node_module_search_roots() -> anyhow:
     turn.shell_environment_policy
         .r#set
         .remove("CODEX_JS_REPL_NODE_MODULE_DIRS");
-    turn.cwd = cwd_dir.abs();
+    turn.cwd = cwd_dir.abs().to_path_buf();
     turn.js_repl = Arc::new(JsReplHandle::with_node_path(
         turn.config.js_repl_node_path.clone(),
         Vec::new(),

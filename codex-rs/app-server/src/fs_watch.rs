@@ -1,4 +1,3 @@
-use crate::fs_api::invalid_request;
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::OutgoingMessageSender;
 use codex_app_server_protocol::FsChangedNotification;
@@ -8,15 +7,10 @@ use codex_app_server_protocol::FsWatchParams;
 use codex_app_server_protocol::FsWatchResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::ServerNotification;
-use codex_core::file_watcher::FileWatcher;
-use codex_core::file_watcher::FileWatcherEvent;
-use codex_core::file_watcher::FileWatcherSubscriber;
-use codex_core::file_watcher::Receiver;
-use codex_core::file_watcher::WatchPath;
-use codex_core::file_watcher::WatchRegistration;
+use codex_core::FileWatcherEvent;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::collections::hash_map::Entry;
 use std::hash::Hash;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,8 +21,55 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 use tracing::warn;
+use uuid::Uuid;
 
 const FS_CHANGED_NOTIFICATION_DEBOUNCE: Duration = Duration::from_millis(200);
+
+#[derive(Debug)]
+struct FileWatcher;
+
+impl FileWatcher {
+    fn new() -> std::io::Result<Self> {
+        Ok(Self)
+    }
+
+    fn noop() -> Self {
+        Self
+    }
+
+    fn add_subscriber(self: &Arc<Self>) -> (FileWatcherSubscriber, Receiver) {
+        let _ = self;
+        (FileWatcherSubscriber, Receiver)
+    }
+}
+
+#[derive(Debug)]
+struct FileWatcherSubscriber;
+
+impl FileWatcherSubscriber {
+    fn register_paths(&self, watched_paths: Vec<WatchPath>) -> WatchRegistration {
+        let _ = watched_paths;
+        WatchRegistration
+    }
+}
+
+#[derive(Debug)]
+struct WatchRegistration;
+
+#[derive(Debug)]
+struct Receiver;
+
+impl Receiver {
+    async fn recv(&mut self) -> Option<FileWatcherEvent> {
+        None
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct WatchPath {
+    path: PathBuf,
+    recursive: bool,
+}
 
 struct DebouncedReceiver {
     rx: Receiver,
@@ -120,34 +161,27 @@ impl FsWatchManager {
         connection_id: ConnectionId,
         params: FsWatchParams,
     ) -> Result<FsWatchResponse, JSONRPCErrorError> {
-        let watch_id = params.watch_id;
-        let watch_key = WatchKey {
-            connection_id,
-            watch_id: watch_id.clone(),
-        };
+        let watch_id = Uuid::now_v7().to_string();
         let outgoing = self.outgoing.clone();
         let (subscriber, rx) = self.file_watcher.add_subscriber();
-        let watch_root = params.path.clone();
+        let watch_root = params.path.to_path_buf().clone();
         let registration = subscriber.register_paths(vec![WatchPath {
             path: params.path.to_path_buf(),
             recursive: false,
         }]);
         let (terminate_tx, terminate_rx) = oneshot::channel();
 
-        match self.state.lock().await.entries.entry(watch_key) {
-            Entry::Occupied(_) => {
-                return Err(invalid_request(format!(
-                    "watchId already exists: {watch_id}"
-                )));
-            }
-            Entry::Vacant(entry) => {
-                entry.insert(WatchEntry {
-                    terminate_tx,
-                    _subscriber: subscriber,
-                    _registration: registration,
-                });
-            }
-        }
+        self.state.lock().await.entries.insert(
+            WatchKey {
+                connection_id,
+                watch_id: watch_id.clone(),
+            },
+            WatchEntry {
+                terminate_tx,
+                _subscriber: subscriber,
+                _registration: registration,
+            },
+        );
 
         let task_watch_id = watch_id.clone();
         tokio::spawn(async move {
@@ -165,7 +199,19 @@ impl FsWatchManager {
                 let mut changed_paths = event
                     .paths
                     .into_iter()
-                    .map(|path| watch_root.join(path))
+                    .filter_map(|path| {
+                        match AbsolutePathBuf::resolve_path_against_base(&path, &watch_root) {
+                            Ok(path) => Some(path),
+                            Err(err) => {
+                                warn!(
+                                    "failed to normalize watch event path ({}) for {}: {err}",
+                                    path.display(),
+                                    watch_root.display()
+                                );
+                                None
+                            }
+                        }
+                    })
                     .collect::<Vec<_>>();
                 changed_paths.sort_by(|left, right| left.as_path().cmp(right.as_path()));
                 if !changed_paths.is_empty() {
@@ -182,7 +228,10 @@ impl FsWatchManager {
             }
         });
 
-        Ok(FsWatchResponse { path: params.path })
+        Ok(FsWatchResponse {
+            watch_id,
+            path: params.path,
+        })
     }
 
     pub(crate) async fn unwatch(
@@ -220,6 +269,7 @@ mod tests {
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
+    use uuid::Version;
 
     fn absolute_path(path: PathBuf) -> AbsolutePathBuf {
         assert!(
@@ -240,33 +290,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn watch_uses_client_id_and_tracks_the_owner_scoped_entry() {
+    async fn watch_returns_a_v7_id_and_tracks_the_owner_scoped_entry() {
         let temp_dir = TempDir::new().expect("temp dir");
         let head_path = temp_dir.path().join("HEAD");
         std::fs::write(&head_path, "ref: refs/heads/main\n").expect("write HEAD");
 
         let manager = manager_with_noop_watcher();
         let path = absolute_path(head_path);
-        let watch_id = "watch-head".to_string();
         let response = manager
-            .watch(
-                ConnectionId(1),
-                FsWatchParams {
-                    watch_id: watch_id.clone(),
-                    path: path.clone(),
-                },
-            )
+            .watch(ConnectionId(1), FsWatchParams { path: path.clone() })
             .await
             .expect("watch should succeed");
 
         assert_eq!(response.path, path);
+        let watch_id = Uuid::parse_str(&response.watch_id).expect("watch id should be a UUID");
+        assert_eq!(watch_id.get_version(), Some(Version::SortRand));
 
         let state = manager.state.lock().await;
         assert_eq!(
             state.entries.keys().cloned().collect::<HashSet<_>>(),
             HashSet::from([WatchKey {
                 connection_id: ConnectionId(1),
-                watch_id,
+                watch_id: response.watch_id,
             }])
         );
     }
@@ -278,11 +323,10 @@ mod tests {
         std::fs::write(&head_path, "ref: refs/heads/main\n").expect("write HEAD");
 
         let manager = manager_with_noop_watcher();
-        manager
+        let response = manager
             .watch(
                 ConnectionId(1),
                 FsWatchParams {
-                    watch_id: "watch-head".to_string(),
                     path: absolute_path(head_path),
                 },
             )
@@ -290,14 +334,14 @@ mod tests {
             .expect("watch should succeed");
         let watch_key = WatchKey {
             connection_id: ConnectionId(1),
-            watch_id: "watch-head".to_string(),
+            watch_id: response.watch_id.clone(),
         };
 
         manager
             .unwatch(
                 ConnectionId(2),
                 FsUnwatchParams {
-                    watch_id: "watch-head".to_string(),
+                    watch_id: response.watch_id.clone(),
                 },
             )
             .await
@@ -308,47 +352,12 @@ mod tests {
             .unwatch(
                 ConnectionId(1),
                 FsUnwatchParams {
-                    watch_id: "watch-head".to_string(),
+                    watch_id: response.watch_id,
                 },
             )
             .await
             .expect("owner unwatch should succeed");
         assert!(!manager.state.lock().await.entries.contains_key(&watch_key));
-    }
-
-    #[tokio::test]
-    async fn watch_rejects_duplicate_id_for_the_same_connection() {
-        let temp_dir = TempDir::new().expect("temp dir");
-        let head_path = temp_dir.path().join("HEAD");
-        let fetch_head_path = temp_dir.path().join("FETCH_HEAD");
-        std::fs::write(&head_path, "ref: refs/heads/main\n").expect("write HEAD");
-        std::fs::write(&fetch_head_path, "old-fetch\n").expect("write FETCH_HEAD");
-
-        let manager = manager_with_noop_watcher();
-        manager
-            .watch(
-                ConnectionId(1),
-                FsWatchParams {
-                    watch_id: "watch-head".to_string(),
-                    path: absolute_path(head_path),
-                },
-            )
-            .await
-            .expect("first watch should succeed");
-
-        let error = manager
-            .watch(
-                ConnectionId(1),
-                FsWatchParams {
-                    watch_id: "watch-head".to_string(),
-                    path: absolute_path(fetch_head_path),
-                },
-            )
-            .await
-            .expect_err("duplicate watch should fail");
-
-        assert_eq!(error.message, "watchId already exists: watch-head");
-        assert_eq!(manager.state.lock().await.entries.len(), 1);
     }
 
     #[tokio::test]
@@ -362,31 +371,28 @@ mod tests {
         std::fs::write(&packed_refs_path, "refs\n").expect("write packed-refs");
 
         let manager = manager_with_noop_watcher();
-        let response = manager
+        let response_1 = manager
             .watch(
                 ConnectionId(1),
                 FsWatchParams {
-                    watch_id: "watch-head".to_string(),
-                    path: absolute_path(head_path.clone()),
+                    path: absolute_path(head_path),
                 },
             )
             .await
             .expect("first watch should succeed");
-        manager
+        let response_2 = manager
             .watch(
                 ConnectionId(1),
                 FsWatchParams {
-                    watch_id: "watch-fetch-head".to_string(),
                     path: absolute_path(fetch_head_path),
                 },
             )
             .await
             .expect("second watch should succeed");
-        manager
+        let response_3 = manager
             .watch(
                 ConnectionId(2),
                 FsWatchParams {
-                    watch_id: "watch-packed-refs".to_string(),
                     path: absolute_path(packed_refs_path),
                 },
             )
@@ -406,9 +412,9 @@ mod tests {
                 .collect::<HashSet<_>>(),
             HashSet::from([WatchKey {
                 connection_id: ConnectionId(2),
-                watch_id: "watch-packed-refs".to_string(),
+                watch_id: response_3.watch_id,
             }])
         );
-        assert_eq!(response.path, absolute_path(head_path));
+        assert_ne!(response_1.watch_id, response_2.watch_id);
     }
 }

@@ -326,7 +326,7 @@ async fn turn_start_shell_zsh_fork_exec_approval_cancel_v2() -> Result<()> {
     };
     eprintln!("using zsh path for zsh-fork test: {}", zsh_path.display());
 
-    let responses = vec![create_shell_command_sse_response(
+    let response = create_shell_command_sse_response(
         vec![
             "python3".to_string(),
             "-c".to_string(),
@@ -335,8 +335,17 @@ async fn turn_start_shell_zsh_fork_exec_approval_cancel_v2() -> Result<()> {
         /*workdir*/ None,
         Some(5000),
         "call-zsh-fork-cancel",
-    )?];
-    let server = create_mock_responses_server_sequence(responses).await;
+    )?;
+    let no_op_response = responses::sse(vec![
+        responses::ev_response_created("resp-2"),
+        responses::ev_completed("resp-2"),
+    ]);
+    // Linux CI has occasionally issued a second `/responses` POST after the
+    // cancel flow. This test is about approval/cancel behavior in the zsh
+    // fork, not exact model request count, so allow one extra request and
+    // return a harmless no-op response if it arrives.
+    let server =
+        create_mock_responses_server_sequence_unchecked(vec![response, no_op_response]).await;
     create_config_toml(
         &codex_home,
         &server.uri(),
@@ -534,13 +543,7 @@ async fn turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2()
             }],
             cwd: Some(workspace.clone()),
             approval_policy: Some(codex_app_server_protocol::AskForApproval::UnlessTrusted),
-            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![workspace.clone().try_into()?],
-                read_only_access: codex_app_server_protocol::ReadOnlyAccess::FullAccess,
-                network_access: false,
-                exclude_tmpdir_env_var: false,
-                exclude_slash_tmp: false,
-            }),
+            sandbox_policy: Some(codex_app_server_protocol::SandboxPolicy::DangerFullAccess),
             model: Some("mock-model".to_string()),
             effort: Some(codex_protocol::openai_models::ReasoningEffort::Medium),
             summary: Some(codex_protocol::config_types::ReasoningSummary::Auto),

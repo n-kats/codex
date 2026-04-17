@@ -5,11 +5,11 @@ use crate::codex::TurnContext;
 use crate::codex::make_session_and_context;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
+use crate::exec::SandboxType;
 use crate::sandboxing::ExecRequest;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::process::OutputHandles;
-use codex_sandboxing::SandboxType;
 use codex_utils_output_truncation::approx_token_count;
 use core_test_support::get_remote_test_env;
 use core_test_support::skip_if_sandbox;
@@ -60,21 +60,24 @@ fn test_exec_request(
     let network_sandbox_policy = turn.network_sandbox_policy;
     let network = None;
     let arg0 = None;
-    ExecRequest::new(
+    ExecRequest {
         command,
         cwd,
         env,
         network,
-        ExecExpiration::DefaultTimeout,
-        ExecCapturePolicy::ShellTool,
-        SandboxType::None,
-        turn.windows_sandbox_level,
+        expiration: ExecExpiration::DefaultTimeout,
+        capture_policy: ExecCapturePolicy::ShellTool,
+        sandbox: SandboxType::None,
+        windows_sandbox_level: turn.windows_sandbox_level,
         windows_sandbox_private_desktop,
+        run_as: None,
+        sandbox_permissions: SandboxPermissions::UseDefault,
         sandbox_policy,
         file_system_sandbox_policy,
         network_sandbox_policy,
+        justification: None,
         arg0,
-    )
+    }
 }
 
 async fn exec_command_with_tty(

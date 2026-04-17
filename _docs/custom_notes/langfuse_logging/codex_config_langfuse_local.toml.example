@@ -1,0 +1,29 @@
+# Example config for Langfuse OTEL debugging (sanitized).
+#
+# Usage (repo checkout):
+#   dotenv run codex-rs/target/debug/codex --config ./codex_config_langfuse_local.toml exec -- echo otel-smoke
+#
+# Notes:
+# - This file is safe to commit because it contains no secrets.
+# - Copy it to `./codex_config_langfuse_local.toml` and fill in the Authorization header if you send
+#   directly to Langfuse (Option B below).
+
+[otel]
+environment = "dev"
+
+# Also logs the user prompt as OTEL log events. (Separate from the `llm_generation` span customization.)
+log_user_prompt = true
+
+# Option A: send OTLP to a local OpenTelemetry Collector (recommended).
+# - traces: http://127.0.0.1:4318/v1/traces
+# - logs:   http://127.0.0.1:4318/v1/logs
+exporter = { otlp-http = { endpoint = "http://127.0.0.1:4318/v1/logs", protocol = "binary" } }
+trace_exporter = { otlp-http = { endpoint = "http://127.0.0.1:4318/v1/traces", protocol = "binary" } }
+
+# Option B: send traces directly to Langfuse OTEL ingest (requires Authorization header).
+#
+# exporter = "none"
+# trace_exporter = { otlp-http = { endpoint = "http://localhost:3000/api/public/otel/v1/traces", protocol = "binary", headers = { Authorization = "Basic <base64(pk-lf-...:sk-lf-...)>" } } }
+
+[projects."/home/user/git/codex"]
+trust_level = "trusted"

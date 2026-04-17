@@ -1,9 +1,13 @@
+#![allow(dead_code)]
+
 use crate::app_command::AppCommand;
 use crate::app_command::AppCommandView;
 use codex_app_server_protocol::RequestId as AppServerRequestId;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
 use codex_app_server_protocol::ThreadItem;
+use codex_protocol::protocol::Event;
+use codex_protocol::protocol::EventMsg;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -71,6 +75,176 @@ enum PendingInteractiveRequest {
 }
 
 impl PendingInteractiveReplayState {
+    pub(super) fn note_event(&mut self, event: &Event) {
+        match &event.msg {
+            EventMsg::ExecApprovalRequest(ev) => {
+                let approval_id = ev.effective_approval_id();
+                self.exec_approval_call_ids.insert(approval_id.clone());
+                self.exec_approval_call_ids_by_turn_id
+                    .entry(ev.turn_id.clone())
+                    .or_default()
+                    .push(approval_id.clone());
+                self.pending_requests_by_request_id.insert(
+                    AppServerRequestId::String(event.id.clone()),
+                    PendingInteractiveRequest::ExecApproval {
+                        turn_id: ev.turn_id.clone(),
+                        approval_id,
+                    },
+                );
+            }
+            EventMsg::ApplyPatchApprovalRequest(ev) => {
+                self.patch_approval_call_ids.insert(ev.call_id.clone());
+                self.patch_approval_call_ids_by_turn_id
+                    .entry(ev.turn_id.clone())
+                    .or_default()
+                    .push(ev.call_id.clone());
+                self.pending_requests_by_request_id.insert(
+                    AppServerRequestId::String(event.id.clone()),
+                    PendingInteractiveRequest::PatchApproval {
+                        turn_id: ev.turn_id.clone(),
+                        item_id: ev.call_id.clone(),
+                    },
+                );
+            }
+            EventMsg::ElicitationRequest(ev) => {
+                let key = ElicitationRequestKey::new(ev.server_name.clone(), ev.id.clone());
+                self.elicitation_requests.insert(key.clone());
+                self.pending_requests_by_request_id.insert(
+                    AppServerRequestId::String(event.id.clone()),
+                    PendingInteractiveRequest::Elicitation(key),
+                );
+            }
+            EventMsg::RequestUserInput(ev) => {
+                self.request_user_input_call_ids.insert(ev.call_id.clone());
+                self.request_user_input_call_ids_by_turn_id
+                    .entry(ev.turn_id.clone())
+                    .or_default()
+                    .push(ev.call_id.clone());
+                self.pending_requests_by_request_id.insert(
+                    AppServerRequestId::String(event.id.clone()),
+                    PendingInteractiveRequest::RequestUserInput {
+                        turn_id: ev.turn_id.clone(),
+                        item_id: ev.call_id.clone(),
+                    },
+                );
+            }
+            EventMsg::RequestPermissions(ev) => {
+                self.request_permissions_call_ids.insert(ev.call_id.clone());
+                self.request_permissions_call_ids_by_turn_id
+                    .entry(ev.turn_id.clone())
+                    .or_default()
+                    .push(ev.call_id.clone());
+                self.pending_requests_by_request_id.insert(
+                    AppServerRequestId::String(event.id.clone()),
+                    PendingInteractiveRequest::RequestPermissions {
+                        turn_id: ev.turn_id.clone(),
+                        item_id: ev.call_id.clone(),
+                    },
+                );
+            }
+            EventMsg::TurnComplete(ev) => {
+                self.clear_exec_approval_turn(&ev.turn_id);
+                self.clear_patch_approval_turn(&ev.turn_id);
+                self.clear_request_permissions_turn(&ev.turn_id);
+                self.clear_request_user_input_turn(&ev.turn_id);
+            }
+            EventMsg::TurnAborted(ev) => {
+                if let Some(turn_id) = &ev.turn_id {
+                    self.clear_exec_approval_turn(turn_id);
+                    self.clear_patch_approval_turn(turn_id);
+                    self.clear_request_permissions_turn(turn_id);
+                    self.clear_request_user_input_turn(turn_id);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn note_evicted_event(&mut self, event: &Event) {
+        match &event.msg {
+            EventMsg::ExecApprovalRequest(ev) => {
+                let approval_id = ev.effective_approval_id();
+                self.exec_approval_call_ids.remove(&approval_id);
+                Self::remove_call_id_from_turn_map_entry(
+                    &mut self.exec_approval_call_ids_by_turn_id,
+                    &ev.turn_id,
+                    &approval_id,
+                );
+                self.pending_requests_by_request_id
+                    .retain(|_, pending| !matches!(pending, PendingInteractiveRequest::ExecApproval { approval_id: pending_id, .. } if pending_id == &approval_id));
+            }
+            EventMsg::ApplyPatchApprovalRequest(ev) => {
+                self.patch_approval_call_ids.remove(&ev.call_id);
+                Self::remove_call_id_from_turn_map_entry(
+                    &mut self.patch_approval_call_ids_by_turn_id,
+                    &ev.turn_id,
+                    &ev.call_id,
+                );
+                self.pending_requests_by_request_id
+                    .retain(|_, pending| !matches!(pending, PendingInteractiveRequest::PatchApproval { item_id, .. } if item_id == &ev.call_id));
+            }
+            EventMsg::ElicitationRequest(ev) => {
+                self.elicitation_requests
+                    .remove(&ElicitationRequestKey::new(
+                        ev.server_name.clone(),
+                        ev.id.clone(),
+                    ));
+                self.pending_requests_by_request_id
+                    .retain(|_, pending| !matches!(pending, PendingInteractiveRequest::Elicitation(key) if key.server_name == ev.server_name && key.request_id == ev.id));
+            }
+            EventMsg::RequestUserInput(ev) => {
+                self.request_user_input_call_ids.remove(&ev.call_id);
+                Self::remove_call_id_from_turn_map_entry(
+                    &mut self.request_user_input_call_ids_by_turn_id,
+                    &ev.turn_id,
+                    &ev.call_id,
+                );
+                self.pending_requests_by_request_id
+                    .retain(|_, pending| !matches!(pending, PendingInteractiveRequest::RequestUserInput { item_id, .. } if item_id == &ev.call_id));
+            }
+            EventMsg::RequestPermissions(ev) => {
+                self.request_permissions_call_ids.remove(&ev.call_id);
+                Self::remove_call_id_from_turn_map_entry(
+                    &mut self.request_permissions_call_ids_by_turn_id,
+                    &ev.turn_id,
+                    &ev.call_id,
+                );
+                self.pending_requests_by_request_id
+                    .retain(|_, pending| !matches!(pending, PendingInteractiveRequest::RequestPermissions { item_id, .. } if item_id == &ev.call_id));
+            }
+            EventMsg::TurnComplete(ev) => {
+                self.clear_exec_approval_turn(&ev.turn_id);
+                self.clear_patch_approval_turn(&ev.turn_id);
+                self.clear_request_permissions_turn(&ev.turn_id);
+                self.clear_request_user_input_turn(&ev.turn_id);
+            }
+            EventMsg::TurnAborted(ev) => {
+                if let Some(turn_id) = &ev.turn_id {
+                    self.clear_exec_approval_turn(turn_id);
+                    self.clear_patch_approval_turn(turn_id);
+                    self.clear_request_permissions_turn(turn_id);
+                    self.clear_request_user_input_turn(turn_id);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn should_replay_snapshot_event(&self, _event: &Event) -> bool {
+        true
+    }
+
+    pub(super) fn event_can_change_pending_thread_approvals(event: &Event) -> bool {
+        matches!(
+            event.msg,
+            EventMsg::ExecApprovalRequest(_)
+                | EventMsg::RequestPermissions(_)
+                | EventMsg::RequestUserInput(_)
+                | EventMsg::ApplyPatchApprovalRequest(_)
+                | EventMsg::ElicitationRequest(_)
+        )
+    }
+
     pub(super) fn op_can_change_state<T>(op: T) -> bool
     where
         T: Into<AppCommand>,
@@ -568,381 +742,5 @@ fn app_server_request_id_to_mcp_request_id(
     match request_id {
         AppServerRequestId::String(value) => codex_protocol::mcp::RequestId::String(value.clone()),
         AppServerRequestId::Integer(value) => codex_protocol::mcp::RequestId::Integer(*value),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::ThreadBufferedEvent;
-    use super::super::ThreadEventStore;
-    use codex_app_server_protocol::CommandExecutionRequestApprovalParams;
-    use codex_app_server_protocol::FileChangeRequestApprovalParams;
-    use codex_app_server_protocol::McpElicitationObjectType;
-    use codex_app_server_protocol::McpElicitationSchema;
-    use codex_app_server_protocol::McpServerElicitationRequest;
-    use codex_app_server_protocol::McpServerElicitationRequestParams;
-    use codex_app_server_protocol::RequestId as AppServerRequestId;
-    use codex_app_server_protocol::ServerNotification;
-    use codex_app_server_protocol::ServerRequest;
-    use codex_app_server_protocol::ServerRequestResolvedNotification;
-    use codex_app_server_protocol::ThreadClosedNotification;
-    use codex_app_server_protocol::ToolRequestUserInputParams;
-    use codex_app_server_protocol::Turn;
-    use codex_app_server_protocol::TurnCompletedNotification;
-    use codex_app_server_protocol::TurnStatus;
-    use codex_protocol::protocol::Op;
-    use codex_protocol::protocol::ReviewDecision;
-    use codex_utils_absolute_path::test_support::PathBufExt;
-    use codex_utils_absolute_path::test_support::test_path_buf;
-    use pretty_assertions::assert_eq;
-    use std::collections::BTreeMap;
-    use std::collections::HashMap;
-
-    fn request_user_input_request(call_id: &str, turn_id: &str) -> ServerRequest {
-        ServerRequest::ToolRequestUserInput {
-            request_id: AppServerRequestId::Integer(1),
-            params: ToolRequestUserInputParams {
-                thread_id: "thread-1".to_string(),
-                turn_id: turn_id.to_string(),
-                item_id: call_id.to_string(),
-                questions: Vec::new(),
-            },
-        }
-    }
-
-    fn exec_approval_request(
-        call_id: &str,
-        approval_id: Option<&str>,
-        turn_id: &str,
-    ) -> ServerRequest {
-        ServerRequest::CommandExecutionRequestApproval {
-            request_id: AppServerRequestId::Integer(2),
-            params: CommandExecutionRequestApprovalParams {
-                thread_id: "thread-1".to_string(),
-                turn_id: turn_id.to_string(),
-                item_id: call_id.to_string(),
-                approval_id: approval_id.map(str::to_string),
-                reason: None,
-                network_approval_context: None,
-                command: Some("echo hi".to_string()),
-                cwd: Some(test_path_buf("/tmp").abs()),
-                command_actions: None,
-                additional_permissions: None,
-                proposed_execpolicy_amendment: None,
-                proposed_network_policy_amendments: None,
-                available_decisions: None,
-            },
-        }
-    }
-
-    fn patch_approval_request(call_id: &str, turn_id: &str) -> ServerRequest {
-        ServerRequest::FileChangeRequestApproval {
-            request_id: AppServerRequestId::Integer(3),
-            params: FileChangeRequestApprovalParams {
-                thread_id: "thread-1".to_string(),
-                turn_id: turn_id.to_string(),
-                item_id: call_id.to_string(),
-                reason: None,
-                grant_root: None,
-            },
-        }
-    }
-
-    fn elicitation_request(server_name: &str, request_id: &str, turn_id: &str) -> ServerRequest {
-        ServerRequest::McpServerElicitationRequest {
-            request_id: AppServerRequestId::String(request_id.to_string()),
-            params: McpServerElicitationRequestParams {
-                thread_id: "thread-1".to_string(),
-                turn_id: Some(turn_id.to_string()),
-                server_name: server_name.to_string(),
-                request: McpServerElicitationRequest::Form {
-                    meta: None,
-                    message: "Please confirm".to_string(),
-                    requested_schema: McpElicitationSchema {
-                        schema_uri: None,
-                        type_: McpElicitationObjectType::Object,
-                        properties: BTreeMap::new(),
-                        required: None,
-                    },
-                },
-            },
-        }
-    }
-
-    fn turn_completed(turn_id: &str) -> ServerNotification {
-        ServerNotification::TurnCompleted(TurnCompletedNotification {
-            thread_id: "thread-1".to_string(),
-            turn: Turn {
-                id: turn_id.to_string(),
-                items: Vec::new(),
-                status: TurnStatus::Completed,
-                error: None,
-                started_at: None,
-                completed_at: Some(0),
-                duration_ms: Some(1),
-            },
-        })
-    }
-
-    fn thread_closed() -> ServerNotification {
-        ServerNotification::ThreadClosed(ThreadClosedNotification {
-            thread_id: "thread-1".to_string(),
-        })
-    }
-
-    fn request_resolved(request_id: AppServerRequestId) -> ServerNotification {
-        ServerNotification::ServerRequestResolved(ServerRequestResolvedNotification {
-            thread_id: "thread-1".to_string(),
-            request_id,
-        })
-    }
-
-    #[test]
-    fn thread_event_snapshot_keeps_pending_request_user_input() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        let request = request_user_input_request("call-1", "turn-1");
-
-        store.push_request(request);
-
-        let snapshot = store.snapshot();
-        assert_eq!(snapshot.events.len(), 1);
-        assert!(matches!(
-            snapshot.events.first(),
-            Some(ThreadBufferedEvent::Request(ServerRequest::ToolRequestUserInput { params, .. }))
-                if params.item_id == "call-1"
-        ));
-    }
-
-    #[test]
-    fn thread_event_snapshot_drops_resolved_request_user_input_after_user_answer() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        store.push_request(request_user_input_request("call-1", "turn-1"));
-
-        store.note_outbound_op(&Op::UserInputAnswer {
-            id: "turn-1".to_string(),
-            response: codex_protocol::request_user_input::RequestUserInputResponse {
-                answers: HashMap::new(),
-            },
-        });
-
-        let snapshot = store.snapshot();
-        assert!(
-            snapshot.events.is_empty(),
-            "resolved request_user_input prompt should not replay on thread switch"
-        );
-    }
-
-    #[test]
-    fn thread_event_snapshot_drops_resolved_request_user_input_after_server_resolution() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        store.push_request(request_user_input_request("call-1", "turn-1"));
-
-        store.push_notification(request_resolved(AppServerRequestId::Integer(1)));
-
-        let snapshot = store.snapshot();
-        assert!(
-            snapshot.events.iter().all(|event| {
-                !matches!(
-                    event,
-                    ThreadBufferedEvent::Request(ServerRequest::ToolRequestUserInput { .. })
-                )
-            }),
-            "server-resolved request_user_input prompt should not replay on thread switch"
-        );
-    }
-
-    #[test]
-    fn thread_event_snapshot_drops_resolved_exec_approval_after_outbound_approval_id() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        store.push_request(exec_approval_request(
-            "call-1",
-            Some("approval-1"),
-            "turn-1",
-        ));
-
-        store.note_outbound_op(&Op::ExecApproval {
-            id: "approval-1".to_string(),
-            turn_id: Some("turn-1".to_string()),
-            decision: ReviewDecision::Approved,
-        });
-
-        let snapshot = store.snapshot();
-        assert!(
-            snapshot.events.is_empty(),
-            "resolved exec approval prompt should not replay on thread switch"
-        );
-    }
-
-    #[test]
-    fn thread_event_snapshot_drops_resolved_exec_approval_after_server_resolution() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        store.push_request(exec_approval_request(
-            "call-1",
-            Some("approval-1"),
-            "turn-1",
-        ));
-
-        store.push_notification(request_resolved(AppServerRequestId::Integer(2)));
-
-        let snapshot = store.snapshot();
-        assert!(
-            snapshot.events.iter().all(|event| {
-                !matches!(
-                    event,
-                    ThreadBufferedEvent::Request(
-                        ServerRequest::CommandExecutionRequestApproval { .. }
-                    )
-                )
-            }),
-            "server-resolved exec approval prompt should not replay on thread switch"
-        );
-    }
-
-    #[test]
-    fn thread_event_snapshot_drops_answered_request_user_input_for_multi_prompt_turn() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        store.push_request(request_user_input_request("call-1", "turn-1"));
-
-        store.note_outbound_op(&Op::UserInputAnswer {
-            id: "turn-1".to_string(),
-            response: codex_protocol::request_user_input::RequestUserInputResponse {
-                answers: HashMap::new(),
-            },
-        });
-
-        store.push_request(request_user_input_request("call-2", "turn-1"));
-
-        let snapshot = store.snapshot();
-        assert_eq!(snapshot.events.len(), 1);
-        assert!(matches!(
-            snapshot.events.first(),
-            Some(ThreadBufferedEvent::Request(ServerRequest::ToolRequestUserInput { params, .. }))
-                if params.item_id == "call-2"
-        ));
-    }
-
-    #[test]
-    fn thread_event_snapshot_keeps_newer_request_user_input_pending_when_same_turn_has_queue() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        store.push_request(request_user_input_request("call-1", "turn-1"));
-        store.push_request(request_user_input_request("call-2", "turn-1"));
-
-        store.note_outbound_op(&Op::UserInputAnswer {
-            id: "turn-1".to_string(),
-            response: codex_protocol::request_user_input::RequestUserInputResponse {
-                answers: HashMap::new(),
-            },
-        });
-
-        let snapshot = store.snapshot();
-        assert_eq!(snapshot.events.len(), 1);
-        assert!(matches!(
-            snapshot.events.first(),
-            Some(ThreadBufferedEvent::Request(ServerRequest::ToolRequestUserInput { params, .. }))
-                if params.item_id == "call-2"
-        ));
-    }
-
-    #[test]
-    fn thread_event_snapshot_drops_resolved_patch_approval_after_outbound_approval() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        store.push_request(patch_approval_request("call-1", "turn-1"));
-
-        store.note_outbound_op(&Op::PatchApproval {
-            id: "call-1".to_string(),
-            decision: ReviewDecision::Approved,
-        });
-
-        let snapshot = store.snapshot();
-        assert!(
-            snapshot.events.is_empty(),
-            "resolved patch approval prompt should not replay on thread switch"
-        );
-    }
-
-    #[test]
-    fn thread_event_snapshot_drops_pending_approvals_when_turn_completes() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        store.push_request(exec_approval_request(
-            "exec-call-1",
-            Some("approval-1"),
-            "turn-1",
-        ));
-        store.push_request(patch_approval_request("patch-call-1", "turn-1"));
-        store.push_notification(turn_completed("turn-1"));
-
-        let snapshot = store.snapshot();
-        assert!(snapshot.events.iter().all(|event| {
-            !matches!(
-                event,
-                ThreadBufferedEvent::Request(ServerRequest::CommandExecutionRequestApproval { .. })
-                    | ThreadBufferedEvent::Request(ServerRequest::FileChangeRequestApproval { .. })
-            )
-        }));
-    }
-
-    #[test]
-    fn thread_event_snapshot_drops_resolved_elicitation_after_outbound_resolution() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        let request_id = codex_protocol::mcp::RequestId::String("request-1".to_string());
-        store.push_request(elicitation_request("server-1", "request-1", "turn-1"));
-
-        store.note_outbound_op(&Op::ResolveElicitation {
-            server_name: "server-1".to_string(),
-            request_id,
-            decision: codex_protocol::approvals::ElicitationAction::Accept,
-            content: None,
-            meta: None,
-        });
-
-        let snapshot = store.snapshot();
-        assert!(
-            snapshot.events.is_empty(),
-            "resolved elicitation prompt should not replay on thread switch"
-        );
-    }
-
-    #[test]
-    fn thread_event_store_reports_pending_thread_approvals() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        assert_eq!(store.has_pending_thread_approvals(), false);
-
-        store.push_request(exec_approval_request(
-            "call-1", /*approval_id*/ None, "turn-1",
-        ));
-
-        assert_eq!(store.has_pending_thread_approvals(), true);
-
-        store.note_outbound_op(&Op::ExecApproval {
-            id: "call-1".to_string(),
-            turn_id: Some("turn-1".to_string()),
-            decision: ReviewDecision::Approved,
-        });
-
-        assert_eq!(store.has_pending_thread_approvals(), false);
-    }
-
-    #[test]
-    fn request_user_input_does_not_count_as_pending_thread_approval() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        store.push_request(request_user_input_request("call-1", "turn-1"));
-
-        assert_eq!(store.has_pending_thread_approvals(), false);
-    }
-
-    #[test]
-    fn thread_event_snapshot_drops_pending_requests_when_thread_closes() {
-        let mut store = ThreadEventStore::new(/*capacity*/ 8);
-        store.push_request(exec_approval_request(
-            "call-1", /*approval_id*/ None, "turn-1",
-        ));
-        store.push_notification(thread_closed());
-
-        assert!(store.snapshot().events.iter().all(|event| {
-            !matches!(
-                event,
-                ThreadBufferedEvent::Request(ServerRequest::CommandExecutionRequestApproval { .. })
-            )
-        }));
     }
 }

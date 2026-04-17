@@ -67,7 +67,15 @@ async fn openai_model_header_mismatch_emits_warning_event_and_warning_item() -> 
     assert_eq!(reroute.to_model, SERVER_MODEL);
     assert_eq!(reroute.reason, ModelRerouteReason::HighRiskCyberActivity);
 
-    let warning = wait_for_event(&test.codex, |event| matches!(event, EventMsg::Warning(_))).await;
+    let warning = wait_for_event(&test.codex, |event| {
+        matches!(
+            event,
+            EventMsg::Warning(warning)
+                if warning.message.contains(REQUESTED_MODEL)
+                    && warning.message.contains(SERVER_MODEL)
+        )
+    })
+    .await;
     let EventMsg::Warning(warning) = warning else {
         panic!("expected warning event");
     };

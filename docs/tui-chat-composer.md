@@ -44,8 +44,8 @@ The solution is to detect paste-like _bursts_ and buffer them into a single expl
 
 - If a popup is visible, a popup-specific handler processes the key first (navigation, selection,
   completion).
-- Otherwise, `handle_key_event_without_popup` handles higher-level semantics (Enter submit,
-  history navigation, etc).
+- Otherwise, `handle_key_event_without_popup` handles higher-level semantics (newline/submit
+  shortcuts, history navigation, etc).
 - After handling the key, `sync_popups()` runs so popup visibility/filters stay consistent with the
   latest text + cursor.
 - When a slash command name is completed and the user types a space, the `/command` token is
@@ -99,13 +99,14 @@ Built-in slash command availability is centralized in
 `codex-rs/tui/src/bottom_pane/slash_commands.rs` and reused by both the composer and the command
 popup so gating stays in sync.
 
-## Submission flow (Enter/Tab)
+## Submission flow (Enter/Ctrl+Enter/Ctrl+J/Tab)
 
 There are multiple submission paths, but they share the same core rules:
 
 When steer mode is enabled, `Tab` requests queuing if a task is already running; otherwise it
-submits immediately. `Enter` always submits immediately in this mode. `Tab` does not submit when
-the input starts with `!` (shell command).
+submits immediately. `Enter` inserts a newline. `Ctrl+Enter` submits immediately, and `Ctrl+J`
+acts as a submit fallback on terminals where `Ctrl+Enter` is not reported distinctly. `Tab` does
+not submit when the input starts with `!` (shell command).
 
 ### Normal submit/queue path
 
@@ -287,7 +288,7 @@ The extra `decide_begin_buffer` heuristic on this path is intentional: IME input
 quick bursts, so the code only retro-grabs if the prefix “looks pastey” (whitespace, or a long
 enough run) to avoid misclassifying IME composition as paste.
 
-### `KeyCode::Enter`: newline vs submit
+### `KeyCode::Enter`: newline behavior
 
 There are two distinct “Enter becomes newline” mechanisms:
 
@@ -298,7 +299,7 @@ There are two distinct “Enter becomes newline” mechanisms:
   `extend_window(now)` so a slightly-late Enter keeps behaving like “newline” rather than “submit”.
 
 Both are disabled inside slash-command context (command popup is active or the first line begins
-with `/`) so Enter keeps its normal “submit/execute” semantics while composing commands.
+with `/`) so slash command composition/dispatch shortcuts remain predictable.
 
 ### Non-char keys / Ctrl+modified input
 

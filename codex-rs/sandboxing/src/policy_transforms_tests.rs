@@ -110,6 +110,7 @@ fn normalize_additional_permissions_preserves_network() {
             read: Some(vec![path.clone()]),
             write: Some(vec![path.clone()]),
         }),
+        macos: None,
     })
     .expect("permissions");
 
@@ -169,6 +170,7 @@ fn normalize_additional_permissions_drops_empty_nested_profiles() {
             read: None,
             write: None,
         }),
+        macos: None,
     })
     .expect("permissions");
 
@@ -262,6 +264,7 @@ fn read_only_additional_permissions_can_enable_network_without_writes() {
                 read: Some(vec![path.clone()]),
                 write: Some(Vec::new()),
             }),
+            macos: None,
         },
     );
 
@@ -296,6 +299,7 @@ fn external_sandbox_additional_permissions_can_enable_network() {
                 read: Some(vec![path]),
                 write: Some(Vec::new()),
             }),
+            macos: None,
         },
     );
 
@@ -406,6 +410,7 @@ fn effective_file_system_sandbox_policy_merges_additional_write_roots() {
             read: Some(vec![]),
             write: Some(vec![allowed_path.clone()]),
         }),
+        macos: None,
         ..Default::default()
     };
 

@@ -163,6 +163,11 @@ pub struct NetworkPolicyAmendment {
     pub action: NetworkPolicyRuleAction,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]
+pub struct ExecApprovalRequestSkillMetadata {
+    pub path_to_skills_md: PathBuf,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
 pub struct GuardianAssessmentEvent {
     /// Stable identifier for this guardian review lifecycle.

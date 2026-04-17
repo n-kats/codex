@@ -55,8 +55,8 @@ pub(crate) use startup_sync::curated_plugins_repo_path;
 pub(crate) use startup_sync::read_curated_plugins_sha;
 pub(crate) use startup_sync::sync_openai_plugins_repo;
 
+pub(crate) use crate::skills::build_skill_name_counts;
 pub(crate) use mentions::build_connector_slug_counts;
-pub(crate) use mentions::build_skill_name_counts;
 pub(crate) use mentions::collect_explicit_app_ids;
 pub(crate) use mentions::collect_explicit_plugin_mentions;
 pub(crate) use mentions::collect_tool_mentions_from_messages;

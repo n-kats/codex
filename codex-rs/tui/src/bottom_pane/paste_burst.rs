@@ -438,6 +438,18 @@ impl PasteBurst {
         self.is_active_internal() || self.pending_first_char.is_some()
     }
 
+    /// Snapshot the text currently held by the burst detector, if any.
+    ///
+    /// This is used by submit handling to recognize a bare slash command even
+    /// when the input is still in the flicker-suppression window.
+    pub fn pending_text(&self) -> Option<String> {
+        if self.is_active_internal() {
+            Some(self.buffer.clone())
+        } else {
+            self.pending_first_char.map(|(ch, _)| ch.to_string())
+        }
+    }
+
     fn is_active_internal(&self) -> bool {
         self.active || !self.buffer.is_empty()
     }

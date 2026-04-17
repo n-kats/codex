@@ -1,11 +1,12 @@
 ---
 source: tui/src/chatwidget/tests.rs
+assertion_line: 7356
 expression: popup
 ---
   Plugins
   Figma · Can be installed · ChatGPT Marketplace
-  Data shared with this app is subject to the app's terms of service and privacy policy. Learn
-  more.
+  Data shared with this app is subject to the app's terms of service and privacy policy. ]8;;https://help.openai.com/en/articles/11487775-apps-in-chatgptL]8;;]8;;https://help.openai.com/en/articles/11487775-apps-in-chatgpte]8;;]8;;https://help.openai.com/en/articles/11487775-apps-in-chatgpta]8;;]8;;https://help.openai.com/en/articles/11487775-apps-in-chatgptr]8;;]8;;https://help.openai.com/en/articles/11487775-apps-in-chatgptn]8;;
+  ]8;;https://help.openai.com/en/articles/11487775-apps-in-chatgptm]8;;]8;;https://help.openai.com/en/articles/11487775-apps-in-chatgpto]8;;]8;;https://help.openai.com/en/articles/11487775-apps-in-chatgptr]8;;]8;;https://help.openai.com/en/articles/11487775-apps-in-chatgpte]8;;.
   Turn Figma files into implementation context.
 
 › 1. Back to plugins  Return to the plugin list.

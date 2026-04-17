@@ -1,4 +1,7 @@
-use crate::SkillsManager;
+use crate::AuthManager;
+use crate::CodexAuth;
+use crate::ModelProviderInfo;
+use crate::OPENAI_PROVIDER_ID;
 use crate::agent::AgentControl;
 use crate::codex::Codex;
 use crate::codex::CodexSpawnArgs;
@@ -6,50 +9,41 @@ use crate::codex::CodexSpawnOk;
 use crate::codex::INITIAL_SUBMIT_ID;
 use crate::codex_thread::CodexThread;
 use crate::config::Config;
+use crate::error::CodexErr;
+use crate::error::Result as CodexResult;
 use crate::file_watcher::FileWatcher;
 use crate::mcp::McpManager;
+use crate::models_manager::collaboration_mode_presets::CollaborationModesConfig;
+use crate::models_manager::manager::ModelsManager;
 use crate::plugins::PluginsManager;
+use crate::protocol::Event;
+use crate::protocol::EventMsg;
+use crate::protocol::SessionConfiguredEvent;
 use crate::rollout::RolloutRecorder;
 use crate::rollout::truncation;
 use crate::shell_snapshot::ShellSnapshot;
 use crate::skills_watcher::SkillsWatcher;
 use crate::skills_watcher::SkillsWatcherEvent;
 use crate::tasks::interrupted_turn_history_marker;
-use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::TurnStatus;
 use codex_exec_server::EnvironmentManager;
-use codex_login::AuthManager;
-use codex_login::CodexAuth;
-use codex_model_provider_info::ModelProviderInfo;
-use codex_model_provider_info::OPENAI_PROVIDER_ID;
-use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
-use codex_models_manager::manager::ModelsManager;
-use codex_models_manager::manager::RefreshStrategy;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationModeMask;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
 #[cfg(test)]
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelPreset;
-use codex_protocol::protocol::Event;
-use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::W3cTraceContext;
-use codex_state::DirectionalThreadSpawnEdgeStatus;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use std::collections::HashMap;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -90,7 +84,7 @@ impl Drop for TempCodexHomeGuard {
     }
 }
 
-fn build_skills_watcher(skills_manager: Arc<SkillsManager>) -> Arc<SkillsWatcher> {
+fn build_skills_watcher(skills_manager: Arc<crate::skills::SkillsManager>) -> Arc<SkillsWatcher> {
     if should_use_test_thread_manager_behavior()
         && let Ok(handle) = Handle::try_current()
         && handle.runtime_flavor() == RuntimeFlavor::CurrentThread
@@ -207,12 +201,11 @@ pub(crate) struct ThreadManagerState {
     auth_manager: Arc<AuthManager>,
     models_manager: Arc<ModelsManager>,
     environment_manager: Arc<EnvironmentManager>,
-    skills_manager: Arc<SkillsManager>,
+    skills_manager: Arc<crate::skills::SkillsManager>,
     plugins_manager: Arc<PluginsManager>,
     mcp_manager: Arc<McpManager>,
     skills_watcher: Arc<SkillsWatcher>,
     session_source: SessionSource,
-    analytics_events_client: Option<AnalyticsEventsClient>,
     // Captures submitted ops for testing purpose when test mode is enabled.
     ops_log: Option<SharedCapturedOps>,
 }
@@ -224,7 +217,6 @@ impl ThreadManager {
         session_source: SessionSource,
         collaboration_modes_config: CollaborationModesConfig,
         environment_manager: Arc<EnvironmentManager>,
-        analytics_events_client: Option<AnalyticsEventsClient>,
     ) -> Self {
         let codex_home = config.codex_home.clone();
         let restriction_product = session_source.restriction_product();
@@ -235,11 +227,11 @@ impl ThreadManager {
             .unwrap_or_else(|| ModelProviderInfo::create_openai_provider(/*base_url*/ None));
         let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);
         let plugins_manager = Arc::new(PluginsManager::new_with_restriction_product(
-            codex_home.to_path_buf(),
+            codex_home.clone(),
             restriction_product,
         ));
         let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
-        let skills_manager = Arc::new(SkillsManager::new_with_restriction_product(
+        let skills_manager = Arc::new(crate::skills::SkillsManager::new_with_restriction_product(
             codex_home.clone(),
             config.bundled_skills_enabled(),
             restriction_product,
@@ -250,7 +242,7 @@ impl ThreadManager {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
                 models_manager: Arc::new(ModelsManager::new_with_provider(
-                    codex_home.to_path_buf(),
+                    codex_home,
                     auth_manager.clone(),
                     config.model_catalog.clone(),
                     collaboration_modes_config,
@@ -263,7 +255,6 @@ impl ThreadManager {
                 skills_watcher,
                 auth_manager,
                 session_source,
-                analytics_events_client,
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             }),
@@ -304,10 +295,6 @@ impl ThreadManager {
     ) -> Self {
         set_thread_manager_test_mode_for_tests(/*enabled*/ true);
         let auth_manager = AuthManager::from_auth_for_testing(auth);
-        let skills_codex_home = match AbsolutePathBuf::from_absolute_path_checked(&codex_home) {
-            Ok(codex_home) => codex_home,
-            Err(err) => panic!("test codex_home should be absolute: {err}"),
-        };
         let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);
         let restriction_product = SessionSource::Exec.restriction_product();
         let plugins_manager = Arc::new(PluginsManager::new_with_restriction_product(
@@ -315,8 +302,8 @@ impl ThreadManager {
             restriction_product,
         ));
         let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
-        let skills_manager = Arc::new(SkillsManager::new_with_restriction_product(
-            skills_codex_home,
+        let skills_manager = Arc::new(crate::skills::SkillsManager::new_with_restriction_product(
+            codex_home.clone(),
             /*bundled_skills_enabled*/ true,
             restriction_product,
         ));
@@ -337,7 +324,6 @@ impl ThreadManager {
                 skills_watcher,
                 auth_manager,
                 session_source: SessionSource::Exec,
-                analytics_events_client: None,
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             }),
@@ -353,7 +339,7 @@ impl ThreadManager {
         self.state.auth_manager.clone()
     }
 
-    pub fn skills_manager(&self) -> Arc<SkillsManager> {
+    pub fn skills_manager(&self) -> Arc<crate::skills::SkillsManager> {
         self.state.skills_manager.clone()
     }
 
@@ -365,15 +351,14 @@ impl ThreadManager {
         self.state.mcp_manager.clone()
     }
 
-    pub fn environment_manager(&self) -> Arc<EnvironmentManager> {
-        self.state.environment_manager.clone()
-    }
-
     pub fn get_models_manager(&self) -> Arc<ModelsManager> {
         self.state.models_manager.clone()
     }
 
-    pub async fn list_models(&self, refresh_strategy: RefreshStrategy) -> Vec<ModelPreset> {
+    pub async fn list_models(
+        &self,
+        refresh_strategy: crate::models_manager::manager::RefreshStrategy,
+    ) -> Vec<ModelPreset> {
         self.state
             .models_manager
             .list_models(refresh_strategy)
@@ -417,53 +402,6 @@ impl ThreadManager {
         self.state.get_thread(thread_id).await
     }
 
-    /// List `thread_id` plus all known descendants in its spawn subtree.
-    pub async fn list_agent_subtree_thread_ids(
-        &self,
-        thread_id: ThreadId,
-    ) -> CodexResult<Vec<ThreadId>> {
-        let thread = self.state.get_thread(thread_id).await?;
-
-        let mut subtree_thread_ids = Vec::new();
-        let mut seen_thread_ids = HashSet::new();
-        subtree_thread_ids.push(thread_id);
-        seen_thread_ids.insert(thread_id);
-
-        if let Some(state_db_ctx) = thread.state_db() {
-            for status in [
-                DirectionalThreadSpawnEdgeStatus::Open,
-                DirectionalThreadSpawnEdgeStatus::Closed,
-            ] {
-                for descendant_id in state_db_ctx
-                    .list_thread_spawn_descendants_with_status(thread_id, status)
-                    .await
-                    .map_err(|err| {
-                        CodexErr::Fatal(format!("failed to load thread-spawn descendants: {err}"))
-                    })?
-                {
-                    if seen_thread_ids.insert(descendant_id) {
-                        subtree_thread_ids.push(descendant_id);
-                    }
-                }
-            }
-        }
-
-        for descendant_id in thread
-            .codex
-            .session
-            .services
-            .agent_control
-            .list_live_agent_subtree_thread_ids(thread_id)
-            .await?
-        {
-            if seen_thread_ids.insert(descendant_id) {
-                subtree_thread_ids.push(descendant_id);
-            }
-        }
-
-        Ok(subtree_thread_ids)
-    }
-
     pub async fn start_thread(&self, config: Config) -> CodexResult<NewThread> {
         // Box delegated thread-spawn futures so these convenience wrappers do
         // not inline the full spawn path into every caller's async state.
@@ -483,7 +421,6 @@ impl ThreadManager {
     ) -> CodexResult<NewThread> {
         Box::pin(self.start_thread_with_tools_and_service_name(
             config,
-            InitialHistory::New,
             dynamic_tools,
             persist_extended_history,
             /*metrics_service_name*/ None,
@@ -495,7 +432,6 @@ impl ThreadManager {
     pub async fn start_thread_with_tools_and_service_name(
         &self,
         config: Config,
-        initial_history: InitialHistory,
         dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
         persist_extended_history: bool,
         metrics_service_name: Option<String>,
@@ -503,7 +439,7 @@ impl ThreadManager {
     ) -> CodexResult<NewThread> {
         Box::pin(self.state.spawn_thread(
             config,
-            initial_history,
+            InitialHistory::New,
             Arc::clone(&self.state.auth_manager),
             self.agent_control(),
             dynamic_tools,
@@ -679,7 +615,6 @@ impl ThreadManager {
             ForkSnapshot::Interrupted => {
                 let history = match history {
                     InitialHistory::New => InitialHistory::New,
-                    InitialHistory::Cleared => InitialHistory::Cleared,
                     InitialHistory::Forked(history) => InitialHistory::Forked(history),
                     InitialHistory::Resumed(resumed) => InitialHistory::Forked(resumed.history),
                 };
@@ -907,24 +842,11 @@ impl ThreadManagerState {
         parent_trace: Option<W3cTraceContext>,
         user_shell_override: Option<crate::shell::Shell>,
     ) -> CodexResult<NewThread> {
-        let environment = self
-            .environment_manager
-            .current()
-            .await
-            .map_err(|err| CodexErr::Fatal(format!("failed to create environment: {err}")))?;
-        let watch_registration = match environment.as_ref() {
-            Some(environment) if !environment.is_remote() => {
-                self.skills_watcher
-                    .register_config(
-                        &config,
-                        self.skills_manager.as_ref(),
-                        self.plugins_manager.as_ref(),
-                        Some(environment.get_filesystem()),
-                    )
-                    .await
-            }
-            Some(_) | None => crate::file_watcher::WatchRegistration::default(),
-        };
+        let watch_registration = self.skills_watcher.register_config(
+            &config,
+            self.skills_manager.as_ref(),
+            self.plugins_manager.as_ref(),
+        );
         let CodexSpawnOk {
             codex, thread_id, ..
         } = Codex::spawn(CodexSpawnArgs {
@@ -946,7 +868,6 @@ impl ThreadManagerState {
             inherited_exec_policy,
             user_shell_override,
             parent_trace,
-            analytics_events_client: self.analytics_events_client.clone(),
         })
         .await?;
         self.finalize_thread_spawn(codex, thread_id, watch_registration)
@@ -1090,12 +1011,10 @@ fn append_interrupted_boundary(history: InitialHistory, turn_id: Option<String>)
     let aborted_event = RolloutItem::EventMsg(EventMsg::TurnAborted(TurnAbortedEvent {
         turn_id,
         reason: TurnAbortReason::Interrupted,
-        completed_at: None,
-        duration_ms: None,
     }));
 
     match history {
-        InitialHistory::New | InitialHistory::Cleared => InitialHistory::Forked(vec![
+        InitialHistory::New => InitialHistory::Forked(vec![
             RolloutItem::ResponseItem(interrupted_turn_history_marker()),
             aborted_event,
         ]),

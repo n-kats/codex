@@ -97,12 +97,28 @@ pub(crate) use list_selection_view::popup_content_width;
 pub(crate) use list_selection_view::side_by_side_layout_widths;
 pub(crate) use memories_settings_view::MemoriesSettingsView;
 mod feedback_view;
-pub(crate) use feedback_view::FeedbackAudience;
-pub(crate) use feedback_view::feedback_classification;
-pub(crate) use feedback_view::feedback_disabled_params;
-pub(crate) use feedback_view::feedback_selection_params;
-pub(crate) use feedback_view::feedback_success_cell;
-pub(crate) use feedback_view::feedback_upload_consent_params;
+pub(crate) type FeedbackAudience = feedback_view::FeedbackAudience;
+pub(crate) fn feedback_disabled_params() -> list_selection_view::SelectionViewParams {
+    feedback_view::feedback_disabled_params()
+}
+pub(crate) fn feedback_selection_params(
+    app_event_tx: AppEventSender,
+) -> list_selection_view::SelectionViewParams {
+    feedback_view::feedback_selection_params(app_event_tx)
+}
+pub(crate) fn feedback_upload_consent_params(
+    app_event_tx: AppEventSender,
+    category: crate::app_event::FeedbackCategory,
+    rollout_path: Option<std::path::PathBuf>,
+    feedback_diagnostics: &codex_feedback::feedback_diagnostics::FeedbackDiagnostics,
+) -> list_selection_view::SelectionViewParams {
+    feedback_view::feedback_upload_consent_params(
+        app_event_tx,
+        category,
+        rollout_path,
+        feedback_diagnostics,
+    )
+}
 pub(crate) use skills_toggle_view::SkillsToggleItem;
 pub(crate) use skills_toggle_view::SkillsToggleView;
 pub(crate) use status_line_setup::StatusLineItem;
@@ -119,7 +135,7 @@ mod selection_popup_common;
 mod selection_tabs;
 mod textarea;
 mod unified_exec_footer;
-pub(crate) use feedback_view::FeedbackNoteView;
+pub(crate) type FeedbackNoteView = feedback_view::FeedbackNoteView;
 
 /// How long the "press again to quit" hint stays visible.
 ///
@@ -340,8 +356,21 @@ impl BottomPane {
         self.request_redraw();
     }
 
+    pub fn set_voice_transcription_enabled(&mut self, enabled: bool) {
+        self.composer.set_voice_transcription_enabled(enabled);
+        self.request_redraw();
+    }
+
     pub fn set_audio_device_selection_enabled(&mut self, enabled: bool) {
         self.composer.set_audio_device_selection_enabled(enabled);
+        self.request_redraw();
+    }
+
+    pub(crate) fn set_custom_prompts(
+        &mut self,
+        prompts: Vec<codex_protocol::custom_prompts::CustomPrompt>,
+    ) {
+        self.composer.set_custom_prompts(prompts);
         self.request_redraw();
     }
 

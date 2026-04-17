@@ -660,7 +660,7 @@ pub(crate) async fn build_realtime_session_config(
         config.experimental_realtime_ws_backend_prompt.clone(),
     );
     let startup_context = match config.experimental_realtime_ws_startup_context.clone() {
-        Some(startup_context) => startup_context,
+        Some(context) => context,
         None => {
             build_realtime_startup_context(sess.as_ref(), REALTIME_STARTUP_CONTEXT_TOKEN_BUDGET)
                 .await

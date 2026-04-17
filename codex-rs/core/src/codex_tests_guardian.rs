@@ -135,6 +135,7 @@ async fn guardian_allows_shell_additional_permissions_requests_past_policy_valid
             .windows_sandbox_private_desktop,
         justification: Some("test".to_string()),
         arg0: None,
+        run_as: None,
     };
 
     let handler = ShellHandler;
@@ -156,6 +157,7 @@ async fn guardian_allows_shell_additional_permissions_requests_past_policy_valid
                             enabled: Some(true),
                         }),
                         file_system: None,
+                        macos: None,
                     },
                     "justification": params.justification.clone(),
                 })
@@ -383,7 +385,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
     .expect("write policy file");
 
     let mut config = build_test_config(codex_home.path()).await;
-    config.cwd = project_dir.abs();
+    config.cwd = project_dir.abs().to_path_buf();
     config.config_layer_stack = ConfigLayerStack::new(
         vec![ConfigLayerEntry::new(
             ConfigLayerSource::Project {

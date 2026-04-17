@@ -17,7 +17,7 @@ pub mod metadata;
 
 pub const CONNECTORS_CACHE_TTL: Duration = Duration::from_secs(3600);
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct AllConnectorsCacheKey {
     chatgpt_base_url: String,
     account_id: Option<String>,
@@ -43,13 +43,13 @@ impl AllConnectorsCacheKey {
 
 #[derive(Clone)]
 struct CachedAllConnectors {
-    key: AllConnectorsCacheKey,
     expires_at: Instant,
     connectors: Vec<AppInfo>,
 }
 
-static ALL_CONNECTORS_CACHE: LazyLock<StdMutex<Option<CachedAllConnectors>>> =
-    LazyLock::new(|| StdMutex::new(None));
+static ALL_CONNECTORS_CACHE: LazyLock<
+    StdMutex<HashMap<AllConnectorsCacheKey, CachedAllConnectors>>,
+> = LazyLock::new(|| StdMutex::new(HashMap::new()));
 
 #[derive(Debug, Deserialize)]
 pub struct DirectoryListResponse {
@@ -82,16 +82,10 @@ pub fn cached_all_connectors(cache_key: &AllConnectorsCacheKey) -> Option<Vec<Ap
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let now = Instant::now();
 
-    if let Some(cached) = cache_guard.as_ref() {
-        if now < cached.expires_at && cached.key == *cache_key {
-            return Some(cached.connectors.clone());
-        }
-        if now >= cached.expires_at {
-            *cache_guard = None;
-        }
-    }
-
-    None
+    cache_guard.retain(|_, cached| now < cached.expires_at);
+    cache_guard
+        .get(cache_key)
+        .map(|cached| cached.connectors.clone())
 }
 
 pub async fn list_all_connectors_with_options<F, Fut>(
@@ -140,11 +134,13 @@ fn write_cached_all_connectors(cache_key: AllConnectorsCacheKey, connectors: &[A
     let mut cache_guard = ALL_CONNECTORS_CACHE
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    *cache_guard = Some(CachedAllConnectors {
-        key: cache_key,
-        expires_at: Instant::now() + CONNECTORS_CACHE_TTL,
-        connectors: connectors.to_vec(),
-    });
+    cache_guard.insert(
+        cache_key,
+        CachedAllConnectors {
+            expires_at: Instant::now() + CONNECTORS_CACHE_TTL,
+            connectors: connectors.to_vec(),
+        },
+    );
 }
 
 async fn list_directory_connectors<F, Fut>(fetch_page: &mut F) -> anyhow::Result<Vec<DirectoryApp>>

@@ -9,25 +9,105 @@
 mod account;
 mod card;
 mod format;
-mod helpers;
+pub(crate) mod helpers;
 mod rate_limits;
 
-pub(crate) use account::StatusAccountDisplay;
-pub(crate) use card::StatusHistoryHandle;
+pub(crate) type StatusAccountDisplay = account::StatusAccountDisplay;
 #[cfg(test)]
-pub(crate) use card::new_status_output;
+pub(crate) fn new_status_output(
+    config: &codex_core::config::Config,
+    account_display: Option<&StatusAccountDisplay>,
+    token_info: Option<&codex_protocol::protocol::TokenUsageInfo>,
+    total_usage: &codex_protocol::protocol::TokenUsage,
+    session_id: &Option<codex_protocol::ThreadId>,
+    thread_name: Option<String>,
+    forked_from: Option<codex_protocol::ThreadId>,
+    rate_limits: Option<&RateLimitSnapshotDisplay>,
+    plan_type: Option<codex_protocol::account::PlanType>,
+    now: chrono::DateTime<chrono::Local>,
+    model_name: &str,
+    collaboration_mode: Option<&str>,
+    reasoning_effort_override: Option<Option<codex_protocol::openai_models::ReasoningEffort>>,
+) -> crate::history_cell::CompositeHistoryCell {
+    card::new_status_output(
+        config,
+        account_display,
+        token_info,
+        total_usage,
+        session_id,
+        thread_name,
+        forked_from,
+        rate_limits,
+        plan_type,
+        now,
+        model_name,
+        collaboration_mode,
+        reasoning_effort_override,
+    )
+}
+
+pub(crate) fn new_status_output_with_rate_limits(
+    config: &codex_core::config::Config,
+    account_display: Option<&StatusAccountDisplay>,
+    token_info: Option<&codex_protocol::protocol::TokenUsageInfo>,
+    total_usage: &codex_protocol::protocol::TokenUsage,
+    session_id: &Option<codex_protocol::ThreadId>,
+    thread_name: Option<String>,
+    forked_from: Option<codex_protocol::ThreadId>,
+    rate_limits: &[RateLimitSnapshotDisplay],
+    plan_type: Option<codex_protocol::account::PlanType>,
+    now: chrono::DateTime<chrono::Local>,
+    model_name: &str,
+    collaboration_mode: Option<&str>,
+    reasoning_effort_override: Option<Option<codex_protocol::openai_models::ReasoningEffort>>,
+    refreshing_rate_limits: bool,
+) -> crate::history_cell::CompositeHistoryCell {
+    card::new_status_output_with_rate_limits(
+        config,
+        account_display,
+        token_info,
+        total_usage,
+        session_id,
+        thread_name,
+        forked_from,
+        rate_limits,
+        plan_type,
+        now,
+        model_name,
+        collaboration_mode,
+        reasoning_effort_override,
+        refreshing_rate_limits,
+    )
+}
+
+pub(crate) fn format_directory_display(
+    directory: &std::path::Path,
+    max_width: Option<usize>,
+) -> String {
+    helpers::format_directory_display(directory, max_width)
+}
+
+pub(crate) fn format_tokens_compact(value: i64) -> String {
+    helpers::format_tokens_compact(value)
+}
+
+pub(crate) type RateLimitSnapshotDisplay = rate_limits::RateLimitSnapshotDisplay;
+pub(crate) type RateLimitWindowDisplay = rate_limits::RateLimitWindowDisplay;
 #[cfg(test)]
-pub(crate) use card::new_status_output_with_rate_limits;
-pub(crate) use card::new_status_output_with_rate_limits_handle;
-pub(crate) use helpers::compose_agents_summary;
-pub(crate) use helpers::format_directory_display;
-pub(crate) use helpers::format_tokens_compact;
-pub(crate) use helpers::plan_type_display_name;
-pub(crate) use rate_limits::RateLimitSnapshotDisplay;
-pub(crate) use rate_limits::RateLimitWindowDisplay;
-#[cfg(test)]
-pub(crate) use rate_limits::rate_limit_snapshot_display;
-pub(crate) use rate_limits::rate_limit_snapshot_display_for_limit;
+pub(crate) fn rate_limit_snapshot_display(
+    snapshot: &codex_protocol::protocol::RateLimitSnapshot,
+    captured_at: chrono::DateTime<chrono::Local>,
+) -> RateLimitSnapshotDisplay {
+    rate_limits::rate_limit_snapshot_display(snapshot, captured_at)
+}
+
+pub(crate) fn rate_limit_snapshot_display_for_limit(
+    snapshot: &codex_protocol::protocol::RateLimitSnapshot,
+    limit_name: String,
+    captured_at: chrono::DateTime<chrono::Local>,
+) -> RateLimitSnapshotDisplay {
+    rate_limits::rate_limit_snapshot_display_for_limit(snapshot, limit_name, captured_at)
+}
 
 #[cfg(test)]
 mod tests;

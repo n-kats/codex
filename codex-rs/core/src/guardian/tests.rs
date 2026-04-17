@@ -879,7 +879,7 @@ async fn guardian_review_request_layout_matches_model_visible_request_snapshot()
     session.conversation_id = fixed_guardian_parent_session_id();
     let temp_cwd = TempDir::new()?;
     let mut config = (*turn.config).clone();
-    config.cwd = temp_cwd.abs();
+    config.cwd = temp_cwd.abs().to_path_buf();
     config.model_provider.base_url = Some(format!("{}/v1", server.uri()));
     let config = Arc::new(config);
     let models_manager = Arc::new(test_support::models_manager_with_provider(

@@ -1702,7 +1702,7 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         let event = rx.try_recv().expect("expected AppEvent");
         let AppEvent::CodexOp(Op::UserInputAnswer { response, .. }) = event else {
@@ -1729,7 +1729,7 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert_eq!(overlay.current_index(), 1);
         let first_answer = &overlay.answers[0];
         assert!(first_answer.answer_committed);
@@ -1739,7 +1739,7 @@ mod tests {
             "unexpected AppEvent before full submission"
         );
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         let event = rx.try_recv().expect("expected AppEvent");
         let AppEvent::CodexOp(Op::UserInputAnswer { response, .. }) = event else {
             panic!("expected UserInputAnswer");
@@ -2014,14 +2014,14 @@ mod tests {
         assert!(matches!(overlay.focus, Focus::Options));
         assert_eq!(overlay.notes_ui_visible(), false);
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(overlay.confirm_unanswered_active());
         assert!(
             rx.try_recv().is_err(),
             "unexpected AppEvent before confirmation submit"
         );
         overlay.handle_key_event(KeyEvent::from(KeyCode::Char('1')));
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         let event = rx.try_recv().expect("expected AppEvent");
         let AppEvent::CodexOp(Op::UserInputAnswer { response, .. }) = event else {
@@ -2141,7 +2141,7 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(
             rx.try_recv().is_err(),
             "unexpected AppEvent before interruption"
@@ -2281,7 +2281,7 @@ mod tests {
         overlay.composer.move_cursor_to_end();
         assert_eq!(overlay.unanswered_count(), 2);
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(overlay.answers[0].answer_committed, true);
         assert_eq!(overlay.unanswered_count(), 1);
@@ -2304,7 +2304,7 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(overlay.answers[0].answer_committed, false);
         assert_eq!(overlay.unanswered_count(), 2);
@@ -2377,7 +2377,7 @@ mod tests {
             .composer
             .set_text_content("Committed".to_string(), Vec::new(), Vec::new());
         overlay.composer.move_cursor_to_end();
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert_eq!(overlay.answers[0].answer_committed, true);
         let _ = rx.try_recv();
 
@@ -2465,7 +2465,7 @@ mod tests {
             .set_text_content("Notes".to_string(), Vec::new(), Vec::new());
         overlay.composer.move_cursor_to_end();
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(overlay.current_index(), 1);
         let answer = overlay.answers.first().expect("answer missing");
@@ -2576,7 +2576,7 @@ mod tests {
         overlay.ensure_selected_for_notes();
         overlay.composer.handle_paste(large.clone());
 
-        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         overlay.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
 
         let draft = &overlay.answers[0].draft;

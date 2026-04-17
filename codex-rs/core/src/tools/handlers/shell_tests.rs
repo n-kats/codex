@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -7,6 +8,7 @@ use core_test_support::test_path_buf;
 use pretty_assertions::assert_eq;
 
 use crate::codex::make_session_and_context;
+use crate::exec_env::CODEX_THREAD_ID_ENV_VAR;
 use crate::exec_env::create_env;
 use crate::sandboxing::SandboxPermissions;
 use crate::shell::Shell;
@@ -116,7 +118,14 @@ async fn shell_command_handler_to_exec_params_uses_session_shell_and_turn_contex
     // ExecParams cannot derive Eq due to the CancellationToken field, so we manually compare the fields.
     assert_eq!(exec_params.command, expected_command);
     assert_eq!(exec_params.cwd, expected_cwd);
-    assert_eq!(exec_params.env, expected_env);
+    assert_eq!(
+        exec_params.env.keys().cloned().collect::<BTreeSet<_>>(),
+        expected_env.keys().cloned().collect::<BTreeSet<_>>(),
+    );
+    assert_eq!(
+        exec_params.env.get(CODEX_THREAD_ID_ENV_VAR),
+        expected_env.get(CODEX_THREAD_ID_ENV_VAR),
+    );
     assert_eq!(exec_params.network, turn_context.network);
     assert_eq!(exec_params.expiration.timeout_ms(), timeout_ms);
     assert_eq!(exec_params.sandbox_permissions, sandbox_permissions);

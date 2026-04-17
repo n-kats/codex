@@ -2133,6 +2133,7 @@ fn pretty_lines_from_error(raw: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::new_task::NewTaskPage;
     use crate::resolve_git_ref_with_git_info;
     use codex_cloud_tasks_client::DiffSummary;
     use codex_cloud_tasks_client::TaskId;
@@ -2401,5 +2402,29 @@ mod tests {
             .collect::<Vec<_>>()
             .join("");
         assert!(footer.contains("⌃O env"));
+    }
+
+    #[test]
+    fn new_task_page_footer_matches_composer_shortcuts() {
+        let page = NewTaskPage::new(/*env_id*/ None, /*best_of_n*/ 1);
+        let area = Rect::new(0, 0, 40, 5);
+        let mut buf = Buffer::empty(area);
+        page.composer.render_ref(area, &mut buf);
+
+        let footer = buf
+            .content()
+            .iter()
+            .skip((area.width as usize) * (area.height as usize - 1))
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            footer.contains("Ctrl+J send"),
+            "expected send shortcut in footer, got: {footer:?}"
+        );
+        assert!(
+            footer.contains("Enter newline"),
+            "expected newline shortcut in footer, got: {footer:?}"
+        );
     }
 }

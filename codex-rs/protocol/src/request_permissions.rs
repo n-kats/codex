@@ -32,6 +32,7 @@ impl From<RequestPermissionProfile> for PermissionProfile {
         Self {
             network: value.network,
             file_system: value.file_system,
+            macos: None,
         }
     }
 }

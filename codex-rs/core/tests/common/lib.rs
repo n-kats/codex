@@ -173,6 +173,22 @@ pub async fn load_default_config_for_test(codex_home: &TempDir) -> Config {
 }
 
 #[cfg(target_os = "linux")]
+pub fn linux_userns_available() -> bool {
+    let Ok(output) = std::process::Command::new("unshare")
+        .args(["-Ur", "true"])
+        .output()
+    else {
+        return true;
+    };
+    output.status.success()
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn linux_userns_available() -> bool {
+    true
+}
+
+#[cfg(target_os = "linux")]
 fn default_test_overrides() -> ConfigOverrides {
     ConfigOverrides {
         codex_linux_sandbox_exe: Some(
@@ -607,6 +623,28 @@ macro_rules! skip_if_windows {
         if cfg!(target_os = "windows") {
             println!("Skipping test because it cannot execute on Windows.");
             return $return_value;
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! skip_if_linux_userns_unavailable {
+    () => {{
+        #[cfg(target_os = "linux")]
+        {
+            if !$crate::linux_userns_available() {
+                println!("Skipping test because unprivileged user namespaces are not available.");
+                return;
+            }
+        }
+    }};
+    ($return_value:expr $(,)?) => {{
+        #[cfg(target_os = "linux")]
+        {
+            if !$crate::linux_userns_available() {
+                println!("Skipping test because unprivileged user namespaces are not available.");
+                return $return_value;
+            }
         }
     }};
 }

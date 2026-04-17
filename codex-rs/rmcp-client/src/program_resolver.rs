@@ -7,20 +7,48 @@
 //! scripts natively through shebangs.
 //!
 //! The `resolve` function abstracts these platform differences:
-//! - On Unix: Returns the program unchanged (OS handles script execution)
+//! - On Unix: Uses the `which` crate to resolve against the provided `PATH`
 //! - On Windows: Uses the `which` crate to resolve full paths including extensions
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::ffi::OsString;
+
+#[cfg(unix)]
+use std::env;
+#[cfg(unix)]
+use tracing::debug;
 
 /// Resolves a program to its executable path on Unix systems.
 ///
 /// Unix systems handle PATH resolution and script execution natively through
-/// the kernel's shebang (`#!`) mechanism, so this function simply returns
-/// the program name unchanged.
+/// the kernel's shebang (`#!`) mechanism.
+///
+/// Note: Rust process spawning may resolve executables using the parent process
+/// environment, so we resolve against the provided `PATH` to ensure the caller's
+/// environment map is honored.
 #[cfg(unix)]
-pub fn resolve(program: OsString, _env: &HashMap<OsString, OsString>) -> std::io::Result<OsString> {
-    Ok(program)
+pub fn resolve(program: OsString, env: &HashMap<OsString, OsString>) -> std::io::Result<OsString> {
+    // Get current directory for relative path resolution.
+    let cwd = env::current_dir()
+        .map_err(|err| std::io::Error::other(format!("Failed to get current directory: {err}")))?;
+
+    // Extract PATH from environment for search locations.
+    let search_path = env.get(OsStr::new("PATH"));
+
+    match which::which_in(&program, search_path, &cwd) {
+        Ok(resolved) => {
+            debug!("Resolved {:?} to {:?}", program, resolved);
+            Ok(resolved.into_os_string())
+        }
+        Err(err) => {
+            debug!(
+                "Failed to resolve {:?}: {}. Using original path",
+                program, err
+            );
+            Ok(program)
+        }
+    }
 }
 
 /// Resolves a program to its executable path on Windows systems.
@@ -39,16 +67,19 @@ pub fn resolve(program: OsString, env: &HashMap<OsString, OsString>) -> std::io:
         .map_err(|e| std::io::Error::other(format!("Failed to get current directory: {e}")))?;
 
     // Extract PATH from environment for search locations
-    let search_path = env.get(std::ffi::OsStr::new("PATH"));
+    let search_path = env.get(OsStr::new("PATH"));
 
     // Attempt resolution via which crate
     match which::which_in(&program, search_path, &cwd) {
         Ok(resolved) => {
-            tracing::debug!("Resolved {program:?} to {resolved:?}");
+            debug!("Resolved {:?} to {:?}", program, resolved);
             Ok(resolved.into_os_string())
         }
         Err(e) => {
-            tracing::debug!("Failed to resolve {program:?}: {e}. Using original path");
+            debug!(
+                "Failed to resolve {:?}: {}. Using original path",
+                program, e
+            );
             // Fallback to original program - let Command::new() handle the error
             Ok(program)
         }
@@ -62,6 +93,7 @@ mod tests {
     use anyhow::Result;
     use std::fs;
     use std::path::Path;
+    use std::path::PathBuf;
     use tempfile::TempDir;
     use tokio::process::Command;
 
@@ -70,7 +102,8 @@ mod tests {
     #[tokio::test]
     async fn test_unix_executes_script_without_extension() -> Result<()> {
         let env = TestExecutableEnv::new()?;
-        let mut cmd = Command::new(&env.program_name);
+        let mut cmd = Command::new(&env.program_path);
+        cmd.current_dir(env.program_path.parent().expect("script dir exists"));
         cmd.envs(&env.mcp_env);
 
         let output = cmd.output().await;
@@ -138,6 +171,7 @@ mod tests {
         // Held to prevent the temporary directory from being deleted.
         _temp_dir: TempDir,
         program_name: String,
+        program_path: PathBuf,
         mcp_env: HashMap<OsString, OsString>,
     }
 
@@ -146,22 +180,29 @@ mod tests {
 
         fn new() -> Result<Self> {
             let temp_dir = TempDir::new()?;
-            let dir_path = temp_dir.path();
+            let dir_path = temp_dir.path().to_path_buf();
 
-            Self::create_executable(dir_path)?;
+            Self::create_executable(&dir_path)?;
 
             // Build a clean environment with the temp dir in the PATH.
             let mut extra_env = HashMap::new();
-            extra_env.insert(OsString::from("PATH"), Self::build_path_env_var(dir_path));
+            extra_env.insert(
+                OsString::from("PATH"),
+                OsString::from(Self::build_path(&dir_path)),
+            );
 
             #[cfg(windows)]
-            extra_env.insert(OsString::from("PATHEXT"), Self::ensure_cmd_extension());
+            extra_env.insert(
+                OsString::from("PATHEXT"),
+                OsString::from(Self::ensure_cmd_extension()),
+            );
 
             let mcp_env = create_env_for_mcp_server(Some(extra_env), &[]);
 
             Ok(Self {
                 _temp_dir: temp_dir,
                 program_name: Self::TEST_PROGRAM.to_string(),
+                program_path: dir_path.join(Self::test_program_filename()),
                 mcp_env,
             })
         }
@@ -184,6 +225,18 @@ mod tests {
             Ok(())
         }
 
+        fn test_program_filename() -> &'static str {
+            #[cfg(windows)]
+            {
+                concat!(Self::TEST_PROGRAM, ".cmd")
+            }
+
+            #[cfg(not(windows))]
+            {
+                Self::TEST_PROGRAM
+            }
+        }
+
         #[cfg(unix)]
         fn set_executable(path: &Path) -> Result<()> {
             use std::os::unix::fs::PermissionsExt;
@@ -194,30 +247,20 @@ mod tests {
         }
 
         /// Prepends the given directory to the system's PATH variable.
-        fn build_path_env_var(dir: &Path) -> OsString {
-            let mut path = OsString::from(dir.as_os_str());
-            if let Some(current) = std::env::var_os("PATH") {
-                let sep = if cfg!(windows) { ";" } else { ":" };
-                path.push(sep);
-                path.push(current);
-            }
-            path
+        fn build_path(dir: &Path) -> String {
+            let current = std::env::var("PATH").unwrap_or_default();
+            let sep = if cfg!(windows) { ";" } else { ":" };
+            format!("{}{sep}{current}", dir.to_string_lossy())
         }
 
         /// Ensures `.CMD` is in the `PATHEXT` variable on Windows for script discovery.
         #[cfg(windows)]
-        fn ensure_cmd_extension() -> OsString {
-            let current = std::env::var_os("PATHEXT").unwrap_or_default();
-            if current
-                .to_string_lossy()
-                .to_ascii_uppercase()
-                .contains(".CMD")
-            {
+        fn ensure_cmd_extension() -> String {
+            let current = std::env::var("PATHEXT").unwrap_or_default();
+            if current.to_uppercase().contains(".CMD") {
                 current
             } else {
-                let mut path_ext = OsString::from(".CMD;");
-                path_ext.push(current);
-                path_ext
+                format!(".CMD;{current}")
             }
         }
     }

@@ -983,6 +983,11 @@ impl TextArea {
         }
     }
 
+    #[cfg(target_os = "linux")]
+    pub fn replace_element_by_id(&mut self, id: &str, text: &str) -> bool {
+        self.replace_element_payload(id, text)
+    }
+
     /// Update the element's text in place, preserving its id so callers can
     /// update it again later (e.g. recording -> transcribing -> final).
     #[allow(dead_code)]

@@ -541,7 +541,7 @@ pub enum ConfigLayerSource {
         dot_codex_folder: AbsolutePathBuf,
     },
 
-    /// Session-layer overrides supplied via `-c`/`--config`.
+    /// Session-layer overrides supplied via `-c`.
     SessionFlags,
 
     /// `managed_config.toml` was designed to be a config that was loaded
@@ -1242,6 +1242,7 @@ impl From<AdditionalPermissionProfile> for CorePermissionProfile {
         Self {
             network: value.network.map(CoreNetworkPermissions::from),
             file_system: value.file_system.map(CoreFileSystemPermissions::from),
+            macos: None,
         }
     }
 }
@@ -1263,6 +1264,7 @@ impl From<GrantedPermissionProfile> for CorePermissionProfile {
         Self {
             network: value.network.map(CoreNetworkPermissions::from),
             file_system: value.file_system.map(CoreFileSystemPermissions::from),
+            macos: None,
         }
     }
 }
@@ -6864,6 +6866,7 @@ mod tests {
                             .expect("path must be absolute"),
                     ]),
                 }),
+                macos: None,
             }
         );
     }

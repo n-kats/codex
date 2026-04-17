@@ -1,12 +1,12 @@
 #![cfg(not(debug_assertions))]
 
-use crate::legacy_core::config::Config;
 use crate::update_action;
 use crate::update_action::UpdateAction;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
-use codex_login::default_client::create_client;
+use codex_core::config::Config;
+use codex_core::default_client::create_client;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::Path;
@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use crate::version::CODEX_CLI_VERSION;
 
 pub fn get_upgrade_version(config: &Config) -> Option<String> {
-    if !config.check_for_update_on_startup || is_source_build_version(CODEX_CLI_VERSION) {
+    if !config.check_for_update_on_startup {
         return None;
     }
 
@@ -70,7 +70,7 @@ struct HomebrewCaskInfo {
 }
 
 fn version_filepath(config: &Config) -> PathBuf {
-    config.codex_home.join(VERSION_FILENAME).into_path_buf()
+    config.codex_home.join(VERSION_FILENAME)
 }
 
 fn read_version_info(version_file: &Path) -> anyhow::Result<VersionInfo> {
@@ -121,7 +121,7 @@ async fn check_for_update(version_file: &Path) -> anyhow::Result<()> {
 }
 
 fn is_newer(latest: &str, current: &str) -> Option<bool> {
-    match (parse_version(latest), parse_version(current)) {
+    match (parse_latest_version(latest), parse_current_version(current)) {
         (Some(l), Some(c)) => Some(l > c),
         _ => None,
     }
@@ -137,7 +137,7 @@ fn extract_version_from_latest_tag(latest_tag_name: &str) -> anyhow::Result<Stri
 /// Returns the latest version to show in a popup, if it should be shown.
 /// This respects the user's dismissal choice for the current latest version.
 pub fn get_upgrade_version_for_popup(config: &Config) -> Option<String> {
-    if !config.check_for_update_on_startup || is_source_build_version(CODEX_CLI_VERSION) {
+    if !config.check_for_update_on_startup {
         return None;
     }
 
@@ -169,17 +169,36 @@ pub async fn dismiss_version(config: &Config, version: &str) -> anyhow::Result<(
     Ok(())
 }
 
-fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut iter = v.trim().split('.');
+fn parse_latest_version(v: &str) -> Option<(u64, u64, u64)> {
+    let trimmed = v.trim();
+    let base = trimmed.split('+').next().unwrap_or(trimmed);
+    if base.contains('-') {
+        return None;
+    }
+
+    let mut iter = base.split('.');
     let maj = iter.next()?.parse::<u64>().ok()?;
     let min = iter.next()?.parse::<u64>().ok()?;
     let pat = iter.next()?.parse::<u64>().ok()?;
     Some((maj, min, pat))
 }
 
-fn is_source_build_version(version: &str) -> bool {
-    parse_version(version) == Some((0, 0, 0))
+fn parse_current_version(v: &str) -> Option<(u64, u64, u64)> {
+    let trimmed = v.trim();
+    let base = trimmed
+        .split(|ch| ch == '-' || ch == '+')
+        .next()
+        .unwrap_or(trimmed);
+
+    let mut iter = base.split('.');
+    let maj = iter.next()?.parse::<u64>().ok()?;
+    let min = iter.next()?.parse::<u64>().ok()?;
+    let pat = iter.next()?.parse::<u64>().ok()?;
+    Some((maj, min, pat))
 }
+
+#[cfg(test)]
+mod custom_tests;
 
 #[cfg(test)]
 mod tests {
@@ -229,7 +248,7 @@ mod tests {
 
     #[test]
     fn whitespace_is_ignored() {
-        assert_eq!(parse_version(" 1.2.3 \n"), Some((1, 2, 3)));
+        assert_eq!(parse_latest_version(" 1.2.3 \n"), Some((1, 2, 3)));
         assert_eq!(is_newer(" 1.2.3 ", "1.2.2"), Some(true));
     }
 }

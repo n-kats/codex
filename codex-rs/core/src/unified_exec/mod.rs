@@ -37,8 +37,10 @@ use tokio::sync::Mutex;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::sandboxing::SandboxPermissions;
+use crate::spawn::RunAsUser;
 
 mod async_watcher;
+mod custom;
 mod errors;
 mod head_tail_buffer;
 mod process;
@@ -125,6 +127,8 @@ impl ProcessStore {
 pub(crate) struct UnifiedExecProcessManager {
     process_store: Mutex<ProcessStore>,
     max_write_stdin_yield_time_ms: u64,
+    #[cfg(unix)]
+    sudo_preflight: Mutex<Option<SudoPreflightState>>,
 }
 
 impl UnifiedExecProcessManager {
@@ -133,6 +137,8 @@ impl UnifiedExecProcessManager {
             process_store: Mutex::new(ProcessStore::default()),
             max_write_stdin_yield_time_ms: max_write_stdin_yield_time_ms
                 .max(MIN_EMPTY_YIELD_TIME_MS),
+            #[cfg(unix)]
+            sudo_preflight: Mutex::new(None),
         }
     }
 }
@@ -152,6 +158,14 @@ struct ProcessEntry {
     network_approval_id: Option<String>,
     session: Weak<Session>,
     last_used: tokio::time::Instant,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+struct SudoPreflightState {
+    run_as: RunAsUser,
+    result: Result<(), String>,
+    warned: bool,
 }
 
 pub(crate) fn clamp_yield_time(yield_time_ms: u64) -> u64 {

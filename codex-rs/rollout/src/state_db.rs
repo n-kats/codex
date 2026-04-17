@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::config::RolloutConfig;
 use crate::config::RolloutConfigView;
 use crate::list::Cursor;
@@ -59,6 +60,10 @@ pub async fn init(config: &impl RolloutConfigView) -> Option<StateDbHandle> {
         });
     }
     Some(runtime)
+}
+
+pub async fn init_if_enabled(config: &Config, _feature_flag: Option<()>) -> Option<StateDbHandle> {
+    init(config).await
 }
 
 /// Get the DB if the feature is enabled and the DB exists.

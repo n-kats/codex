@@ -738,7 +738,6 @@ impl CodexMessageProcessor {
                 data: None,
             })?;
         apply_runtime_feature_enablement(&mut config, &self.current_runtime_feature_enablement());
-        config.codex_self_exe = self.arg0_paths.codex_self_exe.clone();
         config.codex_linux_sandbox_exe = self.arg0_paths.codex_linux_sandbox_exe.clone();
         config.main_execve_wrapper_exe = self.arg0_paths.main_execve_wrapper_exe.clone();
         Ok(config)
@@ -2114,6 +2113,7 @@ impl CodexMessageProcessor {
                 .windows_sandbox_private_desktop,
             justification: None,
             arg0: None,
+            run_as: self.config.exec_run_as.clone(),
         };
 
         let requested_policy = sandbox_policy.map(|policy| policy.to_core());
@@ -6854,6 +6854,7 @@ impl CodexMessageProcessor {
                         service_tier: params.service_tier,
                         collaboration_mode,
                         personality: params.personality,
+                        project_doc_paths: None,
                     },
                 )
                 .await;

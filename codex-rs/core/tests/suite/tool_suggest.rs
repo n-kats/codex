@@ -42,22 +42,6 @@ fn tool_names(body: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn function_tool_description(body: &Value, name: &str) -> Option<String> {
-    body.get("tools")
-        .and_then(Value::as_array)
-        .and_then(|tools| {
-            tools.iter().find_map(|tool| {
-                if tool.get("name").and_then(Value::as_str) == Some(name) {
-                    tool.get("description")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                } else {
-                    None
-                }
-            })
-        })
-}
-
 fn configure_apps_without_search_tool(config: &mut Config, apps_base_url: &str) {
     config
         .features
@@ -90,11 +74,11 @@ fn configure_apps_without_search_tool(config: &mut Config, apps_base_url: &str) 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn tool_suggest_is_available_without_search_tool_after_discovery_attempts() -> Result<()> {
+async fn tool_suggest_is_hidden_without_search_tool_after_discovery_attempts() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let apps_server = AppsTestServer::mount(&server).await?;
+    let apps_server = AppsTestServer::mount_searchable(&server).await?;
     let mock = mount_sse_once(
         &server,
         sse(vec![
@@ -126,19 +110,9 @@ async fn tool_suggest_is_available_without_search_tool_after_discovery_attempts(
         "tools list should not include {TOOL_SEARCH_TOOL_NAME}: {tools:?}"
     );
     assert!(
-        tools.iter().any(|name| name == TOOL_SUGGEST_TOOL_NAME),
-        "tools list should include {TOOL_SUGGEST_TOOL_NAME}: {tools:?}"
+        !tools.iter().any(|name| name == TOOL_SUGGEST_TOOL_NAME),
+        "tools list should not include {TOOL_SUGGEST_TOOL_NAME}: {tools:?}"
     );
-
-    let description =
-        function_tool_description(&body, TOOL_SUGGEST_TOOL_NAME).expect("description");
-    assert!(
-        description.contains(
-            "You've already tried to find a matching available tool for the user's request"
-        )
-    );
-    assert!(description.contains("This includes `tool_search` (if available) and other means."));
-    assert!(!description.contains("tool_search fails to find a good match"));
 
     Ok(())
 }

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Transcript/history cells for the Codex TUI.
 //!
 //! A `HistoryCell` is the unit of display in the conversation UI, representing both committed
@@ -19,8 +21,6 @@ use crate::exec_cell::output_lines;
 use crate::exec_cell::spinner;
 use crate::exec_command::relativize_to_home;
 use crate::exec_command::strip_bash_lc_and_escape;
-use crate::legacy_core::config::Config;
-use crate::legacy_core::web_search_detail;
 use crate::live_wrap::take_prefix_by_width;
 use crate::markdown::append_markdown;
 use crate::render::line_utils::line_to_static;
@@ -29,10 +29,6 @@ use crate::render::line_utils::push_owned_lines;
 use crate::render::renderable::Renderable;
 use crate::style::proposed_plan_style;
 use crate::style::user_message_style;
-#[cfg(test)]
-use crate::test_support::PathBufExt;
-#[cfg(test)]
-use crate::test_support::test_path_buf;
 use crate::text_formatting::format_and_truncate_tool_result;
 use crate::text_formatting::truncate_text;
 use crate::tooltips;
@@ -44,16 +40,16 @@ use crate::wrapping::adaptive_wrap_line;
 use crate::wrapping::adaptive_wrap_lines;
 use base64::Engine;
 use codex_app_server_protocol::McpServerStatus;
-use codex_app_server_protocol::McpServerStatusDetail;
-use codex_config::types::McpServerTransportConfig;
-#[cfg(test)]
-use codex_mcp::qualified_mcp_tool_name_prefix;
+use codex_core::config::Config;
+use codex_core::config::types::McpServerTransportConfig;
+use codex_core::mcp::McpManager;
+use codex_core::mcp::qualified_mcp_tool_name_prefix;
+use codex_core::plugins::PluginsManager;
+use codex_core::web_search::web_search_detail;
 use codex_otel::RuntimeMetricsSummary;
 use codex_protocol::account::PlanType;
 use codex_protocol::config_types::ServiceTier;
-#[cfg(test)]
 use codex_protocol::mcp::Resource;
-#[cfg(test)]
 use codex_protocol::mcp::ResourceTemplate;
 use codex_protocol::models::WebSearchAction;
 use codex_protocol::models::local_image_label_text;
@@ -61,17 +57,14 @@ use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
 use codex_protocol::plan_tool::PlanItemArg;
 use codex_protocol::plan_tool::StepStatus;
 use codex_protocol::plan_tool::UpdatePlanArgs;
-use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_protocol::protocol::McpInvocation;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::user_input::TextElement;
-use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_cli::format_env_display;
+use codex_utils_cli::format_env_display::format_env_display;
 use image::DynamicImage;
 use image::ImageReader;
 use ratatui::prelude::*;
@@ -87,18 +80,12 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 use tracing::error;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
-use url::Url;
-
-mod hook_cell;
-
-pub(crate) use hook_cell::HookCell;
-pub(crate) use hook_cell::new_active_hook_cell;
-pub(crate) use hook_cell::new_completed_hook_cell;
 
 /// Represents an event to display in the conversation history. Returns its
 /// `Vec<Line<'static>>` representation to make it easier to display in a
@@ -898,18 +885,6 @@ pub fn new_approval_decision_cell(
             };
             ("✗ ".red(), summary)
         }
-        TimedOut => {
-            let snippet = Span::from(exec_snippet(&command)).dim();
-            (
-                "✗ ".red(),
-                vec![
-                    "Review ".into(),
-                    "timed out".bold(),
-                    " before codex could run ".into(),
-                    snippet,
-                ],
-            )
-        }
         Abort => {
             let snippet = Span::from(exec_snippet(&command)).dim();
             (
@@ -946,7 +921,10 @@ impl ApprovalDecisionActor {
     }
 }
 
-pub fn new_guardian_denied_patch_request(files: Vec<String>) -> Box<dyn HistoryCell> {
+pub fn new_guardian_denied_patch_request(
+    files: Vec<String>,
+    change_count: usize,
+) -> Box<dyn HistoryCell> {
     let mut summary = vec![
         "Request ".into(),
         "denied".bold(),
@@ -956,7 +934,7 @@ pub fn new_guardian_denied_patch_request(files: Vec<String>) -> Box<dyn HistoryC
         summary.push("a patch touching ".into());
         summary.push(Span::from(files[0].clone()).dim());
     } else {
-        summary.push("a patch touching ".into());
+        summary.push(format!("a patch touching {change_count} changes across ").into());
         summary.push(Span::from(files.len().to_string()).dim());
         summary.push(" files".into());
     }
@@ -986,38 +964,6 @@ pub fn new_guardian_approved_action_request(summary: String) -> Box<dyn HistoryC
         Span::from(summary).dim(),
     ]);
     Box::new(PrefixedWrappedHistoryCell::new(line, "✔ ".green(), "  "))
-}
-
-pub fn new_guardian_timed_out_patch_request(files: Vec<String>) -> Box<dyn HistoryCell> {
-    let mut summary = vec![
-        "Review ".into(),
-        "timed out".bold(),
-        " before codex could apply ".into(),
-    ];
-    if files.len() == 1 {
-        summary.push("a patch touching ".into());
-        summary.push(Span::from(files[0].clone()).dim());
-    } else {
-        summary.push("a patch touching ".into());
-        summary.push(Span::from(files.len().to_string()).dim());
-        summary.push(" files".into());
-    }
-
-    Box::new(PrefixedWrappedHistoryCell::new(
-        Line::from(summary),
-        "✗ ".red(),
-        "  ",
-    ))
-}
-
-pub fn new_guardian_timed_out_action_request(summary: String) -> Box<dyn HistoryCell> {
-    let line = Line::from(vec![
-        "Review ".into(),
-        "timed out".bold(),
-        " before ".into(),
-        Span::from(summary).dim(),
-    ]);
-    Box::new(PrefixedWrappedHistoryCell::new(line, "✗ ".red(), "  "))
 }
 
 /// Cyan history cell line showing the current review status.
@@ -1188,8 +1134,6 @@ pub(crate) fn new_session_info(
     let SessionConfiguredEvent {
         model,
         reasoning_effort,
-        approval_policy,
-        sandbox_policy,
         ..
     } = event;
     // Header box rendered as history (so it appears at the very top)
@@ -1199,8 +1143,7 @@ pub(crate) fn new_session_info(
         show_fast_status,
         config.cwd.to_path_buf(),
         CODEX_CLI_VERSION,
-    )
-    .with_yolo_mode(has_yolo_permissions(approval_policy, &sandbox_policy));
+    );
     let mut parts: Vec<Box<dyn HistoryCell>> = vec![Box::new(header)];
 
     if is_first_event {
@@ -1264,17 +1207,6 @@ pub(crate) fn new_session_info(
     SessionInfoCell(CompositeHistoryCell { parts })
 }
 
-pub(crate) fn is_yolo_mode(config: &Config) -> bool {
-    has_yolo_permissions(
-        config.permissions.approval_policy.value(),
-        config.permissions.sandbox_policy.get(),
-    )
-}
-
-fn has_yolo_permissions(approval_policy: AskForApproval, sandbox_policy: &SandboxPolicy) -> bool {
-    approval_policy == AskForApproval::Never && *sandbox_policy == SandboxPolicy::DangerFullAccess
-}
-
 pub(crate) fn new_user_prompt(
     message: String,
     text_elements: Vec<TextElement>,
@@ -1297,7 +1229,6 @@ pub(crate) struct SessionHeaderHistoryCell {
     reasoning_effort: Option<ReasoningEffortConfig>,
     show_fast_status: bool,
     directory: PathBuf,
-    yolo_mode: bool,
 }
 
 impl SessionHeaderHistoryCell {
@@ -1333,13 +1264,7 @@ impl SessionHeaderHistoryCell {
             reasoning_effort,
             show_fast_status,
             directory,
-            yolo_mode: false,
         }
-    }
-
-    pub(crate) fn with_yolo_mode(mut self, yolo_mode: bool) -> Self {
-        self.yolo_mode = yolo_mode;
-        self
     }
 
     fn format_directory(&self, max_width: Option<usize>) -> String {
@@ -1400,12 +1325,7 @@ impl HistoryCell for SessionHeaderHistoryCell {
         const CHANGE_MODEL_HINT_COMMAND: &str = "/model";
         const CHANGE_MODEL_HINT_EXPLANATION: &str = " to change";
         const DIR_LABEL: &str = "directory:";
-        const PERMISSIONS_LABEL: &str = "permissions:";
-        let label_width = if self.yolo_mode {
-            DIR_LABEL.len().max(PERMISSIONS_LABEL.len())
-        } else {
-            DIR_LABEL.len()
-        };
+        let label_width = DIR_LABEL.len();
 
         let model_label = format!(
             "{model_label:<label_width$}",
@@ -1439,20 +1359,12 @@ impl HistoryCell for SessionHeaderHistoryCell {
         let dir = self.format_directory(Some(dir_max_width));
         let dir_spans = vec![Span::from(dir_prefix).dim(), Span::from(dir)];
 
-        let mut lines = vec![
+        let lines = vec![
             make_row(title_spans),
             make_row(Vec::new()),
             make_row(model_spans),
             make_row(dir_spans),
         ];
-
-        if self.yolo_mode {
-            let permissions_label = format!("{PERMISSIONS_LABEL:<label_width$}");
-            lines.push(make_row(vec![
-                Span::from(format!("{permissions_label} ")).dim(),
-                "YOLO mode".magenta().bold(),
-            ]));
-        }
 
         with_border(lines)
     }
@@ -1888,7 +1800,6 @@ pub(crate) fn empty_mcp_output() -> PlainHistoryCell {
     PlainHistoryCell { lines }
 }
 
-#[cfg(test)]
 /// Render MCP tools grouped by connection using the fully-qualified tool names.
 pub(crate) fn new_mcp_tools_output(
     config: &Config,
@@ -1909,7 +1820,8 @@ pub(crate) fn new_mcp_tools_output(
         lines.push("".into());
     }
 
-    let effective_servers = config.mcp_servers.get().clone();
+    let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(config.codex_home.clone())));
+    let effective_servers = mcp_manager.effective_servers(config, /*auth*/ None);
     let mut servers: Vec<_> = effective_servers.iter().collect();
     servers.sort_by(|(a, _), (b, _)| a.cmp(b));
 
@@ -2063,12 +1975,10 @@ pub(crate) fn new_mcp_tools_output(
 /// transport details such as command, URL, cwd, and environment display.
 ///
 /// This mirrors the layout of [`new_mcp_tools_output`] but sources data from
-/// the paginated RPC response rather than the in-process `McpManager`. The
-/// `detail` flag controls whether resources and resource templates are rendered.
+/// the paginated RPC response rather than the in-process `McpManager`.
 pub(crate) fn new_mcp_tools_output_from_statuses(
     config: &Config,
     statuses: &[McpServerStatus],
-    detail: McpServerStatusDetail,
 ) -> PlainHistoryCell {
     let mut lines: Vec<Line<'static>> = vec![
         "/mcp".magenta().into(),
@@ -2180,50 +2090,48 @@ pub(crate) fn new_mcp_tools_output_from_statuses(
             lines.push(vec!["    • Tools: ".into(), names.join(", ").into()].into());
         }
 
-        if matches!(detail, McpServerStatusDetail::Full) {
-            let server_resources = status
-                .map(|status| status.resources.clone())
-                .unwrap_or_default();
-            if server_resources.is_empty() {
-                lines.push("    • Resources: (none)".into());
-            } else {
-                let mut spans: Vec<Span<'static>> = vec!["    • Resources: ".into()];
+        let server_resources = status
+            .map(|status| status.resources.clone())
+            .unwrap_or_default();
+        if server_resources.is_empty() {
+            lines.push("    • Resources: (none)".into());
+        } else {
+            let mut spans: Vec<Span<'static>> = vec!["    • Resources: ".into()];
 
-                for (idx, resource) in server_resources.iter().enumerate() {
-                    if idx > 0 {
-                        spans.push(", ".into());
-                    }
-
-                    let label = resource.title.as_ref().unwrap_or(&resource.name);
-                    spans.push(label.clone().into());
-                    spans.push(" ".into());
-                    spans.push(format!("({})", resource.uri).dim());
+            for (idx, resource) in server_resources.iter().enumerate() {
+                if idx > 0 {
+                    spans.push(", ".into());
                 }
 
-                lines.push(spans.into());
+                let label = resource.title.as_ref().unwrap_or(&resource.name);
+                spans.push(label.clone().into());
+                spans.push(" ".into());
+                spans.push(format!("({})", resource.uri).dim());
             }
 
-            let server_templates = status
-                .map(|status| status.resource_templates.clone())
-                .unwrap_or_default();
-            if server_templates.is_empty() {
-                lines.push("    • Resource templates: (none)".into());
-            } else {
-                let mut spans: Vec<Span<'static>> = vec!["    • Resource templates: ".into()];
+            lines.push(spans.into());
+        }
 
-                for (idx, template) in server_templates.iter().enumerate() {
-                    if idx > 0 {
-                        spans.push(", ".into());
-                    }
+        let server_templates = status
+            .map(|status| status.resource_templates.clone())
+            .unwrap_or_default();
+        if server_templates.is_empty() {
+            lines.push("    • Resource templates: (none)".into());
+        } else {
+            let mut spans: Vec<Span<'static>> = vec!["    • Resource templates: ".into()];
 
-                    let label = template.title.as_ref().unwrap_or(&template.name);
-                    spans.push(label.clone().into());
-                    spans.push(" ".into());
-                    spans.push(format!("({})", template.uri_template).dim());
+            for (idx, template) in server_templates.iter().enumerate() {
+                if idx > 0 {
+                    spans.push(", ".into());
                 }
 
-                lines.push(spans.into());
+                let label = template.title.as_ref().unwrap_or(&template.name);
+                spans.push(label.clone().into());
+                spans.push(" ".into());
+                spans.push(format!("({})", template.uri_template).dim());
             }
+
+            lines.push(spans.into());
         }
 
         lines.push(Line::from(""));
@@ -2613,8 +2521,8 @@ pub(crate) fn new_patch_apply_failure(stderr: String) -> PlainHistoryCell {
     PlainHistoryCell { lines }
 }
 
-pub(crate) fn new_view_image_tool_call(path: AbsolutePathBuf, cwd: &Path) -> PlainHistoryCell {
-    let display_path = display_path_for(path.as_path(), cwd);
+pub(crate) fn new_view_image_tool_call(path: PathBuf, cwd: &Path) -> PlainHistoryCell {
+    let display_path = display_path_for(&path, cwd);
 
     let lines: Vec<Line<'static>> = vec![
         vec!["• ".dim(), "Viewed Image".bold()].into(),
@@ -2627,7 +2535,7 @@ pub(crate) fn new_view_image_tool_call(path: AbsolutePathBuf, cwd: &Path) -> Pla
 pub(crate) fn new_image_generation_call(
     call_id: String,
     revised_prompt: Option<String>,
-    saved_path: Option<AbsolutePathBuf>,
+    saved_path: Option<String>,
 ) -> PlainHistoryCell {
     let detail = revised_prompt.unwrap_or_else(|| call_id.clone());
 
@@ -2636,9 +2544,6 @@ pub(crate) fn new_image_generation_call(
         vec!["  └ ".dim(), detail.dim()].into(),
     ];
     if let Some(saved_path) = saved_path {
-        let saved_path = Url::from_file_path(saved_path.as_path())
-            .map(|url| url.to_string())
-            .unwrap_or_else(|_| saved_path.display().to_string());
         lines.push(vec!["  └ ".dim(), "Saved to: ".dim(), saved_path.into()].into());
     }
 
@@ -2859,10 +2764,10 @@ mod tests {
     use crate::exec_cell::CommandOutput;
     use crate::exec_cell::ExecCall;
     use crate::exec_cell::ExecCell;
-    use crate::legacy_core::config::Config;
-    use crate::legacy_core::config::ConfigBuilder;
-    use codex_config::types::McpServerConfig;
-    use codex_config::types::McpServerDisabledReason;
+    use codex_core::config::Config;
+    use codex_core::config::ConfigBuilder;
+    use codex_core::config::types::McpServerConfig;
+    use codex_core::config::types::McpServerDisabledReason;
     use codex_otel::RuntimeMetricTotals;
     use codex_otel::RuntimeMetricsSummary;
     use codex_protocol::ThreadId;
@@ -3028,16 +2933,11 @@ mod tests {
 
     #[test]
     fn image_generation_call_renders_saved_path() {
-        let saved_path = test_path_buf("/tmp/generated-image.png").abs();
-        let expected_saved_path = format!(
-            "  └ Saved to: {}",
-            Url::from_file_path(saved_path.as_path())
-                .expect("test path should convert to file URL")
-        );
+        let saved_path = "file:///tmp/generated-image.png".to_string();
         let cell = new_image_generation_call(
             "call-image-generation".to_string(),
             Some("A tiny blue square".to_string()),
-            Some(saved_path),
+            Some(saved_path.clone()),
         );
 
         assert_eq!(
@@ -3045,7 +2945,7 @@ mod tests {
             vec![
                 "• Generated Image:".to_string(),
                 "  └ A tiny blue square".to_string(),
-                expected_saved_path,
+                format!("  └ Saved to: {saved_path}"),
             ],
         );
     }
@@ -3061,7 +2961,7 @@ mod tests {
             approval_policy: AskForApproval::Never,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            cwd: test_path_buf("/tmp/project").abs(),
+            cwd: PathBuf::from("/tmp/project"),
             reasoning_effort: None,
             history_log_id: 0,
             history_entry_count: 0,
@@ -3181,7 +3081,7 @@ mod tests {
     )]
     async fn session_info_availability_nux_tooltip_snapshot() {
         let mut config = test_config().await;
-        config.cwd = test_path_buf("/tmp/project").abs();
+        config.cwd = PathBuf::from("/tmp/project");
         let cell = new_session_info(
             &config,
             "gpt-5",
@@ -3436,11 +3336,7 @@ mod tests {
             auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
         }];
 
-        let cell = new_mcp_tools_output_from_statuses(
-            &config,
-            &statuses,
-            McpServerStatusDetail::ToolsAndAuthOnly,
-        );
+        let cell = new_mcp_tools_output_from_statuses(&config, &statuses);
         let rendered = render_lines(&cell.display_lines(/*width*/ 120)).join("\n");
 
         insta::assert_snapshot!(rendered);
@@ -3993,25 +3889,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(
-        target_os = "windows",
-        ignore = "snapshot path rendering differs on Windows"
-    )]
-    fn session_header_indicates_yolo_mode() {
-        let cell = SessionHeaderHistoryCell::new(
-            "gpt-5".to_string(),
-            /*reasoning_effort*/ None,
-            /*show_fast_status*/ false,
-            test_path_buf("/tmp/project").abs().to_path_buf(),
-            "test",
-        )
-        .with_yolo_mode(/*yolo_mode*/ true);
-
-        let rendered = render_lines(&cell.display_lines(/*width*/ 80)).join("\n");
-        insta::assert_snapshot!(rendered);
-    }
-
-    #[test]
     fn session_header_directory_center_truncates() {
         let mut dir = home_dir().expect("home directory");
         for part in ["hello", "the", "fox", "is", "very", "fast"] {
@@ -4173,7 +4050,7 @@ mod tests {
     #[test]
     fn multiline_command_wraps_with_extra_indent_on_subsequent_lines() {
         // Create a completed exec cell with a multiline command
-        let cmd = "set -o pipefail\ncargo test -p codex-tui --quiet".to_string();
+        let cmd = "set -o pipefail\ncargo test --all-features --quiet".to_string();
         let call_id = "c1".to_string();
         let mut cell = ExecCell::new(
             ExecCall {
@@ -4191,7 +4068,7 @@ mod tests {
         // Mark call complete so it renders as "Ran"
         cell.complete_call(&call_id, CommandOutput::default(), Duration::from_millis(1));
 
-        // Small width to keep the wrapped continuation-indent path covered.
+        // Small width to force wrapping on both lines
         let width: u16 = 28;
         let lines = cell.display_lines(width);
         let rendered = render_lines(&lines).join("\n");
@@ -4386,6 +4263,13 @@ mod tests {
             .join("\n");
         insta::assert_snapshot!(rendered);
     }
+    fn snapshot_body(snapshot: &str) -> &str {
+        snapshot
+            .strip_prefix("---\n")
+            .and_then(|s| s.split_once("\n---\n").map(|(_, body)| body))
+            .expect("invalid insta snapshot file")
+    }
+
     #[test]
     fn user_history_cell_wraps_and_prefixes_each_line_snapshot() {
         let msg = "one two three four five six seven";
@@ -4401,7 +4285,10 @@ mod tests {
         let lines = cell.display_lines(width);
         let rendered = render_lines(&lines).join("\n");
 
-        insta::assert_snapshot!(rendered);
+        let expected = snapshot_body(include_str!(
+            "snapshots/codex_tui__history_cell__tests__user_history_cell_wraps_and_prefixes_each_line_snapshot.snap"
+        ));
+        assert_eq!(rendered, expected);
     }
 
     #[test]

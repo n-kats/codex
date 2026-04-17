@@ -1438,7 +1438,7 @@ async fn skills_append_to_developer_message() {
         .with_home(codex_home.clone())
         .with_auth(CodexAuth::from_api_key("Test API Key"))
         .with_config(move |config| {
-            config.cwd = codex_home_path.abs();
+            config.cwd = codex_home_path.abs().to_path_buf();
         });
     let codex = builder
         .build(&server)

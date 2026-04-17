@@ -828,7 +828,7 @@ async fn review_uses_overridden_cwd_for_base_branch_merge_base() {
     let codex_home = Arc::new(TempDir::new().unwrap());
     let initial_cwd_path = initial_cwd.path().to_path_buf();
     let codex = new_conversation_for_server(&server, codex_home.clone(), move |config| {
-        config.cwd = initial_cwd_path.abs();
+        config.cwd = initial_cwd_path.abs().to_path_buf();
     })
     .await;
 
@@ -845,6 +845,7 @@ async fn review_uses_overridden_cwd_for_base_branch_merge_base() {
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
         .await
         .unwrap();

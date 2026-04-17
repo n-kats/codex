@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use codex_async_utils::CancelErr;
 use codex_async_utils::OrCancelExt;
 use codex_protocol::user_input::UserInput;
@@ -10,25 +11,26 @@ use uuid::Uuid;
 
 use crate::codex::TurnContext;
 use crate::exec::ExecCapturePolicy;
+use crate::exec::ExecToolCallOutput;
+use crate::exec::SandboxType;
 use crate::exec::StdoutStream;
+use crate::exec::StreamOutput;
 use crate::exec::execute_exec_request;
 use crate::exec_env::create_env;
+use crate::parse_command::parse_command;
+use crate::protocol::EventMsg;
+use crate::protocol::ExecCommandBeginEvent;
+use crate::protocol::ExecCommandEndEvent;
+use crate::protocol::ExecCommandSource;
+use crate::protocol::ExecCommandStatus;
+use crate::protocol::SandboxPolicy;
+use crate::protocol::TurnStartedEvent;
 use crate::sandboxing::ExecRequest;
+use crate::sandboxing::SandboxPermissions;
 use crate::state::TaskKind;
 use crate::tools::format_exec_output_str;
 use crate::tools::runtimes::maybe_wrap_shell_lc_with_snapshot;
 use crate::user_shell_command::user_shell_command_record_item;
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_protocol::exec_output::StreamOutput;
-use codex_protocol::protocol::EventMsg;
-use codex_protocol::protocol::ExecCommandBeginEvent;
-use codex_protocol::protocol::ExecCommandEndEvent;
-use codex_protocol::protocol::ExecCommandSource;
-use codex_protocol::protocol::ExecCommandStatus;
-use codex_protocol::protocol::SandboxPolicy;
-use codex_protocol::protocol::TurnStartedEvent;
-use codex_sandboxing::SandboxType;
-use codex_shell_command::parse_command::parse_command;
 
 use super::SessionTask;
 use super::SessionTaskContext;
@@ -61,6 +63,7 @@ impl UserShellCommandTask {
     }
 }
 
+#[async_trait]
 impl SessionTask for UserShellCommandTask {
     fn kind(&self) -> TaskKind {
         TaskKind::Regular
@@ -111,7 +114,6 @@ pub(crate) async fn execute_user_shell_command(
         // freshly reinjected context before the summary/replacement history is applied.
         let event = EventMsg::TurnStarted(TurnStartedEvent {
             turn_id: turn_context.sub_id.clone(),
-            started_at: turn_context.turn_timing_state.started_at_unix_secs().await,
             model_context_window: turn_context.model_context_window(),
             collaboration_mode_kind: turn_context.collaboration_mode.mode,
         });
@@ -124,16 +126,11 @@ pub(crate) async fn execute_user_shell_command(
     let use_login_shell = true;
     let session_shell = session.user_shell();
     let display_command = session_shell.derive_exec_args(&command, use_login_shell);
-    let exec_env_map = create_env(
-        &turn_context.shell_environment_policy,
-        Some(session.conversation_id),
-    );
     let exec_command = maybe_wrap_shell_lc_with_snapshot(
         &display_command,
         session_shell.as_ref(),
-        &turn_context.cwd,
+        turn_context.cwd.as_path(),
         &turn_context.shell_environment_policy.r#set,
-        &exec_env_map,
     );
 
     let call_id = Uuid::new_v4().to_string();
@@ -161,11 +158,11 @@ pub(crate) async fn execute_user_shell_command(
     let exec_env = ExecRequest {
         command: exec_command.clone(),
         cwd: cwd.clone(),
-        env: exec_env_map,
-        exec_server_env_config: None,
-        // `/shell` is the explicit full-access escape hatch, so it must not
-        // inherit a managed proxy from the surrounding session or turn.
-        network: None,
+        env: create_env(
+            &turn_context.shell_environment_policy,
+            Some(session.conversation_id),
+        ),
+        network: turn_context.network.clone(),
         // TODO(zhao-oai): Now that we have ExecExpiration::Cancellation, we
         // should use that instead of an "arbitrarily large" timeout here.
         expiration: USER_SHELL_TIMEOUT_MS.into(),
@@ -176,10 +173,13 @@ pub(crate) async fn execute_user_shell_command(
             .config
             .permissions
             .windows_sandbox_private_desktop,
+        // `!` is a user-initiated command and should run as the invoker user.
+        run_as: None,
+        sandbox_permissions: SandboxPermissions::UseDefault,
         sandbox_policy: sandbox_policy.clone(),
         file_system_sandbox_policy: FileSystemSandboxPolicy::from(&sandbox_policy),
         network_sandbox_policy: NetworkSandboxPolicy::from(&sandbox_policy),
-        windows_sandbox_filesystem_overrides: None,
+        justification: None,
         arg0: None,
     };
 
@@ -189,9 +189,14 @@ pub(crate) async fn execute_user_shell_command(
         tx_event: session.get_tx_event(),
     });
 
-    let exec_result = execute_exec_request(exec_env, stdout_stream, /*after_spawn*/ None)
-        .or_cancel(&cancellation_token)
-        .await;
+    let exec_result = execute_exec_request(
+        exec_env,
+        &sandbox_policy,
+        stdout_stream,
+        /*after_spawn*/ None,
+    )
+    .or_cancel(&cancellation_token)
+    .await;
 
     match exec_result {
         Err(CancelErr::Cancelled) => {
@@ -324,6 +329,10 @@ async fn persist_user_shell_output(
     exec_output: &ExecToolCallOutput,
     mode: UserShellCommandMode,
 ) {
+    if turn_context.config.user_shell_no_inject {
+        return;
+    }
+
     let output_item = user_shell_command_record_item(raw_command, exec_output, turn_context);
 
     if mode == UserShellCommandMode::StandaloneTurn {

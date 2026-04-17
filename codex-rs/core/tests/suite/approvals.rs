@@ -23,6 +23,7 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
+use core_test_support::fs_wait;
 use core_test_support::responses::ev_apply_patch_function_call;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -32,6 +33,7 @@ use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::mount_sse_once_match;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
+use core_test_support::skip_if_linux_userns_unavailable;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
@@ -1657,6 +1659,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn approval_matrix_covers_all_modes() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     for scenario in scenarios() {
         run_scenario(&scenario).await?;
@@ -1788,6 +1791,7 @@ async fn run_scenario(scenario: &ScenarioSpec) -> Result<()> {
 #[cfg(unix)]
 async fn approving_apply_patch_for_session_skips_future_prompts_for_same_file() -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let server = start_mock_server().await;
     let approval_policy = AskForApproval::OnRequest;
@@ -1905,6 +1909,8 @@ async fn approving_apply_patch_for_session_skips_future_prompts_for_same_file() 
 #[tokio::test(flavor = "current_thread")]
 #[cfg(unix)]
 async fn approving_execpolicy_amendment_persists_policy_and_skips_future_prompts() -> Result<()> {
+    skip_if_linux_userns_unavailable!(Ok(()));
+
     let server = start_mock_server().await;
     let approval_policy = AskForApproval::UnlessTrusted;
     let sandbox_policy = SandboxPolicy::new_read_only_policy();
@@ -2232,15 +2238,7 @@ async fn spawned_subagent_execpolicy_amendment_propagates_to_parent_session() ->
         }
         other => panic!("unexpected event: {other:?}"),
     }
-    assert!(
-        child_file.exists(),
-        "expected subagent command to create file"
-    );
-    fs::remove_file(&child_file)?;
-    assert!(
-        !child_file.exists(),
-        "expected child file to be removed before parent rerun"
-    );
+    let _ = fs::remove_file(&child_file);
 
     submit_turn(
         &test,
@@ -2250,6 +2248,7 @@ async fn spawned_subagent_execpolicy_amendment_propagates_to_parent_session() ->
     )
     .await?;
     wait_for_completion_without_approval(&test).await;
+    fs_wait::wait_for_path_exists(&child_file, Duration::from_secs(5)).await?;
 
     Ok(())
 }
@@ -2503,6 +2502,7 @@ async fn approving_fallback_rule_for_compound_command_works() -> Result<()> {
 async fn denying_network_policy_amendment_persists_policy_and_skips_future_network_prompt()
 -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_linux_userns_unavailable!(Ok(()));
 
     let server = start_mock_server().await;
     let home = Arc::new(TempDir::new()?);

@@ -1,12 +1,8 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use codex_config::ConfigEditsBuilder;
-use codex_config::McpServerConfig;
-use codex_config::McpServerTransportConfig;
-use codex_config::load_global_mcp_servers;
-use codex_login::default_client::is_first_party_originator;
-use codex_login::default_client::originator;
+use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::request_user_input::RequestUserInputQuestionOption;
@@ -15,25 +11,132 @@ use codex_rmcp_client::perform_oauth_login;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::SkillMetadata;
+use super::auth::McpOAuthLoginSupport;
+use super::auth::oauth_login_support;
+use super::auth::resolve_oauth_scopes;
+use super::auth::should_retry_without_scopes;
 use crate::codex::Session;
 use crate::codex::TurnContext;
+use crate::config::Config;
+use crate::config::edit::ConfigEditsBuilder;
+use crate::config::load_global_mcp_servers;
+use crate::config::types::McpServerConfig;
+use crate::config::types::McpServerTransportConfig;
+use crate::default_client::is_first_party_originator;
+use crate::default_client::originator;
 use crate::skills::model::SkillToolDependency;
-use codex_mcp::McpOAuthLoginSupport;
-use codex_mcp::mcp_permission_prompt_is_auto_approved;
-use codex_mcp::oauth_login_support;
-use codex_mcp::resolve_oauth_scopes;
-use codex_mcp::should_retry_without_scopes;
+use codex_features::Feature;
 
 const SKILL_MCP_DEPENDENCY_PROMPT_ID: &str = "skill_mcp_dependency_install";
 const MCP_DEPENDENCY_OPTION_INSTALL: &str = "Install";
 const MCP_DEPENDENCY_OPTION_SKIP: &str = "Continue anyway";
 
+fn is_full_access_mode(turn_context: &TurnContext) -> bool {
+    matches!(turn_context.approval_policy.value(), AskForApproval::Never)
+        && matches!(
+            turn_context.sandbox_policy.get(),
+            SandboxPolicy::DangerFullAccess | SandboxPolicy::ExternalSandbox { .. }
+        )
+}
+
+fn format_missing_mcp_dependencies(missing: &HashMap<String, McpServerConfig>) -> String {
+    let mut names = missing.keys().cloned().collect::<Vec<_>>();
+    names.sort();
+    names.join(", ")
+}
+
+async fn filter_prompted_mcp_dependencies(
+    sess: &Session,
+    missing: &HashMap<String, McpServerConfig>,
+) -> HashMap<String, McpServerConfig> {
+    let prompted = sess.mcp_dependency_prompted().await;
+    if prompted.is_empty() {
+        return missing.clone();
+    }
+
+    missing
+        .iter()
+        .filter(|(name, config)| !prompted.contains(&canonical_mcp_server_key(name, config)))
+        .map(|(name, config)| (name.clone(), config.clone()))
+        .collect()
+}
+
+async fn should_install_mcp_dependencies(
+    sess: &Session,
+    turn_context: &TurnContext,
+    missing: &HashMap<String, McpServerConfig>,
+    cancellation_token: &CancellationToken,
+) -> bool {
+    if is_full_access_mode(turn_context) {
+        return true;
+    }
+
+    let server_list = format_missing_mcp_dependencies(missing);
+    let question = RequestUserInputQuestion {
+        id: SKILL_MCP_DEPENDENCY_PROMPT_ID.to_string(),
+        header: "Install MCP servers?".to_string(),
+        question: format!(
+            "The following MCP servers are required by the selected skills but are not installed yet: {server_list}. Install them now?"
+        ),
+        is_other: false,
+        is_secret: false,
+        options: Some(vec![
+            RequestUserInputQuestionOption {
+                label: MCP_DEPENDENCY_OPTION_INSTALL.to_string(),
+                description:
+                    "Install and enable the missing MCP servers in your global config."
+                        .to_string(),
+            },
+            RequestUserInputQuestionOption {
+                label: MCP_DEPENDENCY_OPTION_SKIP.to_string(),
+                description: "Skip installation for now and do not show again for these MCP servers in this session."
+                    .to_string(),
+            },
+        ]),
+    };
+    let args = RequestUserInputArgs {
+        questions: vec![question],
+    };
+    let sub_id = &turn_context.sub_id;
+    let call_id = format!("mcp-deps-{sub_id}");
+    let response_fut = sess.request_user_input(turn_context, call_id, args);
+    let response = tokio::select! {
+        biased;
+        _ = cancellation_token.cancelled() => {
+            let empty = RequestUserInputResponse {
+                answers: HashMap::new(),
+            };
+            sess.notify_user_input_response(sub_id, empty.clone()).await;
+            empty
+        }
+        response = response_fut => response.unwrap_or_else(|| RequestUserInputResponse {
+            answers: HashMap::new(),
+        }),
+    };
+
+    let install = response
+        .answers
+        .get(SKILL_MCP_DEPENDENCY_PROMPT_ID)
+        .is_some_and(|answer| {
+            answer
+                .answers
+                .iter()
+                .any(|entry| entry == MCP_DEPENDENCY_OPTION_INSTALL)
+        });
+
+    let prompted_keys = missing
+        .iter()
+        .map(|(name, config)| canonical_mcp_server_key(name, config));
+    sess.record_mcp_dependency_prompted(prompted_keys).await;
+
+    install
+}
+
 pub(crate) async fn maybe_prompt_and_install_mcp_dependencies(
     sess: &Session,
     turn_context: &TurnContext,
     cancellation_token: &CancellationToken,
-    mentioned_skills: &[SkillMetadata],
+    mentioned_skills: &[crate::skills::SkillMetadata],
 ) {
     let originator_value = originator().value;
     if !is_first_party_originator(originator_value.as_str()) {
@@ -42,19 +145,14 @@ pub(crate) async fn maybe_prompt_and_install_mcp_dependencies(
     }
 
     let config = turn_context.config.clone();
-    if mentioned_skills.is_empty()
-        || !config
-            .features
-            .enabled(codex_features::Feature::SkillMcpDependencyInstall)
-    {
+    if mentioned_skills.is_empty() || !config.features.enabled(Feature::SkillMcpDependencyInstall) {
         return;
     }
 
     let installed = sess
         .services
         .mcp_manager
-        .configured_servers(config.as_ref())
-        .await;
+        .configured_servers(config.as_ref());
     let missing = collect_missing_mcp_dependencies(mentioned_skills, &installed);
     if missing.is_empty() {
         return;
@@ -75,19 +173,15 @@ pub(crate) async fn maybe_prompt_and_install_mcp_dependencies(
 pub(crate) async fn maybe_install_mcp_dependencies(
     sess: &Session,
     turn_context: &TurnContext,
-    config: &crate::config::Config,
-    mentioned_skills: &[SkillMetadata],
+    config: &Config,
+    mentioned_skills: &[crate::skills::SkillMetadata],
 ) {
-    if mentioned_skills.is_empty()
-        || !config
-            .features
-            .enabled(codex_features::Feature::SkillMcpDependencyInstall)
-    {
+    if mentioned_skills.is_empty() || !config.features.enabled(Feature::SkillMcpDependencyInstall) {
         return;
     }
 
     let codex_home = config.codex_home.clone();
-    let installed = sess.services.mcp_manager.configured_servers(config).await;
+    let installed = sess.services.mcp_manager.configured_servers(config);
     let missing = collect_missing_mcp_dependencies(mentioned_skills, &installed);
     if missing.is_empty() {
         return;
@@ -198,8 +292,7 @@ pub(crate) async fn maybe_install_mcp_dependencies(
     let mut refresh_servers = sess
         .services
         .mcp_manager
-        .effective_servers(config, auth.as_ref())
-        .await;
+        .effective_servers(config, auth.as_ref());
     for (name, server_config) in &servers {
         refresh_servers
             .entry(name.clone())
@@ -211,102 +304,6 @@ pub(crate) async fn maybe_install_mcp_dependencies(
         config.mcp_oauth_credentials_store_mode,
     )
     .await;
-}
-
-async fn should_install_mcp_dependencies(
-    sess: &Session,
-    turn_context: &TurnContext,
-    missing: &HashMap<String, McpServerConfig>,
-    cancellation_token: &CancellationToken,
-) -> bool {
-    if mcp_permission_prompt_is_auto_approved(
-        turn_context.approval_policy.value(),
-        turn_context.sandbox_policy.get(),
-    ) {
-        return true;
-    }
-
-    let server_list = format_missing_mcp_dependencies(missing);
-    let question = RequestUserInputQuestion {
-        id: SKILL_MCP_DEPENDENCY_PROMPT_ID.to_string(),
-        header: "Install MCP servers?".to_string(),
-        question: format!(
-            "The following MCP servers are required by the selected skills but are not installed yet: {server_list}. Install them now?"
-        ),
-        is_other: false,
-        is_secret: false,
-        options: Some(vec![
-            RequestUserInputQuestionOption {
-                label: MCP_DEPENDENCY_OPTION_INSTALL.to_string(),
-                description:
-                    "Install and enable the missing MCP servers in your global config."
-                        .to_string(),
-            },
-            RequestUserInputQuestionOption {
-                label: MCP_DEPENDENCY_OPTION_SKIP.to_string(),
-                description: "Skip installation for now and do not show again for these MCP servers in this session."
-                    .to_string(),
-            },
-        ]),
-    };
-    let args = RequestUserInputArgs {
-        questions: vec![question],
-    };
-    let sub_id = &turn_context.sub_id;
-    let call_id = format!("mcp-deps-{sub_id}");
-    let response_fut = sess.request_user_input(turn_context, call_id, args);
-    let response = tokio::select! {
-        biased;
-        _ = cancellation_token.cancelled() => {
-            let empty = RequestUserInputResponse {
-                answers: HashMap::new(),
-            };
-            sess.notify_user_input_response(sub_id, empty.clone()).await;
-            empty
-        }
-        response = response_fut => response.unwrap_or_else(|| RequestUserInputResponse {
-            answers: HashMap::new(),
-        }),
-    };
-
-    let install = response
-        .answers
-        .get(SKILL_MCP_DEPENDENCY_PROMPT_ID)
-        .is_some_and(|answer| {
-            answer
-                .answers
-                .iter()
-                .any(|entry| entry == MCP_DEPENDENCY_OPTION_INSTALL)
-        });
-
-    let prompted_keys = missing
-        .iter()
-        .map(|(name, config)| canonical_mcp_server_key(name, config));
-    sess.record_mcp_dependency_prompted(prompted_keys).await;
-
-    install
-}
-
-async fn filter_prompted_mcp_dependencies(
-    sess: &Session,
-    missing: &HashMap<String, McpServerConfig>,
-) -> HashMap<String, McpServerConfig> {
-    let prompted = sess.mcp_dependency_prompted().await;
-    if prompted.is_empty() {
-        return missing.clone();
-    }
-
-    missing
-        .iter()
-        .filter(|(name, config)| !prompted.contains(&canonical_mcp_server_key(name, config)))
-        .map(|(name, config)| (name.clone(), config.clone()))
-        .collect()
-}
-
-fn format_missing_mcp_dependencies(missing: &HashMap<String, McpServerConfig>) -> String {
-    let mut names = missing.keys().cloned().collect::<Vec<_>>();
-    names.sort();
-    names.join(", ")
 }
 
 fn canonical_mcp_key(transport: &str, identifier: &str, fallback: &str) -> String {
@@ -348,72 +345,8 @@ fn canonical_mcp_dependency_key(dependency: &SkillToolDependency) -> Result<Stri
     Err(format!("unsupported transport {transport}"))
 }
 
-fn mcp_dependency_to_server_config(
-    dependency: &SkillToolDependency,
-) -> Result<McpServerConfig, String> {
-    let transport = dependency.transport.as_deref().unwrap_or("streamable_http");
-    if transport.eq_ignore_ascii_case("streamable_http") {
-        let url = dependency
-            .url
-            .as_ref()
-            .ok_or_else(|| "missing url for streamable_http dependency".to_string())?;
-        return Ok(McpServerConfig {
-            transport: McpServerTransportConfig::StreamableHttp {
-                url: url.clone(),
-                bearer_token_env_var: None,
-                http_headers: None,
-                env_http_headers: None,
-            },
-            experimental_environment: None,
-            enabled: true,
-            required: false,
-            supports_parallel_tool_calls: false,
-            disabled_reason: None,
-            startup_timeout_sec: None,
-            tool_timeout_sec: None,
-            default_tools_approval_mode: None,
-            enabled_tools: None,
-            disabled_tools: None,
-            scopes: None,
-            oauth_resource: None,
-            tools: HashMap::new(),
-        });
-    }
-
-    if transport.eq_ignore_ascii_case("stdio") {
-        let command = dependency
-            .command
-            .as_ref()
-            .ok_or_else(|| "missing command for stdio dependency".to_string())?;
-        return Ok(McpServerConfig {
-            transport: McpServerTransportConfig::Stdio {
-                command: command.clone(),
-                args: Vec::new(),
-                env: None,
-                env_vars: Vec::new(),
-                cwd: None,
-            },
-            experimental_environment: None,
-            enabled: true,
-            required: false,
-            supports_parallel_tool_calls: false,
-            disabled_reason: None,
-            startup_timeout_sec: None,
-            tool_timeout_sec: None,
-            default_tools_approval_mode: None,
-            enabled_tools: None,
-            disabled_tools: None,
-            scopes: None,
-            oauth_resource: None,
-            tools: HashMap::new(),
-        });
-    }
-
-    Err(format!("unsupported transport {transport}"))
-}
-
-fn collect_missing_mcp_dependencies(
-    mentioned_skills: &[SkillMetadata],
+pub(crate) fn collect_missing_mcp_dependencies(
+    mentioned_skills: &[crate::skills::SkillMetadata],
     installed: &HashMap<String, McpServerConfig>,
 ) -> HashMap<String, McpServerConfig> {
     let mut missing = HashMap::new();
@@ -468,3 +401,65 @@ fn collect_missing_mcp_dependencies(
 
     missing
 }
+
+fn mcp_dependency_to_server_config(
+    dependency: &SkillToolDependency,
+) -> Result<McpServerConfig, String> {
+    let transport = dependency.transport.as_deref().unwrap_or("streamable_http");
+    if transport.eq_ignore_ascii_case("streamable_http") {
+        let url = dependency
+            .url
+            .as_ref()
+            .ok_or_else(|| "missing url for streamable_http dependency".to_string())?;
+        return Ok(McpServerConfig {
+            transport: McpServerTransportConfig::StreamableHttp {
+                url: url.clone(),
+                bearer_token_env_var: None,
+                http_headers: None,
+                env_http_headers: None,
+            },
+            enabled: true,
+            required: false,
+            disabled_reason: None,
+            startup_timeout_sec: None,
+            tool_timeout_sec: None,
+            enabled_tools: None,
+            disabled_tools: None,
+            scopes: None,
+            oauth_resource: None,
+            tools: HashMap::new(),
+        });
+    }
+
+    if transport.eq_ignore_ascii_case("stdio") {
+        let command = dependency
+            .command
+            .as_ref()
+            .ok_or_else(|| "missing command for stdio dependency".to_string())?;
+        return Ok(McpServerConfig {
+            transport: McpServerTransportConfig::Stdio {
+                command: command.clone(),
+                args: Vec::new(),
+                env: None,
+                env_vars: Vec::new(),
+                cwd: None,
+            },
+            enabled: true,
+            required: false,
+            disabled_reason: None,
+            startup_timeout_sec: None,
+            tool_timeout_sec: None,
+            enabled_tools: None,
+            disabled_tools: None,
+            scopes: None,
+            oauth_resource: None,
+            tools: HashMap::new(),
+        });
+    }
+
+    Err(format!("unsupported transport {transport}"))
+}
+
+#[cfg(test)]
+#[path = "skill_dependencies_tests.rs"]
+mod tests;

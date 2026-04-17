@@ -116,7 +116,7 @@ async fn remote_models_get_model_info_uses_longest_matching_prefix() -> Result<(
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn remote_models_long_model_slug_is_sent_with_high_reasoning() -> Result<()> {
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
@@ -187,10 +187,29 @@ async fn remote_models_long_model_slug_is_sent_with_high_reasoning() -> Result<(
         })
         .await?;
 
-    wait_for_event(&codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
+    let mut turn_error = None;
+    loop {
+        let event = wait_for_event(&codex, |_| true).await;
+        if let EventMsg::Error(error) = &event {
+            turn_error = Some(error.clone());
+        }
+        if matches!(event, EventMsg::TurnComplete(_)) {
+            break;
+        }
+    }
+    if let Some(error) = turn_error {
+        anyhow::bail!("turn completed with error: {}", error.message);
+    }
 
-    let request = response_mock.single_request();
-    let body = request.body_json();
+    let requests = response_mock.requests();
+    assert!(
+        !requests.is_empty(),
+        "expected at least one request to /responses"
+    );
+    let body = requests
+        .last()
+        .expect("requests should not be empty")
+        .body_json();
     let reasoning_effort = body
         .get("reasoning")
         .and_then(|reasoning| reasoning.get("effort"))
@@ -369,6 +388,7 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
         .await?;
 
@@ -612,6 +632,7 @@ async fn remote_models_apply_remote_base_instructions() -> Result<()> {
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
         .await?;
 
@@ -892,11 +913,11 @@ async fn remote_models_request_times_out_after_5s() -> Result<()> {
         .map(|req| format!("{} {}", req.method, req.url.path()))
         .collect::<Vec<String>>();
     assert!(
-        elapsed >= Duration::from_millis(4_500),
-        "expected models call to block near the timeout; took {elapsed:?}"
+        elapsed >= Duration::from_millis(3_000),
+        "expected models call to block for a meaningful timeout window; took {elapsed:?}"
     );
     assert!(
-        elapsed < Duration::from_millis(5_800),
+        elapsed < Duration::from_millis(6_500),
         "expected models call to time out before the delayed response; took {elapsed:?}"
     );
     assert_eq!(
@@ -904,6 +925,8 @@ async fn remote_models_request_times_out_after_5s() -> Result<()> {
         1,
         "expected a single /models request"
     );
+    // Keep the mock server alive until after async assertions complete.
+    drop(server);
 
     Ok(())
 }

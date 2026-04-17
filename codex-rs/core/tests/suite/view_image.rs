@@ -2,8 +2,9 @@
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use codex_core::CodexAuth;
 use codex_exec_server::CreateDirectoryOptions;
-use codex_login::CodexAuth;
+use codex_features::Feature;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::InputModality;
@@ -18,6 +19,7 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::responses;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -30,6 +32,7 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
+use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_with_timeout;
 use image::DynamicImage;
 use image::GenericImageView;
@@ -48,7 +51,42 @@ use wiremock::ResponseTemplate;
 #[cfg(not(debug_assertions))]
 use wiremock::matchers::body_string_contains;
 
-const VIEW_IMAGE_TURN_COMPLETE_TIMEOUT: Duration = Duration::from_secs(30);
+fn has_node_runtime() -> bool {
+    fn parse_version(input: &str) -> Option<(u64, u64, u64)> {
+        let version = input.trim().strip_prefix('v').unwrap_or(input.trim());
+        let mut parts = version.split('.');
+        let major = parts.next()?.parse().ok()?;
+        let minor = parts.next()?.parse().ok()?;
+        let patch = parts.next()?.parse().ok()?;
+        Some((major, minor, patch))
+    }
+
+    fn is_at_least(found: (u64, u64, u64), required: (u64, u64, u64)) -> bool {
+        found.0 > required.0
+            || (found.0 == required.0
+                && (found.1 > required.1 || (found.1 == required.1 && found.2 >= required.2)))
+    }
+
+    let Some(required) = parse_version(include_str!("../../../node-version.txt")) else {
+        return false;
+    };
+    let node_path = std::env::var_os("CODEX_JS_REPL_NODE_PATH")
+        .filter(|path| std::path::Path::new(path).exists())
+        .unwrap_or_else(|| "node".into());
+    let Ok(output) = std::process::Command::new(node_path)
+        .arg("--version")
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let Some(found) = parse_version(&String::from_utf8_lossy(&output.stdout)) else {
+        return false;
+    };
+    is_at_least(found, required)
+}
 
 fn image_messages(body: &Value) -> Vec<&Value> {
     body.get("input")
@@ -85,13 +123,9 @@ fn png_bytes(width: u32, height: u32, rgba: [u8; 4]) -> anyhow::Result<Vec<u8>> 
 }
 
 async fn create_workspace_directory(test: &TestCodex, rel_path: &str) -> anyhow::Result<PathBuf> {
-    let abs_path = test.config.cwd.join(rel_path);
+    let abs_path = AbsolutePathBuf::from_absolute_path(test.config.cwd.join(rel_path))?;
     test.fs()
-        .create_directory(
-            &abs_path,
-            CreateDirectoryOptions { recursive: true },
-            /*sandbox*/ None,
-        )
+        .create_directory(&abs_path, CreateDirectoryOptions { recursive: true })
         .await?;
     Ok(abs_path.into_path_buf())
 }
@@ -101,19 +135,14 @@ async fn write_workspace_file(
     rel_path: &str,
     contents: Vec<u8>,
 ) -> anyhow::Result<PathBuf> {
-    let abs_path = test.config.cwd.join(rel_path);
+    let abs_path = AbsolutePathBuf::from_absolute_path(test.config.cwd.join(rel_path))?;
     if let Some(parent) = abs_path.parent() {
+        let parent = AbsolutePathBuf::from_absolute_path(parent)?;
         test.fs()
-            .create_directory(
-                &parent,
-                CreateDirectoryOptions { recursive: true },
-                /*sandbox*/ None,
-            )
+            .create_directory(&parent, CreateDirectoryOptions { recursive: true })
             .await?;
     }
-    test.fs()
-        .write_file(&abs_path, contents, /*sandbox*/ None)
-        .await?;
+    test.fs().write_file(&abs_path, contents).await?;
     Ok(abs_path.into_path_buf())
 }
 
@@ -181,7 +210,7 @@ async fn user_turn_with_local_image_attaches_image() -> anyhow::Result<()> {
         codex,
         |event| matches!(event, EventMsg::TurnComplete(_)),
         // Empirically, image attachment can be slow under Bazel/RBE.
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
+        Duration::from_secs(10),
     )
     .await;
 
@@ -236,7 +265,7 @@ async fn view_image_tool_attaches_local_image() -> anyhow::Result<()> {
     let cwd = config.cwd.clone();
 
     let rel_path = "assets/example.png";
-    let abs_path = cwd.join(rel_path);
+    let abs_path = AbsolutePathBuf::from_absolute_path(cwd.join(rel_path))?;
     let original_width = 2304;
     let original_height = 864;
     write_workspace_png(
@@ -299,7 +328,7 @@ async fn view_image_tool_attaches_local_image() -> anyhow::Result<()> {
         },
         // Empirically, we have seen this run slow when run under
         // Bazel on arm Linux.
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
+        Duration::from_secs(10),
     )
     .await;
 
@@ -308,7 +337,7 @@ async fn view_image_tool_attaches_local_image() -> anyhow::Result<()> {
         _ => unreachable!("stored event must be ViewImageToolCall"),
     };
     assert_eq!(tool_event.call_id, call_id);
-    assert_eq!(tool_event.path, abs_path);
+    assert_eq!(tool_event.path, abs_path.to_path_buf());
 
     let req = mock.single_request();
     let body = req.body_json();
@@ -361,7 +390,14 @@ async fn view_image_tool_can_preserve_original_resolution_when_requested_on_gpt5
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_model("gpt-5.3-codex");
+    let mut builder = test_codex()
+        .with_model("gpt-5.3-codex")
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::ImageDetailOriginal)
+                .expect("test config should allow feature update");
+        });
     let test = builder.build_remote_aware(&server).await?;
     let TestCodex {
         codex,
@@ -423,7 +459,7 @@ async fn view_image_tool_can_preserve_original_resolution_when_requested_on_gpt5
     wait_for_event_with_timeout(
         codex,
         |event| matches!(event, EventMsg::TurnComplete(_)),
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
+        Duration::from_secs(10),
     )
     .await;
 
@@ -462,7 +498,14 @@ async fn view_image_tool_errors_clearly_for_unsupported_detail_values() -> anyho
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_model("gpt-5.3-codex");
+    let mut builder = test_codex()
+        .with_model("gpt-5.3-codex")
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::ImageDetailOriginal)
+                .expect("test config should allow feature update");
+        });
     let test = builder.build_remote_aware(&server).await?;
     let TestCodex {
         codex,
@@ -519,12 +562,7 @@ async fn view_image_tool_errors_clearly_for_unsupported_detail_values() -> anyho
         })
         .await?;
 
-    wait_for_event_with_timeout(
-        codex,
-        |event| matches!(event, EventMsg::TurnComplete(_)),
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
-    )
-    .await;
+    wait_for_event(codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
 
     let req = mock.single_request();
     let body_with_tool_output = req.body_json();
@@ -550,7 +588,14 @@ async fn view_image_tool_treats_null_detail_as_omitted() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_model("gpt-5.3-codex");
+    let mut builder = test_codex()
+        .with_model("gpt-5.3-codex")
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::ImageDetailOriginal)
+                .expect("test config should allow feature update");
+        });
     let test = builder.build_remote_aware(&server).await?;
     let TestCodex {
         codex,
@@ -609,12 +654,7 @@ async fn view_image_tool_treats_null_detail_as_omitted() -> anyhow::Result<()> {
         })
         .await?;
 
-    wait_for_event_with_timeout(
-        codex,
-        |event| matches!(event, EventMsg::TurnComplete(_)),
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
-    )
-    .await;
+    wait_for_event(codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
 
     let req = mock.single_request();
     let function_output = req.function_call_output(call_id);
@@ -650,7 +690,12 @@ async fn view_image_tool_resizes_when_model_lacks_original_detail_support() -> a
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_model("gpt-5.2");
+    let mut builder = test_codex().with_model("gpt-5.2").with_config(|config| {
+        config
+            .features
+            .enable(Feature::ImageDetailOriginal)
+            .expect("test config should allow feature update");
+    });
     let test = builder.build_remote_aware(&server).await?;
     let TestCodex {
         codex,
@@ -712,7 +757,7 @@ async fn view_image_tool_resizes_when_model_lacks_original_detail_support() -> a
     wait_for_event_with_timeout(
         codex,
         |event| matches!(event, EventMsg::TurnComplete(_)),
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
+        Duration::from_secs(10),
     )
     .await;
 
@@ -749,12 +794,19 @@ async fn view_image_tool_resizes_when_model_lacks_original_detail_support() -> a
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn view_image_tool_does_not_force_original_resolution_with_capability_only()
+async fn view_image_tool_does_not_force_original_resolution_with_capability_feature_only()
 -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_model("gpt-5.3-codex");
+    let mut builder = test_codex()
+        .with_model("gpt-5.3-codex")
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::ImageDetailOriginal)
+                .expect("test config should allow feature update");
+        });
     let test = builder.build_remote_aware(&server).await?;
     let TestCodex {
         codex,
@@ -816,7 +868,7 @@ async fn view_image_tool_does_not_force_original_resolution_with_capability_only
     wait_for_event_with_timeout(
         codex,
         |event| matches!(event, EventMsg::TurnComplete(_)),
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
+        Duration::from_secs(10),
     )
     .await;
 
@@ -852,6 +904,9 @@ async fn view_image_tool_does_not_force_original_resolution_with_capability_only
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn js_repl_emit_image_attaches_local_image() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
+    if !has_node_runtime() {
+        return Ok(());
+    }
 
     let server = start_mock_server().await;
     let mut builder = test_codex().with_config(|config| {
@@ -926,7 +981,7 @@ await codex.emitImage(out);
             EventMsg::TurnComplete(_) => true,
             _ => false,
         },
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
+        Duration::from_secs(10),
     )
     .await;
     let tool_event = match tool_event {
@@ -971,6 +1026,9 @@ await codex.emitImage(out);
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn js_repl_view_image_requires_explicit_emit() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
+    if !has_node_runtime() {
+        return Ok(());
+    }
 
     let server = start_mock_server().await;
     #[allow(clippy::expect_used)]
@@ -1046,7 +1104,7 @@ console.log(out.type);
             EventMsg::TurnComplete(_) => true,
             _ => false,
         },
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
+        Duration::from_secs(10),
     )
     .await;
     let tool_event = match tool_event {
@@ -1128,12 +1186,7 @@ async fn view_image_tool_errors_when_path_is_directory() -> anyhow::Result<()> {
         })
         .await?;
 
-    wait_for_event_with_timeout(
-        codex,
-        |event| matches!(event, EventMsg::TurnComplete(_)),
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
-    )
-    .await;
+    wait_for_event(codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
 
     let req = mock.single_request();
     let body_with_tool_output = req.body_json();
@@ -1209,12 +1262,7 @@ async fn view_image_tool_errors_for_non_image_files() -> anyhow::Result<()> {
         })
         .await?;
 
-    wait_for_event_with_timeout(
-        codex,
-        |event| matches!(event, EventMsg::TurnComplete(_)),
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
-    )
-    .await;
+    wait_for_event(codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
 
     let request = mock.single_request();
     assert!(
@@ -1255,7 +1303,7 @@ async fn view_image_tool_errors_when_file_missing() -> anyhow::Result<()> {
     } = &test;
 
     let rel_path = "missing/example.png";
-    let abs_path = config.cwd.join(rel_path);
+    let abs_path = AbsolutePathBuf::from_absolute_path(config.cwd.join(rel_path))?;
 
     let call_id = "view-image-missing";
     let arguments = serde_json::json!({ "path": rel_path }).to_string();
@@ -1295,12 +1343,7 @@ async fn view_image_tool_errors_when_file_missing() -> anyhow::Result<()> {
         })
         .await?;
 
-    wait_for_event_with_timeout(
-        codex,
-        |event| matches!(event, EventMsg::TurnComplete(_)),
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
-    )
-    .await;
+    wait_for_event(codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
 
     let req = mock.single_request();
     let body_with_tool_output = req.body_json();
@@ -1351,7 +1394,6 @@ async fn view_image_tool_returns_unsupported_message_for_text_only_model() -> an
         used_fallback_model_metadata: false,
         supports_search_tool: false,
         priority: 1,
-        additional_speed_tiers: Vec::new(),
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: None,
@@ -1431,12 +1473,7 @@ async fn view_image_tool_returns_unsupported_message_for_text_only_model() -> an
         })
         .await?;
 
-    wait_for_event_with_timeout(
-        codex,
-        |event| matches!(event, EventMsg::TurnComplete(_)),
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
-    )
-    .await;
+    wait_for_event(codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
 
     let output_text = mock
         .single_request()
@@ -1511,12 +1548,7 @@ async fn replaces_invalid_local_image_after_bad_request() -> anyhow::Result<()> 
         })
         .await?;
 
-    wait_for_event_with_timeout(
-        &codex,
-        |event| matches!(event, EventMsg::TurnComplete(_)),
-        VIEW_IMAGE_TURN_COMPLETE_TIMEOUT,
-    )
-    .await;
+    wait_for_event(&codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
 
     let first_body = invalid_image_mock.single_request().body_json();
     assert!(
@@ -1535,4 +1567,3 @@ async fn replaces_invalid_local_image_after_bad_request() -> anyhow::Result<()> 
 
     Ok(())
 }
-use codex_features::Feature;

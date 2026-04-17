@@ -65,6 +65,12 @@ impl FrameRequester {
             frame_schedule_tx: tx,
         }
     }
+
+    /// Create a real frame requester plus a receiver that observes draw notifications.
+    pub(crate) fn test_observable() -> (Self, broadcast::Receiver<()>) {
+        let (draw_tx, draw_rx) = broadcast::channel(16);
+        (FrameRequester::new(draw_tx), draw_rx)
+    }
 }
 
 /// A scheduler for coalescing frame draw requests and notifying the TUI event loop.

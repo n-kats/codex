@@ -1,6 +1,6 @@
 ---
-source: tui/src/chatwidget/tests.rs
 expression: terminal.backend().vt100().screen().contents()
+source: tui/src/chatwidget/tests.rs
 ---
 
 

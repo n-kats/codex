@@ -134,6 +134,7 @@ fn transform_additional_permissions_enable_network_for_external_sandbox() {
                         read: Some(vec![path]),
                         write: Some(Vec::new()),
                     }),
+                    macos: None,
                 }),
             },
             policy: &SandboxPolicy::ExternalSandbox {

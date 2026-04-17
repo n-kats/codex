@@ -1,6 +1,7 @@
 ---
-source: tui/src/chatwidget/tests/status_and_layout.rs
-expression: normalized_backend_snapshot(terminal.backend())
+source: tui/src/chatwidget/tests.rs
+assertion_line: 10559
+expression: terminal.backend()
 ---
 "                                                                                "
 "• Analyzing (0s • esc to interrupt)                                             "
@@ -8,4 +9,4 @@ expression: normalized_backend_snapshot(terminal.backend())
 "                                                                                "
 "› Ask Codex to do anything                                                      "
 "                                                                                "
-"  gpt-5.3-codex default · /tmp/project                                          "
+"  ? for shortcuts                                            100% context left  "

@@ -17,6 +17,7 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
+use crate::RunAsUser;
 use crate::process::ChildTerminator;
 use crate::process::ProcessHandle;
 use crate::process::SpawnedProcess;
@@ -99,13 +100,14 @@ async fn spawn_process_with_stdin_mode(
     arg0: &Option<String>,
     stdin_mode: PipeStdinMode,
     inherited_fds: &[i32],
+    run_as: Option<RunAsUser>,
 ) -> Result<SpawnedProcess> {
     if program.is_empty() {
         anyhow::bail!("missing program for pipe spawn");
     }
 
     #[cfg(not(unix))]
-    let _ = inherited_fds;
+    let _ = (inherited_fds, run_as);
 
     let mut command = Command::new(program);
     #[cfg(unix)]
@@ -117,9 +119,40 @@ async fn spawn_process_with_stdin_mode(
     #[cfg(unix)]
     let inherited_fds = inherited_fds.to_vec();
     #[cfg(unix)]
+    let run_as = run_as.map(|run_as| {
+        (
+            run_as.uid as libc::uid_t,
+            run_as.gid as libc::gid_t,
+            run_as.supplementary_gids.map(|gids| {
+                gids.into_iter()
+                    .map(|gid| gid as libc::gid_t)
+                    .collect::<Vec<_>>()
+            }),
+        )
+    });
+    #[cfg(unix)]
     unsafe {
         command.pre_exec(move || {
             crate::process_group::detach_from_tty()?;
+            if let Some((uid, gid, groups)) = run_as.as_ref() {
+                if let Some(groups) = groups.as_ref() {
+                    let groups_ptr = groups.as_ptr();
+                    let groups_ptr = if groups.is_empty() {
+                        std::ptr::null()
+                    } else {
+                        groups_ptr
+                    };
+                    if libc::setgroups(groups.len(), groups_ptr) == -1 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                }
+                if libc::setgid(*gid) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::setuid(*uid) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
             #[cfg(target_os = "linux")]
             crate::process_group::set_parent_death_signal(parent_pid)?;
             crate::pty::close_inherited_fds_except(&inherited_fds);
@@ -253,7 +286,39 @@ pub async fn spawn_process(
     env: &HashMap<String, String>,
     arg0: &Option<String>,
 ) -> Result<SpawnedProcess> {
-    spawn_process_with_stdin_mode(program, args, cwd, env, arg0, PipeStdinMode::Piped, &[]).await
+    spawn_process_with_stdin_mode(
+        program,
+        args,
+        cwd,
+        env,
+        arg0,
+        PipeStdinMode::Piped,
+        &[],
+        None,
+    )
+    .await
+}
+
+/// Spawn a process using regular pipes (no PTY), optionally switching to a Unix worker user.
+pub async fn spawn_process_with_run_as(
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+    env: &HashMap<String, String>,
+    arg0: &Option<String>,
+    run_as: Option<RunAsUser>,
+) -> Result<SpawnedProcess> {
+    spawn_process_with_stdin_mode(
+        program,
+        args,
+        cwd,
+        env,
+        arg0,
+        PipeStdinMode::Piped,
+        &[],
+        run_as,
+    )
+    .await
 }
 
 /// Spawn a process using regular pipes, but close stdin immediately.
@@ -285,6 +350,30 @@ pub async fn spawn_process_no_stdin_with_inherited_fds(
         arg0,
         PipeStdinMode::Null,
         inherited_fds,
+        None,
+    )
+    .await
+}
+
+/// Spawn a process using regular pipes, closing stdin immediately, and optionally switching to a
+/// Unix worker user.
+pub async fn spawn_process_no_stdin_with_run_as(
+    program: &str,
+    args: &[String],
+    cwd: &Path,
+    env: &HashMap<String, String>,
+    arg0: &Option<String>,
+    run_as: Option<RunAsUser>,
+) -> Result<SpawnedProcess> {
+    spawn_process_with_stdin_mode(
+        program,
+        args,
+        cwd,
+        env,
+        arg0,
+        PipeStdinMode::Null,
+        &[],
+        run_as,
     )
     .await
 }

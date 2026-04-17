@@ -276,6 +276,25 @@ fn process_exists(pid: i32) -> anyhow::Result<bool> {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn process_is_zombie(pid: i32) -> anyhow::Result<bool> {
+    let stat_path = format!("/proc/{pid}/stat");
+    let stat = match std::fs::read_to_string(stat_path) {
+        Ok(stat) => stat,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+
+    let Some((_, rest)) = stat.rsplit_once(") ") else {
+        anyhow::bail!("unexpected /proc stat format for pid {pid}: {stat:?}");
+    };
+    let Some(state) = rest.chars().next() else {
+        anyhow::bail!("missing process state in /proc stat for pid {pid}: {stat:?}");
+    };
+
+    Ok(state == 'Z')
+}
+
 #[cfg(unix)]
 async fn wait_for_marker_pid(
     output_rx: &mut tokio::sync::broadcast::Receiver<Vec<u8>>,
@@ -331,6 +350,10 @@ async fn wait_for_process_exit(pid: i32, timeout_ms: u64) -> anyhow::Result<bool
         if !process_exists(pid)? {
             return Ok(true);
         }
+        #[cfg(target_os = "linux")]
+        if process_is_zombie(pid)? {
+            return Ok(true);
+        }
         if tokio::time::Instant::now() >= deadline {
             return Ok(false);
         }
@@ -383,6 +406,95 @@ async fn pty_python_repl_emits_output_and_exits() -> anyhow::Result<()> {
         "expected python output in PTY: {text:?}"
     );
     assert_eq!(code, 0, "expected python to exit cleanly");
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(unix)]
+async fn pipe_run_as_current_user_works() -> anyhow::Result<()> {
+    // Sanity-check the run_as plumbing without requiring elevated privileges.
+    let uid = unsafe { libc::geteuid() } as u32;
+    let gid = unsafe { libc::getegid() } as u32;
+
+    let spawned = crate::pipe::spawn_process_no_stdin_with_run_as(
+        "id",
+        &["-u".to_string()],
+        Path::new("."),
+        &HashMap::new(),
+        &None,
+        Some(crate::RunAsUser {
+            uid,
+            gid,
+            supplementary_gids: None,
+        }),
+    )
+    .await?;
+
+    let (_session, output_rx, exit_rx) = combine_spawned_output(spawned);
+    let (collected, exit_code) = collect_output_until_exit(output_rx, exit_rx, 2_000).await;
+    assert_eq!(exit_code, 0);
+    assert_eq!(String::from_utf8_lossy(&collected).trim(), uid.to_string());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(unix)]
+async fn pipe_run_as_different_user_switches_uid_when_permitted() -> anyhow::Result<()> {
+    // Best-effort coverage: only assert user switching when the environment permits it.
+    let worker_user = "assistant";
+    let (worker_uid, worker_gid) = {
+        let Ok(c_user) = std::ffi::CString::new(worker_user) else {
+            return Ok(());
+        };
+        // SAFETY: libc call, CString provides NUL-terminated pointer.
+        let pw = unsafe { libc::getpwnam(c_user.as_ptr()) };
+        if pw.is_null() {
+            return Ok(());
+        }
+        // SAFETY: pw is non-null and points to a passwd struct.
+        unsafe { ((*pw).pw_uid as u32, (*pw).pw_gid as u32) }
+    };
+
+    let invoker_uid = unsafe { libc::geteuid() } as u32;
+    if worker_uid == invoker_uid {
+        return Ok(());
+    }
+
+    let spawned = match crate::pipe::spawn_process_no_stdin_with_run_as(
+        "id",
+        &["-u".to_string()],
+        Path::new("."),
+        &HashMap::new(),
+        &None,
+        Some(crate::RunAsUser {
+            uid: worker_uid,
+            gid: worker_gid,
+            supplementary_gids: None,
+        }),
+    )
+    .await
+    {
+        Ok(spawned) => spawned,
+        Err(err) => {
+            let is_perm = err
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::PermissionDenied);
+            if is_perm {
+                return Ok(());
+            }
+            return Err(err);
+        }
+    };
+
+    let (_session, output_rx, exit_rx) = combine_spawned_output(spawned);
+    let (collected, exit_code) = collect_output_until_exit(output_rx, exit_rx, 2_000).await;
+    assert_eq!(exit_code, 0);
+    assert_eq!(
+        String::from_utf8_lossy(&collected).trim(),
+        worker_uid.to_string()
+    );
 
     Ok(())
 }

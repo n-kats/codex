@@ -136,16 +136,16 @@ mod tests {
     use tokio::time::sleep;
     use tokio::time::timeout;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn cancellation_receiver_fires_after_limit() {
+        let start = Instant::now();
         let stopwatch = Stopwatch::new(Duration::from_millis(50));
         let token = stopwatch.cancellation_token();
-        let start = Instant::now();
         token.cancelled().await;
         assert!(start.elapsed() >= Duration::from_millis(50));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn pause_prevents_timeout_until_resumed() {
         let stopwatch = Stopwatch::new(Duration::from_millis(50));
         let token = stopwatch.cancellation_token();
@@ -172,7 +172,7 @@ mod tests {
         token.cancelled().await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn overlapping_pauses_only_resume_once() {
         let stopwatch = Stopwatch::new(Duration::from_millis(50));
         let token = stopwatch.cancellation_token();
@@ -223,7 +223,7 @@ mod tests {
         token.cancelled().await;
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     async fn unlimited_stopwatch_never_cancels() {
         let stopwatch = Stopwatch::unlimited();
         let token = stopwatch.cancellation_token();

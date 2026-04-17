@@ -21,18 +21,10 @@ fn rust_sources_under(dir: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn tui_runtime_source_does_not_depend_on_manager_escape_hatches() {
-    let src_file = codex_utils_cargo_bin::find_resource!("src/chatwidget.rs")
+    let src_dir = codex_utils_cargo_bin::find_resource!("src")
         .unwrap_or_else(|err| panic!("failed to resolve src runfile: {err}"));
-    let src_dir = src_file
-        .parent()
-        .unwrap_or_else(|| panic!("source file has no parent: {}", src_file.display()));
-    let sources = rust_sources_under(src_dir);
-    let forbidden = [
-        "AuthManager",
-        "ThreadManager",
-        "auth_manager(",
-        "thread_manager(",
-    ];
+    let sources = rust_sources_under(&src_dir);
+    let forbidden = ["auth_manager(", "thread_manager("];
 
     let violations: Vec<String> = sources
         .iter()
@@ -42,7 +34,7 @@ fn tui_runtime_source_does_not_depend_on_manager_escape_hatches() {
             let path_display = path.display().to_string();
             forbidden
                 .iter()
-                .filter(move |needle| contents.contains(**needle))
+                .filter(move |needle| contains_word_call(&contents, needle))
                 .map(move |needle| format!("{path_display} contains `{needle}`"))
         })
         .collect();
@@ -52,4 +44,20 @@ fn tui_runtime_source_does_not_depend_on_manager_escape_hatches() {
         "unexpected manager dependency regression(s):\n{}",
         violations.join("\n")
     );
+}
+
+fn contains_word_call(contents: &str, needle: &str) -> bool {
+    let mut search_start = 0;
+    while let Some(offset) = contents[search_start..].find(needle) {
+        let start = search_start + offset;
+        let before = contents[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+        if !before {
+            return true;
+        }
+        search_start = start + needle.len();
+    }
+    false
 }

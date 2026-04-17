@@ -387,15 +387,24 @@ mod tests {
     use std::os::fd::AsRawFd;
     use std::os::fd::FromRawFd;
     use std::path::PathBuf;
-    use std::sync::LazyLock;
+    use std::sync::Mutex;
+    use std::sync::MutexGuard;
+    use std::sync::OnceLock;
     use std::sync::atomic::AtomicBool;
     use std::sync::atomic::Ordering;
     use tempfile::TempDir;
     use tokio::time::Instant;
     use tokio::time::sleep;
+    use tokio::time::timeout;
 
-    static ESCALATE_SERVER_TEST_LOCK: LazyLock<tokio::sync::Mutex<()>> =
-        LazyLock::new(|| tokio::sync::Mutex::new(()));
+    static TEST_SERIAL_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn test_serial_lock() -> MutexGuard<'static, ()> {
+        TEST_SERIAL_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap()
+    }
 
     struct DeterministicEscalationPolicy {
         decision: EscalationDecision,
@@ -467,7 +476,7 @@ mod tests {
     }
 
     struct PermissionAssertingShellCommandExecutor {
-        expected_permissions: EscalationPermissions,
+        captured_execution: Arc<Mutex<Option<EscalationExecution>>>,
     }
 
     #[async_trait::async_trait]
@@ -491,10 +500,7 @@ mod tests {
             env: HashMap<String, String>,
             execution: EscalationExecution,
         ) -> anyhow::Result<PreparedExec> {
-            assert_eq!(
-                execution,
-                EscalationExecution::Permissions(self.expected_permissions.clone())
-            );
+            *self.captured_execution.lock().unwrap() = Some(execution);
             Ok(PreparedExec {
                 command: std::iter::once(program.to_string_lossy().to_string())
                     .chain(argv.iter().skip(1).cloned())
@@ -523,11 +529,16 @@ mod tests {
     }
 
     fn process_exists(pid: i32) -> bool {
-        let rc = unsafe { libc::kill(pid, 0) };
+        let mut status = 0;
+        let rc = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+        if rc == pid {
+            return false;
+        }
         if rc == 0 {
             return true;
         }
-        std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+        let err = std::io::Error::last_os_error().raw_os_error();
+        err != Some(libc::ESRCH) && err != Some(libc::ECHILD)
     }
 
     struct AfterSpawnAssertingShellCommandExecutor {
@@ -596,7 +607,6 @@ mod tests {
     /// until `close_client_socket()` is called.
     #[tokio::test]
     async fn start_session_exposes_wrapper_env_overlay() -> anyhow::Result<()> {
-        let _guard = ESCALATE_SERVER_TEST_LOCK.lock().await;
         let execve_wrapper = PathBuf::from("/tmp/codex-execve-wrapper");
         let execve_wrapper_str = execve_wrapper.to_string_lossy().to_string();
         let server = EscalateServer::new(
@@ -638,7 +648,6 @@ mod tests {
 
     #[tokio::test]
     async fn exec_closes_parent_socket_after_shell_spawn() -> anyhow::Result<()> {
-        let _guard = ESCALATE_SERVER_TEST_LOCK.lock().await;
         let after_spawn_invoked = Arc::new(AtomicBool::new(false));
         let server = EscalateServer::new(
             PathBuf::from("/bin/bash"),
@@ -672,7 +681,6 @@ mod tests {
 
     #[tokio::test]
     async fn handle_escalate_session_respects_run_in_sandbox_decision() -> anyhow::Result<()> {
-        let _guard = ESCALATE_SERVER_TEST_LOCK.lock().await;
         let (server, client) = AsyncSocket::pair()?;
         let server_task = tokio::spawn(handle_escalate_session_with_policy(
             server,
@@ -712,7 +720,6 @@ mod tests {
     #[tokio::test]
     async fn handle_escalate_session_resolves_relative_file_against_request_workdir()
     -> anyhow::Result<()> {
-        let _guard = ESCALATE_SERVER_TEST_LOCK.lock().await;
         let (server, client) = AsyncSocket::pair()?;
         let tmp = tempfile::TempDir::new()?;
         let workdir = tmp.path().join("workspace");
@@ -751,7 +758,7 @@ mod tests {
 
     #[tokio::test]
     async fn handle_escalate_session_executes_escalated_command() -> anyhow::Result<()> {
-        let _guard = ESCALATE_SERVER_TEST_LOCK.lock().await;
+        let _guard = test_serial_lock();
         let (server, client) = AsyncSocket::pair()?;
         let server_task = tokio::spawn(handle_escalate_session_with_policy(
             server,
@@ -788,10 +795,14 @@ mod tests {
             .send_with_fds(SuperExecMessage { fds: Vec::new() }, &[])
             .await?;
 
-        let result = client.receive::<SuperExecResult>().await?;
+        let result = timeout(Duration::from_secs(15), client.receive::<SuperExecResult>())
+            .await
+            .expect("timed out waiting for escalated command result")?;
         assert_eq!(42, result.exit_code);
 
-        server_task.await?
+        timeout(Duration::from_secs(15), server_task)
+            .await
+            .expect("timed out waiting for escalate session task")?
     }
 
     /// Saves a target descriptor, closes it, and restores it when dropped.
@@ -844,7 +855,7 @@ mod tests {
     #[tokio::test]
     async fn handle_escalate_session_accepts_received_fds_that_overlap_destinations()
     -> anyhow::Result<()> {
-        let _guard = ESCALATE_SERVER_TEST_LOCK.lock().await;
+        let _guard = test_serial_lock();
         let mut pipe_fds = [0; 2];
         if unsafe { libc::pipe(pipe_fds.as_mut_ptr()) } == -1 {
             return Err(std::io::Error::last_os_error().into());
@@ -916,8 +927,8 @@ mod tests {
 
     #[tokio::test]
     async fn handle_escalate_session_passes_permissions_to_executor() -> anyhow::Result<()> {
-        let _guard = ESCALATE_SERVER_TEST_LOCK.lock().await;
         let (server, client) = AsyncSocket::pair()?;
+        let captured_execution = Arc::new(Mutex::new(None));
         let server_task = tokio::spawn(handle_escalate_session_with_policy(
             server,
             Arc::new(DeterministicEscalationPolicy {
@@ -931,12 +942,7 @@ mod tests {
                 )),
             }),
             Arc::new(PermissionAssertingShellCommandExecutor {
-                expected_permissions: EscalationPermissions::PermissionProfile(PermissionProfile {
-                    network: Some(NetworkPermissions {
-                        enabled: Some(true),
-                    }),
-                    ..Default::default()
-                }),
+                captured_execution: Arc::clone(&captured_execution),
             }),
             CancellationToken::new(),
             CancellationToken::new(),
@@ -963,16 +969,32 @@ mod tests {
             .send_with_fds(SuperExecMessage { fds: Vec::new() }, &[])
             .await?;
 
-        let result = client.receive::<SuperExecResult>().await?;
+        let result = timeout(Duration::from_secs(15), client.receive::<SuperExecResult>())
+            .await
+            .expect("timed out waiting for escalated command result")?;
         assert_eq!(0, result.exit_code);
 
-        server_task.await?
+        let execution = captured_execution.lock().unwrap().clone();
+        assert_eq!(
+            Some(EscalationExecution::Permissions(
+                EscalationPermissions::PermissionProfile(PermissionProfile {
+                    network: Some(NetworkPermissions {
+                        enabled: Some(true),
+                    }),
+                    ..Default::default()
+                })
+            )),
+            execution
+        );
+
+        timeout(Duration::from_secs(15), server_task)
+            .await
+            .expect("timed out waiting for escalate session task")?
     }
 
     #[tokio::test]
     async fn dropping_session_aborts_intercept_workers_and_kills_spawned_child()
     -> anyhow::Result<()> {
-        let _guard = ESCALATE_SERVER_TEST_LOCK.lock().await;
         let tmp = TempDir::new()?;
         let pid_file = tmp.path().join("escalated-child.pid");
         let pid_file_display = pid_file.display().to_string();

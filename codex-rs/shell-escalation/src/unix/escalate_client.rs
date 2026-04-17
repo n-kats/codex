@@ -47,11 +47,14 @@ pub async fn run_shell_escalation_execve_wrapper(
     let env = std::env::vars()
         .filter(|(k, _)| !matches!(k.as_str(), ESCALATE_SOCKET_ENV_VAR | EXEC_WRAPPER_ENV_VAR))
         .collect();
+    let workdir = AbsolutePathBuf::current_dir()?;
+    let resolved_file = resolve_executable_for_escalation(&file, &env, &workdir)
+        .with_context(|| format!("failed to resolve executable `{file}`"))?;
     client
         .send(EscalateRequest {
-            file: file.clone().into(),
+            file: resolved_file,
             argv: argv.clone(),
-            workdir: AbsolutePathBuf::current_dir()?,
+            workdir,
             env,
         })
         .await
@@ -121,6 +124,41 @@ pub async fn run_shell_escalation_execve_wrapper(
             Ok(1)
         }
     }
+}
+
+fn resolve_executable_for_escalation(
+    file: &str,
+    env: &std::collections::HashMap<String, String>,
+    workdir: &AbsolutePathBuf,
+) -> anyhow::Result<std::path::PathBuf> {
+    let candidate = std::path::Path::new(file);
+    if candidate.is_absolute() {
+        let absolute = AbsolutePathBuf::from_absolute_path(candidate)?;
+        return Ok(absolute.as_path().to_path_buf());
+    }
+
+    // If the program contains a path separator, execve treats it as a path (relative to CWD).
+    if file.contains(std::path::MAIN_SEPARATOR) || file.contains('/') {
+        let absolute = AbsolutePathBuf::resolve_path_against_base(candidate, workdir.as_path())?;
+        return Ok(absolute.as_path().to_path_buf());
+    }
+
+    let Some(path) = env.get("PATH") else {
+        let absolute = AbsolutePathBuf::resolve_path_against_base(candidate, workdir.as_path())?;
+        return Ok(absolute.as_path().to_path_buf());
+    };
+
+    for entry in std::env::split_paths(path) {
+        let p = entry.join(file);
+        if std::fs::metadata(&p).is_ok_and(|m| m.is_file()) {
+            let resolved = std::fs::canonicalize(&p).unwrap_or(p);
+            let absolute = AbsolutePathBuf::resolve_path_against_base(resolved, workdir.as_path())?;
+            return Ok(absolute.as_path().to_path_buf());
+        }
+    }
+
+    let absolute = AbsolutePathBuf::resolve_path_against_base(candidate, workdir.as_path())?;
+    Ok(absolute.as_path().to_path_buf())
 }
 
 #[cfg(test)]

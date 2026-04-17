@@ -1,10 +1,12 @@
+#![allow(dead_code)]
+
 use crate::bottom_pane::FeedbackAudience;
 #[cfg(test)]
 use crate::legacy_core::append_message_history_entry;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::message_history_metadata;
 use crate::status::StatusAccountDisplay;
-use crate::status::plan_type_display_name;
+use crate::status::helpers::plan_type_display_name;
 use codex_app_server_client::AppServerClient;
 use codex_app_server_client::AppServerEvent;
 use codex_app_server_client::AppServerRequestHandle;
@@ -22,6 +24,14 @@ use codex_app_server_protocol::MemoryResetResponse;
 use codex_app_server_protocol::Model as ApiModel;
 use codex_app_server_protocol::ModelListParams;
 use codex_app_server_protocol::ModelListResponse;
+use codex_app_server_protocol::PluginInstallParams;
+use codex_app_server_protocol::PluginInstallResponse;
+use codex_app_server_protocol::PluginListParams;
+use codex_app_server_protocol::PluginListResponse;
+use codex_app_server_protocol::PluginReadParams;
+use codex_app_server_protocol::PluginReadResponse;
+use codex_app_server_protocol::PluginUninstallParams;
+use codex_app_server_protocol::PluginUninstallResponse;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ReviewDelivery;
 use codex_app_server_protocol::ReviewStartParams;
@@ -143,6 +153,31 @@ pub(crate) struct ThreadSessionState {
     pub(crate) history_entry_count: u64,
     pub(crate) network_proxy: Option<SessionNetworkProxyRuntime>,
     pub(crate) rollout_path: Option<PathBuf>,
+}
+
+impl ThreadSessionState {
+    pub(crate) fn to_session_configured_event(
+        &self,
+    ) -> codex_protocol::protocol::SessionConfiguredEvent {
+        codex_protocol::protocol::SessionConfiguredEvent {
+            session_id: self.thread_id,
+            forked_from_id: self.forked_from_id,
+            thread_name: self.thread_name.clone(),
+            model: self.model.clone(),
+            model_provider_id: self.model_provider_id.clone(),
+            service_tier: self.service_tier,
+            approval_policy: self.approval_policy,
+            approvals_reviewer: self.approvals_reviewer,
+            sandbox_policy: self.sandbox_policy.clone(),
+            cwd: self.cwd.clone(),
+            reasoning_effort: self.reasoning_effort,
+            history_log_id: self.history_log_id,
+            history_entry_count: usize::try_from(self.history_entry_count).unwrap_or(usize::MAX),
+            initial_messages: None,
+            network_proxy: self.network_proxy.clone(),
+            rollout_path: self.rollout_path.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -667,6 +702,50 @@ impl AppServerSession {
             .request_typed(ClientRequest::SkillsList { request_id, params })
             .await
             .wrap_err("skills/list failed in TUI")
+    }
+
+    pub(crate) async fn plugin_list(
+        &mut self,
+        params: PluginListParams,
+    ) -> Result<PluginListResponse> {
+        let request_id = self.next_request_id();
+        self.client
+            .request_typed(ClientRequest::PluginList { request_id, params })
+            .await
+            .wrap_err("plugin/list failed in TUI")
+    }
+
+    pub(crate) async fn plugin_read(
+        &mut self,
+        params: PluginReadParams,
+    ) -> Result<PluginReadResponse> {
+        let request_id = self.next_request_id();
+        self.client
+            .request_typed(ClientRequest::PluginRead { request_id, params })
+            .await
+            .wrap_err("plugin/read failed in TUI")
+    }
+
+    pub(crate) async fn plugin_install(
+        &mut self,
+        params: PluginInstallParams,
+    ) -> Result<PluginInstallResponse> {
+        let request_id = self.next_request_id();
+        self.client
+            .request_typed(ClientRequest::PluginInstall { request_id, params })
+            .await
+            .wrap_err("plugin/install failed in TUI")
+    }
+
+    pub(crate) async fn plugin_uninstall(
+        &mut self,
+        params: PluginUninstallParams,
+    ) -> Result<PluginUninstallResponse> {
+        let request_id = self.next_request_id();
+        self.client
+            .request_typed(ClientRequest::PluginUninstall { request_id, params })
+            .await
+            .wrap_err("plugin/uninstall failed in TUI")
     }
 
     pub(crate) async fn reload_user_config(&mut self) -> Result<()> {
@@ -1449,6 +1528,53 @@ mod tests {
         .expect("session should map");
 
         assert_eq!(session.forked_from_id, Some(forked_from_id));
+    }
+
+    #[test]
+    fn thread_session_state_to_session_configured_event_preserves_fields() {
+        let thread_id = ThreadId::new();
+        let session = ThreadSessionState {
+            thread_id,
+            forked_from_id: Some(ThreadId::new()),
+            thread_name: Some("name".to_string()),
+            model: "gpt-5.4".to_string(),
+            model_provider_id: "openai".to_string(),
+            service_tier: Some(codex_protocol::config_types::ServiceTier::Fast),
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            cwd: PathBuf::from("/tmp/project"),
+            reasoning_effort: Some(codex_protocol::openai_models::ReasoningEffort::High),
+            history_log_id: 42,
+            history_entry_count: 7,
+            network_proxy: Some(SessionNetworkProxyRuntime {
+                http_addr: "127.0.0.1:8080".to_string(),
+                socks_addr: "127.0.0.1:1080".to_string(),
+            }),
+            rollout_path: Some(PathBuf::from("/tmp/rollout")),
+        };
+
+        let event = session.to_session_configured_event();
+
+        assert_eq!(event.session_id, thread_id);
+        assert_eq!(event.forked_from_id, session.forked_from_id);
+        assert_eq!(event.thread_name, session.thread_name);
+        assert_eq!(event.model, session.model);
+        assert_eq!(event.model_provider_id, session.model_provider_id);
+        assert_eq!(event.service_tier, session.service_tier);
+        assert_eq!(event.approval_policy, session.approval_policy);
+        assert_eq!(event.approvals_reviewer, session.approvals_reviewer);
+        assert_eq!(event.sandbox_policy, session.sandbox_policy);
+        assert_eq!(event.cwd, session.cwd);
+        assert_eq!(event.reasoning_effort, session.reasoning_effort);
+        assert_eq!(event.history_log_id, session.history_log_id);
+        assert_eq!(
+            event.history_entry_count,
+            session.history_entry_count as usize
+        );
+        assert!(event.initial_messages.is_none());
+        assert_eq!(event.network_proxy, session.network_proxy);
+        assert_eq!(event.rollout_path, session.rollout_path);
     }
 
     #[test]

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::Path;
@@ -161,6 +163,14 @@ pub async fn run_resume_picker(
     show_all: bool,
 ) -> Result<SessionSelection> {
     run_session_picker(tui, config, show_all, SessionPickerAction::Resume).await
+}
+
+pub async fn run_fork_picker(
+    tui: &mut Tui,
+    config: &Config,
+    show_all: bool,
+) -> Result<SessionSelection> {
+    run_session_picker(tui, config, show_all, SessionPickerAction::Fork).await
 }
 
 pub async fn run_resume_picker_with_app_server(

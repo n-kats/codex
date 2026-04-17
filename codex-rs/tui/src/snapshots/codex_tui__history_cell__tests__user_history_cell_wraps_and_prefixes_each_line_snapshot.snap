@@ -1,6 +1,6 @@
 ---
-source: tui/src/history_cell.rs
 expression: rendered
+source: tui/src/history_cell.rs
 ---
 
 › one two

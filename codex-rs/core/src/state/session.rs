@@ -6,16 +6,16 @@ use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use crate::agent_identity::RegisteredAgentTask;
 use crate::codex::PreviousTurnSettings;
 use crate::codex::SessionConfiguration;
 use crate::context_manager::ContextManager;
+use crate::protocol::RateLimitSnapshot;
+use crate::protocol::TokenUsage;
+use crate::protocol::TokenUsageInfo;
 use crate::session_startup_prewarm::SessionStartupPrewarmHandle;
-use codex_protocol::protocol::RateLimitSnapshot;
-use codex_protocol::protocol::TokenUsage;
-use codex_protocol::protocol::TokenUsageInfo;
+use crate::truncate::TruncationPolicy;
+use codex_hooks::SessionStartSource;
 use codex_protocol::protocol::TurnContextItem;
-use codex_utils_output_truncation::TruncationPolicy;
 
 /// Persistent, session-scoped state previously stored directly on `Session`.
 pub(crate) struct SessionState {
@@ -31,11 +31,9 @@ pub(crate) struct SessionState {
     previous_turn_settings: Option<PreviousTurnSettings>,
     /// Startup prewarmed session prepared during session initialization.
     pub(crate) startup_prewarm: Option<SessionStartupPrewarmHandle>,
-    pub(crate) agent_task: Option<RegisteredAgentTask>,
     pub(crate) active_connector_selection: HashSet<String>,
-    pub(crate) pending_session_start_source: Option<codex_hooks::SessionStartSource>,
     granted_permissions: Option<PermissionProfile>,
-    next_turn_is_first: bool,
+    pending_session_start_source: Option<SessionStartSource>,
 }
 
 impl SessionState {
@@ -51,12 +49,18 @@ impl SessionState {
             mcp_dependency_prompted: HashSet::new(),
             previous_turn_settings: None,
             startup_prewarm: None,
-            agent_task: None,
             active_connector_selection: HashSet::new(),
-            pending_session_start_source: None,
             granted_permissions: None,
-            next_turn_is_first: true,
+            pending_session_start_source: None,
         }
+    }
+
+    pub(crate) fn set_pending_session_start_source(&mut self, source: Option<SessionStartSource>) {
+        self.pending_session_start_source = source;
+    }
+
+    pub(crate) fn take_pending_session_start_source(&mut self) -> Option<SessionStartSource> {
+        self.pending_session_start_source.take()
     }
 
     // History helpers
@@ -76,16 +80,6 @@ impl SessionState {
         previous_turn_settings: Option<PreviousTurnSettings>,
     ) {
         self.previous_turn_settings = previous_turn_settings;
-    }
-
-    pub(crate) fn set_next_turn_is_first(&mut self, value: bool) {
-        self.next_turn_is_first = value;
-    }
-
-    pub(crate) fn take_next_turn_is_first(&mut self) -> bool {
-        let is_first_turn = self.next_turn_is_first;
-        self.next_turn_is_first = false;
-        is_first_turn
     }
 
     pub(crate) fn clone_history(&self) -> ContextManager {
@@ -189,18 +183,6 @@ impl SessionState {
         self.startup_prewarm.take()
     }
 
-    pub(crate) fn agent_task(&self) -> Option<RegisteredAgentTask> {
-        self.agent_task.clone()
-    }
-
-    pub(crate) fn set_agent_task(&mut self, agent_task: RegisteredAgentTask) {
-        self.agent_task = Some(agent_task);
-    }
-
-    pub(crate) fn clear_agent_task(&mut self) {
-        self.agent_task = None;
-    }
-
     // Adds connector IDs to the active set and returns the merged selection.
     pub(crate) fn merge_connector_selection<I>(&mut self, connector_ids: I) -> HashSet<String>
     where
@@ -218,19 +200,6 @@ impl SessionState {
     // Removes all currently tracked connector selections.
     pub(crate) fn clear_connector_selection(&mut self) {
         self.active_connector_selection.clear();
-    }
-
-    pub(crate) fn set_pending_session_start_source(
-        &mut self,
-        value: Option<codex_hooks::SessionStartSource>,
-    ) {
-        self.pending_session_start_source = value;
-    }
-
-    pub(crate) fn take_pending_session_start_source(
-        &mut self,
-    ) -> Option<codex_hooks::SessionStartSource> {
-        self.pending_session_start_source.take()
     }
 
     pub(crate) fn record_granted_permissions(&mut self, permissions: PermissionProfile) {

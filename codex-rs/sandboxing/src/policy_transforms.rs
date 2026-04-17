@@ -57,6 +57,7 @@ pub fn normalize_additional_permissions(
     Ok(PermissionProfile {
         network,
         file_system,
+        macos: None,
     })
 }
 
@@ -101,6 +102,7 @@ pub fn merge_permission_profiles(
             Some(PermissionProfile {
                 network,
                 file_system,
+                macos: None,
             })
             .filter(|permissions| !permissions.is_empty())
         }
@@ -140,6 +142,7 @@ pub fn intersect_permission_profiles(
     PermissionProfile {
         network,
         file_system,
+        macos: None,
     }
 }
 

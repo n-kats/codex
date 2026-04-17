@@ -6,7 +6,7 @@ use core_test_support::test_codex_exec::test_codex_exec;
 use predicates::str::contains;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn exec_appends_piped_stdin_to_prompt_argument() -> anyhow::Result<()> {
+async fn exec_ignores_piped_stdin_when_prompt_argument_is_present() -> anyhow::Result<()> {
     let test = test_codex_exec();
     let server = responses::start_mock_server().await;
     let body = responses::sse(vec![
@@ -31,9 +31,9 @@ async fn exec_appends_piped_stdin_to_prompt_argument() -> anyhow::Result<()> {
     let request = response_mock.single_request();
     assert!(
         request.has_message_with_input_texts("user", |texts| {
-            texts == ["Summarize this concisely\n\n<stdin>\nmy output\n</stdin>".to_string()]
+            texts == ["Summarize this concisely".to_string()]
         }),
-        "request should include a user message with the prompt plus piped stdin context"
+        "request should include only the prompt when stdin is piped separately"
     );
 
     Ok(())

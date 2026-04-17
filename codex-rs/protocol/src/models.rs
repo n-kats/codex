@@ -162,12 +162,58 @@ impl NetworkPermissions {
 pub struct PermissionProfile {
     pub network: Option<NetworkPermissions>,
     pub file_system: Option<FileSystemPermissions>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub macos: Option<MacOsSeatbeltProfileExtensions>,
 }
 
 impl PermissionProfile {
     pub fn is_empty(&self) -> bool {
-        self.network.is_none() && self.file_system.is_none()
+        self.network.is_none() && self.file_system.is_none() && self.macos.is_none()
     }
+}
+
+#[derive(Debug, Clone, Default, Eq, Hash, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MacOsPreferencesPermission {
+    #[default]
+    None,
+    ReadOnly,
+    ReadWrite,
+}
+
+#[derive(Debug, Clone, Eq, Hash, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MacOsAutomationPermission {
+    None,
+    All,
+    BundleIds(Vec<String>),
+}
+
+impl Default for MacOsAutomationPermission {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Debug, Clone, Default, Eq, Hash, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MacOsContactsPermission {
+    #[default]
+    None,
+    ReadOnly,
+    ReadWrite,
+}
+
+#[derive(Debug, Clone, Default, Eq, Hash, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct MacOsSeatbeltProfileExtensions {
+    pub macos_preferences: MacOsPreferencesPermission,
+    pub macos_automation: MacOsAutomationPermission,
+    pub macos_launch_services: bool,
+    pub macos_accessibility: bool,
+    pub macos_calendar: bool,
+    pub macos_reminders: bool,
+    pub macos_contacts: MacOsContactsPermission,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema, TS)]
@@ -1613,6 +1659,7 @@ mod tests {
         let permission_profile = PermissionProfile {
             network: Some(NetworkPermissions { enabled: None }),
             file_system: None,
+            macos: None,
         };
         assert_eq!(permission_profile.is_empty(), false);
     }

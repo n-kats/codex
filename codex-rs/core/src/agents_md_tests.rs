@@ -35,7 +35,7 @@ async fn make_config(root: &TempDir, limit: usize, instructions: Option<&str>) -
         .await
         .expect("defaults for test should always succeed");
 
-    config.cwd = root.abs();
+    config.cwd = root.abs().to_path_buf();
     config.project_doc_max_bytes = limit;
 
     config.user_instructions = instructions.map(ToOwned::to_owned);
@@ -79,7 +79,7 @@ async fn make_config_with_project_root_markers(
         .await
         .expect("defaults for test should always succeed");
 
-    config.cwd = root.abs();
+    config.cwd = root.abs().to_path_buf();
     config.project_doc_max_bytes = limit;
     config.user_instructions = instructions.map(ToOwned::to_owned);
     config
@@ -168,7 +168,7 @@ async fn finds_doc_in_repo_root() {
 
     // Build config pointing at the nested dir.
     let mut cfg = make_config(&repo, /*limit*/ 4096, /*instructions*/ None).await;
-    cfg.cwd = nested.abs();
+    cfg.cwd = nested.abs().to_path_buf();
 
     let res = get_user_instructions(&cfg).await.expect("doc expected");
     assert_eq!(res, "root level doc");
@@ -287,7 +287,7 @@ async fn concatenates_root_and_cwd_docs() {
     fs::write(nested.join("AGENTS.md"), "crate doc").unwrap();
 
     let mut cfg = make_config(&repo, /*limit*/ 4096, /*instructions*/ None).await;
-    cfg.cwd = nested.abs();
+    cfg.cwd = nested.abs().to_path_buf();
 
     let res = get_user_instructions(&cfg).await.expect("doc expected");
     assert_eq!(res, "root doc\n\ncrate doc");
@@ -310,7 +310,7 @@ async fn project_root_markers_are_honored_for_agents_discovery() {
         &[".codex-root"],
     )
     .await;
-    cfg.cwd = nested.abs();
+    cfg.cwd = nested.abs().to_path_buf();
 
     let discovery = agents_md_paths(&cfg).await.expect("discover paths");
     let expected_parent = AbsolutePathBuf::try_from(

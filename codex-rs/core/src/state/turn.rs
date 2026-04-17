@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 //! Turn-scoped state and active turn metadata scaffolding.
 
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
@@ -218,6 +220,11 @@ impl TurnState {
             std::mem::swap(&mut ret, &mut self.pending_input);
             ret
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_input_snapshot(&self) -> Vec<ResponseInputItem> {
+        self.pending_input.clone()
     }
 
     pub(crate) fn has_pending_input(&self) -> bool {

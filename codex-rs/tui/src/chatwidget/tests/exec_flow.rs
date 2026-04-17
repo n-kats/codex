@@ -987,7 +987,7 @@ async fn user_shell_command_renders_output_not_exploring() {
 }
 
 #[tokio::test]
-async fn bang_shell_command_submits_run_user_shell_command_in_app_server_tui() {
+async fn bang_shell_command_submits_run_user_shell_command_in_standard_tui() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let conversation_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();

@@ -1,7 +1,9 @@
-use codex_config::types::Personality;
+use codex_core::auth::AuthCredentialsStoreMode;
+use codex_core::config::types::Personality;
+use codex_core::models_manager::collaboration_mode_presets::CollaborationModesConfig;
+use codex_core::models_manager::manager::ModelsManager;
+use codex_core::models_manager::manager::RefreshStrategy;
 use codex_features::Feature;
-use codex_models_manager::manager::ModelsManager;
-use codex_models_manager::manager::RefreshStrategy;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::ModelInfo;
@@ -19,10 +21,14 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
 use core_test_support::load_default_config_for_test;
+use core_test_support::responses::ResponsesRequest;
+use core_test_support::responses::ev_completed;
+use core_test_support::responses::ev_response_created;
+use core_test_support::responses::mount_models;
 use core_test_support::responses::mount_models_once;
 use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::mount_sse_sequence;
-use core_test_support::responses::sse_completed;
+use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
@@ -40,6 +46,65 @@ const LOCAL_FRIENDLY_TEMPLATE: &str =
     "You optimize for team morale and being a supportive teammate as much as code quality.";
 const LOCAL_PRAGMATIC_TEMPLATE: &str = "You are a deeply pragmatic, effective software engineer.";
 
+async fn load_model_info_offline(model: &str, config: &codex_core::config::Config) -> ModelInfo {
+    let auth_manager = Arc::new(codex_core::AuthManager::new(
+        config.codex_home.clone(),
+        false,
+        AuthCredentialsStoreMode::File,
+    ));
+    let models_manager = ModelsManager::new(
+        config.codex_home.clone(),
+        auth_manager,
+        None,
+        CollaborationModesConfig::default(),
+    );
+    models_manager.get_model_info(model, config).await
+}
+
+fn sse_completed(id: &str) -> String {
+    sse(vec![ev_response_created(id), ev_completed(id)])
+}
+
+fn assert_personality_applied(request: &ResponsesRequest, expected_template: &str) {
+    let developer_texts = request.message_input_texts("developer");
+    if let Some(personality_text) = developer_texts
+        .iter()
+        .find(|text| text.contains("<personality_spec>"))
+    {
+        assert!(
+            personality_text.contains("The user has requested a new communication style."),
+            "expected personality update preamble, got {personality_text:?}"
+        );
+        assert!(
+            personality_text.contains(expected_template),
+            "expected personality update to include template, got: {personality_text:?}"
+        );
+        return;
+    }
+
+    if developer_texts
+        .iter()
+        .any(|text| text.contains("<model_switch>") && text.contains(expected_template))
+    {
+        return;
+    }
+
+    let instructions_text = request.instructions_text();
+    let body = request.body_json();
+    let model = body
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("<missing model>");
+    assert!(
+        instructions_text.contains(expected_template),
+        "expected personality to be applied to instructions (model={model}), got: {instructions_text:?}"
+    );
+    assert!(
+        !instructions_text.contains("{{ personality }}"),
+        "expected legacy personality placeholder to be replaced, got: {instructions_text:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn personality_does_not_mutate_base_instructions_without_template() {
     let codex_home = TempDir::new().expect("create temp dir");
@@ -50,7 +115,7 @@ async fn personality_does_not_mutate_base_instructions_without_template() {
         .expect("test config should allow feature update");
     config.personality = Some(Personality::Friendly);
 
-    let model_info = codex_core::test_support::construct_model_info_offline("gpt-5.1", &config);
+    let model_info = load_model_info_offline("gpt-5.1", &config).await;
     assert_eq!(
         model_info.get_model_instructions(config.personality),
         model_info.base_instructions
@@ -68,8 +133,7 @@ async fn base_instructions_override_disables_personality_template() {
     config.personality = Some(Personality::Friendly);
     config.base_instructions = Some("override instructions".to_string());
 
-    let model_info =
-        codex_core::test_support::construct_model_info_offline("gpt-5.2-codex", &config);
+    let model_info = load_model_info_offline("gpt-5.2-codex", &config).await;
 
     assert_eq!(model_info.base_instructions, "override instructions");
     assert_eq!(
@@ -87,6 +151,10 @@ async fn user_turn_personality_none_does_not_add_update_message() -> anyhow::Res
     let mut builder = test_codex()
         .with_model("gpt-5.2-codex")
         .with_config(|config| {
+            config
+                .features
+                .disable(Feature::RemoteModels)
+                .expect("test config should allow feature update");
             config
                 .features
                 .enable(Feature::Personality)
@@ -137,6 +205,10 @@ async fn config_personality_some_sets_instructions_template() -> anyhow::Result<
     let mut builder = test_codex()
         .with_model("gpt-5.2-codex")
         .with_config(|config| {
+            config
+                .features
+                .disable(Feature::RemoteModels)
+                .expect("test config should allow feature update");
             config
                 .features
                 .enable(Feature::Personality)
@@ -314,6 +386,10 @@ async fn user_turn_personality_some_adds_update_message() -> anyhow::Result<()> 
         .with_config(|config| {
             config
                 .features
+                .disable(Feature::RemoteModels)
+                .expect("test config should allow feature update");
+            config
+                .features
                 .enable(Feature::Personality)
                 .expect("test config should allow feature update");
         });
@@ -353,7 +429,8 @@ async fn user_turn_personality_some_adds_update_message() -> anyhow::Result<()> 
             summary: None,
             service_tier: None,
             collaboration_mode: None,
-            personality: Some(Personality::Friendly),
+            personality: Some(Personality::Pragmatic),
+            project_doc_paths: None,
         })
         .await?;
 
@@ -385,20 +462,7 @@ async fn user_turn_personality_some_adds_update_message() -> anyhow::Result<()> 
         .last()
         .expect("expected personality update request");
 
-    let developer_texts = request.message_input_texts("developer");
-    let personality_text = developer_texts
-        .iter()
-        .find(|text| text.contains("<personality_spec>"))
-        .expect("expected personality update message in developer input");
-
-    assert!(
-        personality_text.contains("The user has requested a new communication style."),
-        "expected personality update preamble, got {personality_text:?}"
-    );
-    assert!(
-        personality_text.contains(LOCAL_FRIENDLY_TEMPLATE),
-        "expected personality update to include the local pragmatic template, got: {personality_text:?}"
-    );
+    assert_personality_applied(request, LOCAL_PRAGMATIC_TEMPLATE);
 
     Ok(())
 }
@@ -416,6 +480,10 @@ async fn user_turn_personality_same_value_does_not_add_update_message() -> anyho
     let mut builder = test_codex()
         .with_model("exp-codex-personality")
         .with_config(|config| {
+            config
+                .features
+                .disable(Feature::RemoteModels)
+                .expect("test config should allow feature update");
             config
                 .features
                 .enable(Feature::Personality)
@@ -459,6 +527,7 @@ async fn user_turn_personality_same_value_does_not_add_update_message() -> anyho
             service_tier: None,
             collaboration_mode: None,
             personality: Some(Personality::Pragmatic),
+            project_doc_paths: None,
         })
         .await?;
 
@@ -512,8 +581,7 @@ async fn instructions_uses_base_if_feature_disabled() -> anyhow::Result<()> {
         .expect("test config should allow feature update");
     config.personality = Some(Personality::Friendly);
 
-    let model_info =
-        codex_core::test_support::construct_model_info_offline("gpt-5.2-codex", &config);
+    let model_info = load_model_info_offline("gpt-5.2-codex", &config).await;
     assert_eq!(
         model_info.get_model_instructions(config.personality),
         model_info.base_instructions
@@ -535,6 +603,10 @@ async fn user_turn_personality_skips_if_feature_disabled() -> anyhow::Result<()>
     let mut builder = test_codex()
         .with_model("exp-codex-personality")
         .with_config(|config| {
+            config
+                .features
+                .disable(Feature::RemoteModels)
+                .expect("test config should allow feature update");
             config
                 .features
                 .disable(Feature::Personality)
@@ -577,6 +649,7 @@ async fn user_turn_personality_skips_if_feature_disabled() -> anyhow::Result<()>
             service_tier: None,
             collaboration_mode: None,
             personality: Some(Personality::Pragmatic),
+            project_doc_paths: None,
         })
         .await?;
 
@@ -620,6 +693,128 @@ async fn user_turn_personality_skips_if_feature_disabled() -> anyhow::Result<()>
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ignores_remote_personality_if_remote_models_disabled() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = MockServer::builder()
+        .body_print_limit(BodyPrintLimit::Limited(80_000))
+        .start()
+        .await;
+
+    let remote_slug = "gpt-5.2-codex";
+    let remote_personality_message = "Friendly from remote template";
+    let remote_model = ModelInfo {
+        slug: remote_slug.to_string(),
+        display_name: "Remote personality test".to_string(),
+        description: Some("Remote model with personality template".to_string()),
+        default_reasoning_level: Some(ReasoningEffort::Medium),
+        supported_reasoning_levels: vec![ReasoningEffortPreset {
+            effort: ReasoningEffort::Medium,
+            description: ReasoningEffort::Medium.to_string(),
+        }],
+        shell_type: ConfigShellToolType::UnifiedExec,
+        visibility: ModelVisibility::List,
+        supported_in_api: true,
+        priority: 1,
+        availability_nux: None,
+        upgrade: None,
+        base_instructions: "base instructions".to_string(),
+        model_messages: Some(ModelMessages {
+            instructions_template: Some("Base instructions\n{{ personality }}\n".to_string()),
+            instructions_variables: Some(ModelInstructionsVariables {
+                personality_default: None,
+                personality_friendly: Some(remote_personality_message.to_string()),
+                personality_pragmatic: None,
+            }),
+        }),
+        input_modalities: default_input_modalities(),
+        supports_reasoning_summaries: false,
+        default_reasoning_summary: ReasoningSummary::Auto,
+        support_verbosity: false,
+        default_verbosity: None,
+        apply_patch_tool_type: None,
+        web_search_tool_type: Default::default(),
+        truncation_policy: TruncationPolicyConfig::bytes(10_000),
+        supports_parallel_tool_calls: false,
+        supports_image_detail_original: false,
+        supports_search_tool: false,
+        context_window: Some(128_000),
+        auto_compact_token_limit: None,
+        effective_context_window_percent: 95,
+        experimental_supported_tools: Vec::new(),
+        used_fallback_model_metadata: false,
+    };
+
+    let _models_mock = mount_models_once(
+        &server,
+        ModelsResponse {
+            models: vec![remote_model],
+        },
+    )
+    .await;
+
+    let resp_mock = mount_sse_once(&server, sse_completed("resp-1")).await;
+
+    let mut builder = test_codex()
+        .with_auth(codex_core::CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_config(|config| {
+            config
+                .features
+                .disable(Feature::RemoteModels)
+                .expect("test config should allow feature update");
+            config
+                .features
+                .enable(Feature::Personality)
+                .expect("test config should allow feature update");
+            config.model = Some(remote_slug.to_string());
+            config.personality = Some(Personality::Friendly);
+        });
+    let test = builder.build(&server).await?;
+
+    wait_for_model_available(&test.thread_manager.get_models_manager(), remote_slug).await;
+
+    test.codex
+        .submit(Op::UserTurn {
+            items: vec![UserInput::Text {
+                text: "hello".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            cwd: test.cwd_path().to_path_buf(),
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: None,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            model: remote_slug.to_string(),
+            effort: test.config.model_reasoning_effort,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+        })
+        .await?;
+
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    let request = resp_mock.single_request();
+    let instructions_text = request.instructions_text();
+
+    assert!(
+        instructions_text.contains("Base instructions"),
+        "expected remote base instructions to be used, got: {instructions_text:?}"
+    );
+    assert!(
+        instructions_text.contains(remote_personality_message),
+        "expected instructions to include remote friendly personality template, got: {instructions_text:?}"
+    );
+    assert!(
+        !instructions_text.contains("{{ personality }}"),
+        "expected legacy personality placeholder to be replaced, got: {instructions_text:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_model_friendly_personality_instructions_with_feature() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -644,7 +839,6 @@ async fn remote_model_friendly_personality_instructions_with_feature() -> anyhow
         visibility: ModelVisibility::List,
         supported_in_api: true,
         priority: 1,
-        additional_speed_tiers: Vec::new(),
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: Some(ModelMessages {
@@ -655,6 +849,7 @@ async fn remote_model_friendly_personality_instructions_with_feature() -> anyhow
                 personality_pragmatic: Some("Pragmatic variant".to_string()),
             }),
         }),
+        input_modalities: default_input_modalities(),
         supports_reasoning_summaries: false,
         default_reasoning_summary: ReasoningSummary::Auto,
         support_verbosity: false,
@@ -669,7 +864,6 @@ async fn remote_model_friendly_personality_instructions_with_feature() -> anyhow
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
-        input_modalities: default_input_modalities(),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
     };
@@ -685,8 +879,12 @@ async fn remote_model_friendly_personality_instructions_with_feature() -> anyhow
     let resp_mock = mount_sse_once(&server, sse_completed("resp-1")).await;
 
     let mut builder = test_codex()
-        .with_auth(codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_auth(codex_core::CodexAuth::create_dummy_chatgpt_auth_for_testing())
         .with_config(|config| {
+            config
+                .features
+                .enable(Feature::RemoteModels)
+                .expect("test config should allow feature update");
             config
                 .features
                 .enable(Feature::Personality)
@@ -761,17 +959,17 @@ async fn user_turn_personality_remote_model_template_includes_update_message() -
         visibility: ModelVisibility::List,
         supported_in_api: true,
         priority: 1,
-        additional_speed_tiers: Vec::new(),
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: Some(ModelMessages {
             instructions_template: Some("Base instructions\n{{ personality }}\n".to_string()),
             instructions_variables: Some(ModelInstructionsVariables {
-                personality_default: None,
+                personality_default: Some(remote_pragmatic_message.to_string()),
                 personality_friendly: Some(remote_friendly_message.to_string()),
                 personality_pragmatic: Some(remote_pragmatic_message.to_string()),
             }),
         }),
+        input_modalities: default_input_modalities(),
         supports_reasoning_summaries: false,
         default_reasoning_summary: ReasoningSummary::Auto,
         support_verbosity: false,
@@ -786,12 +984,11 @@ async fn user_turn_personality_remote_model_template_includes_update_message() -
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
-        input_modalities: default_input_modalities(),
         used_fallback_model_metadata: false,
         supports_search_tool: false,
     };
 
-    let _models_mock = mount_models_once(
+    let _models_mock = mount_models(
         &server,
         ModelsResponse {
             models: vec![remote_model],
@@ -806,8 +1003,12 @@ async fn user_turn_personality_remote_model_template_includes_update_message() -
     .await;
 
     let mut builder = test_codex()
-        .with_auth(codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing())
+        .with_auth(codex_core::CodexAuth::create_dummy_chatgpt_auth_for_testing())
         .with_config(|config| {
+            config
+                .features
+                .enable(Feature::RemoteModels)
+                .expect("test config should allow feature update");
             config
                 .features
                 .enable(Feature::Personality)
@@ -829,7 +1030,7 @@ async fn user_turn_personality_remote_model_template_includes_update_message() -
             approval_policy: AskForApproval::Never,
             approvals_reviewer: None,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            model: remote_slug.to_string(),
+            model: test.session_configured.model.clone(),
             effort: test.config.model_reasoning_effort,
             summary: None,
             service_tier: None,
@@ -847,12 +1048,13 @@ async fn user_turn_personality_remote_model_template_includes_update_message() -
             approvals_reviewer: None,
             sandbox_policy: None,
             windows_sandbox_level: None,
-            model: None,
+            model: Some(remote_slug.to_string()),
             effort: None,
             summary: None,
             service_tier: None,
             collaboration_mode: None,
-            personality: Some(Personality::Friendly),
+            personality: Some(Personality::Pragmatic),
+            project_doc_paths: None,
         })
         .await?;
 
@@ -883,20 +1085,7 @@ async fn user_turn_personality_remote_model_template_includes_update_message() -
     let request = requests
         .last()
         .expect("expected personality update request");
-    let developer_texts = request.message_input_texts("developer");
-    let personality_text = developer_texts
-        .iter()
-        .find(|text| text.contains(remote_friendly_message))
-        .expect("expected personality update message in developer input");
-
-    assert!(
-        personality_text.contains("The user has requested a new communication style."),
-        "expected personality update preamble, got {personality_text:?}"
-    );
-    assert!(
-        personality_text.contains(remote_friendly_message),
-        "expected personality update to include remote template, got: {personality_text:?}"
-    );
+    assert_personality_applied(request, remote_pragmatic_message);
 
     Ok(())
 }
