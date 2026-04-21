@@ -146,6 +146,7 @@ fn normalize_additional_permissions_preserves_symlinked_write_paths() {
             read: Some(vec![]),
             write: Some(vec![link_write_dir]),
         }),
+        macos: None,
         ..Default::default()
     })
     .expect("permissions");
@@ -189,6 +190,7 @@ fn intersect_permission_profiles_preserves_explicit_empty_requested_reads() {
             read: Some(vec![]),
             write: Some(vec![path]),
         }),
+        macos: None,
         ..Default::default()
     };
     let granted = requested.clone();
@@ -211,6 +213,7 @@ fn intersect_permission_profiles_drops_ungranted_nonempty_path_requests() {
             read: Some(vec![path]),
             write: None,
         }),
+        macos: None,
         ..Default::default()
     };
 
@@ -232,6 +235,7 @@ fn intersect_permission_profiles_drops_explicit_empty_reads_without_grant() {
             read: Some(vec![]),
             write: Some(vec![path]),
         }),
+        macos: None,
         ..Default::default()
     };
 

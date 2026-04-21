@@ -10,7 +10,7 @@ pub trait AuthProvider: Send + Sync {
     fn add_auth_headers(&self, headers: &mut HeaderMap);
 }
 
-pub(crate) fn add_fedramp_routing_header(headers: &mut HeaderMap) {
+pub fn add_fedramp_routing_header(headers: &mut HeaderMap) {
     headers.insert("X-OpenAI-Fedramp", HeaderValue::from_static("true"));
 }
 

@@ -8,13 +8,14 @@ use std::time::Duration;
 
 use codex_code_mode::CodeModeTurnHost;
 use codex_code_mode::RuntimeResponse;
+use codex_mcp::ToolInfo as PublicToolInfo;
+use codex_protocol::ToolName;
 use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
 use serde_json::Value as JsonValue;
 use tokio_util::sync::CancellationToken;
 
-use crate::client_common::tools::ToolSpec;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::function_tool::FunctionCallError;
@@ -31,6 +32,7 @@ use crate::truncate::formatted_truncate_text_content_items_with_policy;
 use crate::truncate::truncate_function_output_items_with_policy;
 use crate::unified_exec::resolve_max_tokens;
 use codex_features::Feature;
+use codex_tools::ToolSpec;
 use codex_tools::tool_spec_to_code_mode_tool_definition;
 
 pub(crate) use execute_handler::CodeModeExecuteHandler;
@@ -114,7 +116,7 @@ struct CoreTurnHost {
 impl CodeModeTurnHost for CoreTurnHost {
     async fn invoke_tool(
         &self,
-        tool_name: String,
+        tool_name: ToolName,
         input: Option<JsonValue>,
         cancellation_token: CancellationToken,
     ) -> Result<JsonValue, String> {
@@ -265,14 +267,31 @@ async fn build_nested_router(exec: &ExecContext) -> ToolRouter {
         .list_all_tools()
         .await
         .into_iter()
-        .map(|(name, tool_info)| (name, tool_info.tool))
+        .map(|(name, tool_info)| {
+            (
+                name,
+                PublicToolInfo {
+                    server_name: tool_info.server_name,
+                    callable_name: tool_info.tool_name,
+                    callable_namespace: tool_info.tool_namespace,
+                    server_instructions: None,
+                    tool: tool_info.tool,
+                    connector_id: tool_info.connector_id,
+                    connector_name: tool_info.connector_name,
+                    plugin_display_names: tool_info.plugin_display_names,
+                    connector_description: tool_info.connector_description,
+                },
+            )
+        })
         .collect();
 
     ToolRouter::from_config(
         &nested_tools_config,
         ToolRouterParams {
             mcp_tools: Some(mcp_tools),
-            app_tools: None,
+            deferred_mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: std::collections::HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: exec.turn.dynamic_tools.as_slice(),
         },
@@ -282,37 +301,44 @@ async fn build_nested_router(exec: &ExecContext) -> ToolRouter {
 async fn call_nested_tool(
     exec: ExecContext,
     tool_runtime: ToolCallRuntime,
-    tool_name: String,
+    tool_name: ToolName,
     input: Option<JsonValue>,
     cancellation_token: CancellationToken,
 ) -> Result<JsonValue, FunctionCallError> {
-    if tool_name == PUBLIC_TOOL_NAME {
+    let tool_name_string = tool_name.to_string();
+    if tool_name_string == PUBLIC_TOOL_NAME {
         return Err(FunctionCallError::RespondToModel(format!(
             "{PUBLIC_TOOL_NAME} cannot invoke itself"
         )));
     }
 
-    let payload =
-        if let Some((server, tool)) = exec.session.parse_mcp_tool_name(&tool_name, &None).await {
-            match serialize_function_tool_arguments(&tool_name, input) {
-                Ok(raw_arguments) => ToolPayload::Mcp {
-                    server,
-                    tool,
-                    raw_arguments,
-                },
-                Err(error) => return Err(FunctionCallError::RespondToModel(error)),
-            }
-        } else {
-            match build_nested_tool_payload(tool_runtime.find_spec(&tool_name), &tool_name, input) {
-                Ok(payload) => payload,
-                Err(error) => return Err(FunctionCallError::RespondToModel(error)),
-            }
-        };
+    let payload = if let Some((server, tool)) = exec
+        .session
+        .parse_mcp_tool_name(&tool_name_string, &None)
+        .await
+    {
+        match serialize_function_tool_arguments(&tool_name_string, input) {
+            Ok(raw_arguments) => ToolPayload::Mcp {
+                server,
+                tool,
+                raw_arguments,
+            },
+            Err(error) => return Err(FunctionCallError::RespondToModel(error)),
+        }
+    } else {
+        match build_nested_tool_payload(
+            tool_runtime.find_spec(&tool_name),
+            &tool_name_string,
+            input,
+        ) {
+            Ok(payload) => payload,
+            Err(error) => return Err(FunctionCallError::RespondToModel(error)),
+        }
+    };
 
     let call = ToolCall {
-        tool_name: tool_name.clone(),
+        tool_name,
         call_id: format!("{PUBLIC_TOOL_NAME}-{}", uuid::Uuid::new_v4()),
-        tool_namespace: None,
         payload,
     };
     let result = tool_runtime

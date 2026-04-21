@@ -4,10 +4,6 @@ use std::path::Path;
 use crate::apply_patch;
 use crate::apply_patch::InternalApplyPatchInvocation;
 use crate::apply_patch::convert_apply_patch_to_protocol;
-use crate::client_common::tools::FreeformTool;
-use crate::client_common::tools::FreeformToolFormat;
-use crate::client_common::tools::ResponsesApiTool;
-use crate::client_common::tools::ToolSpec;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::function_tool::FunctionCallError;
@@ -26,16 +22,22 @@ use crate::tools::registry::ToolKind;
 use crate::tools::runtimes::apply_patch::ApplyPatchRequest;
 use crate::tools::runtimes::apply_patch::ApplyPatchRuntime;
 use crate::tools::sandboxing::ToolCtx;
-use crate::tools::spec::ApplyPatchToolArgs;
-use crate::tools::spec::JsonSchema;
 use async_trait::async_trait;
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
+use codex_exec_server::ExecutorFileSystem;
+use codex_exec_server::FileSystemSandboxContext;
 use codex_protocol::models::FileSystemPermissions;
 use codex_protocol::models::PermissionProfile;
 use codex_sandboxing::policy_transforms::effective_file_system_sandbox_policy;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use codex_sandboxing::policy_transforms::normalize_additional_permissions;
+use codex_tools::ApplyPatchToolArgs;
+use codex_tools::FreeformTool;
+use codex_tools::FreeformToolFormat;
+use codex_tools::JsonSchema;
+use codex_tools::ResponsesApiTool;
+use codex_tools::ToolSpec;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -65,7 +67,7 @@ fn file_paths_for_action(action: &ApplyPatchAction) -> Vec<AbsolutePathBuf> {
 }
 
 fn to_abs_path(cwd: &Path, path: &Path) -> Option<AbsolutePathBuf> {
-    AbsolutePathBuf::resolve_path_against_base(path, cwd).ok()
+    Some(AbsolutePathBuf::resolve_path_against_base(path, cwd))
 }
 
 fn write_permissions_for_paths(
@@ -92,6 +94,7 @@ fn write_permissions_for_paths(
             read: Some(vec![]),
             write: Some(write_paths),
         }),
+        macos: None,
         ..Default::default()
     })?;
 
@@ -108,6 +111,7 @@ async fn effective_patch_permissions(
     codex_protocol::permissions::FileSystemSandboxPolicy,
 ) {
     let file_paths = file_paths_for_action(action);
+    let cwd = AbsolutePathBuf::from_absolute_path(&turn.cwd).expect("turn cwd must be absolute");
     let granted_permissions = merge_permission_profiles(
         session.granted_session_permissions().await.as_ref(),
         session.granted_turn_permissions().await.as_ref(),
@@ -119,7 +123,7 @@ async fn effective_patch_permissions(
     let effective_additional_permissions = apply_granted_turn_permissions(
         session,
         crate::sandboxing::SandboxPermissions::UseDefault,
-        write_permissions_for_paths(&file_paths, &file_system_sandbox_policy, turn.cwd.as_path()),
+        write_permissions_for_paths(&file_paths, &file_system_sandbox_policy, cwd.as_path()),
     )
     .await;
 
@@ -173,11 +177,25 @@ impl ToolHandler for ApplyPatchHandler {
             }
         };
 
+        let sandbox = turn
+            .environment
+            .is_remote()
+            .then(|| turn.file_system_sandbox_context(None));
+        let filesystem = turn.environment.get_filesystem();
+
         // Re-parse and verify the patch so we can compute changes and approval.
         // Avoid building temporary ExecParams/command vectors; derive directly from inputs.
-        let cwd = turn.cwd.clone();
+        let cwd =
+            AbsolutePathBuf::from_absolute_path(&turn.cwd).expect("turn cwd must be absolute");
         let command = vec!["apply_patch".to_string(), patch_input.clone()];
-        match codex_apply_patch::maybe_parse_apply_patch_verified(&command, &cwd) {
+        match codex_apply_patch::maybe_parse_apply_patch_verified(
+            &command,
+            &cwd,
+            filesystem.as_ref(),
+            sandbox.as_ref(),
+        )
+        .await
+        {
             codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
                 let (file_paths, effective_additional_permissions, file_system_sandbox_policy) =
                     effective_patch_permissions(session.as_ref(), turn.as_ref(), &changes).await;
@@ -188,7 +206,7 @@ impl ToolHandler for ApplyPatchHandler {
                         let content = item?;
                         Ok(ApplyPatchToolOutput::from_text(content))
                     }
-                    InternalApplyPatchInvocation::DelegateToExec(apply) => {
+                    InternalApplyPatchInvocation::DelegateToRuntime(apply) => {
                         let changes = convert_apply_patch_to_protocol(&apply.action);
                         let emitter =
                             ToolEmitter::apply_patch(changes.clone(), apply.auto_approved);
@@ -274,7 +292,20 @@ pub(crate) async fn intercept_apply_patch(
     call_id: &str,
     tool_name: &str,
 ) -> Result<Option<FunctionToolOutput>, FunctionCallError> {
-    match codex_apply_patch::maybe_parse_apply_patch_verified(command, cwd) {
+    let cwd = AbsolutePathBuf::from_absolute_path(cwd).expect("turn cwd must be absolute");
+    let sandbox = turn
+        .environment
+        .is_remote()
+        .then(|| turn.file_system_sandbox_context(None));
+    let filesystem = turn.environment.get_filesystem();
+    match codex_apply_patch::maybe_parse_apply_patch_verified(
+        command,
+        &cwd,
+        filesystem.as_ref(),
+        sandbox.as_ref(),
+    )
+    .await
+    {
         codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
             session
                 .record_model_warning(
@@ -293,7 +324,7 @@ pub(crate) async fn intercept_apply_patch(
                     let content = item?;
                     Ok(Some(FunctionToolOutput::from_text(content, Some(true))))
                 }
-                InternalApplyPatchInvocation::DelegateToExec(apply) => {
+                InternalApplyPatchInvocation::DelegateToRuntime(apply) => {
                     let changes = convert_apply_patch_to_protocol(&apply.action);
                     let emitter = ToolEmitter::apply_patch(changes.clone(), apply.auto_approved);
                     let event_ctx = ToolEventCtx::new(
@@ -379,9 +410,9 @@ pub(crate) fn create_apply_patch_json_tool() -> ToolSpec {
     let mut properties = BTreeMap::new();
     properties.insert(
         "input".to_string(),
-        JsonSchema::String {
-            description: Some(r#"The entire contents of the apply_patch command"#.to_string()),
-        },
+        JsonSchema::string(Some(
+            r#"The entire contents of the apply_patch command"#.to_string(),
+        )),
     );
 
     ToolSpec::Function(ResponsesApiTool {
@@ -457,11 +488,11 @@ It is important to remember:
         .to_string(),
         strict: false,
         defer_loading: None,
-        parameters: JsonSchema::Object {
+        parameters: JsonSchema::object(
             properties,
-            required: Some(vec!["input".to_string()]),
-            additional_properties: Some(false.into()),
-        },
+            Some(vec!["input".to_string()]),
+            Some(false.into()),
+        ),
         output_schema: None,
     })
 }

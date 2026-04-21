@@ -161,7 +161,6 @@ use codex_app_server_protocol::ThreadRealtimeListVoicesParams;
 use codex_app_server_protocol::ThreadRealtimeListVoicesResponse;
 use codex_app_server_protocol::ThreadRealtimeStartParams;
 use codex_app_server_protocol::ThreadRealtimeStartResponse;
-use codex_app_server_protocol::ThreadRealtimeStartTransport;
 use codex_app_server_protocol::ThreadRealtimeStopParams;
 use codex_app_server_protocol::ThreadRealtimeStopResponse;
 use codex_app_server_protocol::ThreadResumeParams;
@@ -224,6 +223,8 @@ use codex_core::config_loader::CloudRequirementsLoader;
 use codex_core::config_loader::LoaderOverrides;
 use codex_core::config_loader::load_config_layers_state;
 use codex_core::config_loader::project_trust_key;
+use codex_core::error::CodexErr;
+use codex_core::error::Result as CodexResult;
 use codex_core::exec::ExecCapturePolicy;
 use codex_core::exec::ExecExpiration;
 use codex_core::exec::ExecParams;
@@ -246,8 +247,6 @@ use codex_core::sandboxing::SandboxPermissions;
 use codex_core::windows_sandbox::WindowsSandboxLevelExt;
 use codex_core::windows_sandbox::WindowsSandboxSetupMode as CoreWindowsSandboxSetupMode;
 use codex_core::windows_sandbox::WindowsSandboxSetupRequest;
-use codex_core_plugins::loader::load_plugin_apps;
-use codex_core_plugins::loader::load_plugin_mcp_servers;
 use codex_core_plugins::manifest::PluginManifestInterface;
 use codex_core_plugins::marketplace::MarketplaceError;
 use codex_core_plugins::marketplace::MarketplacePluginSource;
@@ -284,14 +283,10 @@ use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::dynamic_tools::DynamicToolSpec as CoreDynamicToolSpec;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::ConversationAudioParams;
-use codex_protocol::protocol::ConversationStartParams;
-use codex_protocol::protocol::ConversationStartTransport;
 use codex_protocol::protocol::ConversationTextParams;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GitInfo as CoreGitInfo;
@@ -621,9 +616,14 @@ pub(crate) struct CodexMessageProcessorArgs {
 }
 
 impl CodexMessageProcessor {
-    async fn instruction_sources_from_config(config: &Config) -> Vec<AbsolutePathBuf> {
+    async fn instruction_sources_from_config(&self, config: &Config) -> Vec<AbsolutePathBuf> {
+        let fs = self
+            .thread_manager
+            .current_environment_filesystem()
+            .await
+            .unwrap_or_else(|| LOCAL_FS.clone());
         codex_core::AgentsMdManager::new(config)
-            .instruction_sources(LOCAL_FS.as_ref())
+            .instruction_sources(fs.as_ref())
             .await
     }
 
@@ -2441,9 +2441,11 @@ impl CodexMessageProcessor {
                         | codex_protocol::protocol::SandboxPolicy::ExternalSandbox { .. }
                 ))
         {
-            let trust_target = resolve_root_git_project_for_trust(LOCAL_FS.as_ref(), &config.cwd)
+            let cwd = AbsolutePathBuf::try_from(config.cwd.as_path())
+                .expect("config cwd must be absolute");
+            let trust_target = resolve_root_git_project_for_trust(LOCAL_FS.as_ref(), &cwd)
                 .await
-                .unwrap_or_else(|| config.cwd.clone());
+                .unwrap_or_else(|| cwd.clone());
             let cli_overrides_with_trust;
             let cli_overrides_for_reload = if let Err(err) =
                 codex_core::config::set_project_trust_level(
@@ -2500,7 +2502,7 @@ impl CodexMessageProcessor {
             };
         }
 
-        let instruction_sources = Self::instruction_sources_from_config(&config).await;
+        let instruction_sources = self.instruction_sources_from_config(&config).await;
         let dynamic_tools = dynamic_tools.unwrap_or_default();
         let core_dynamic_tools = if dynamic_tools.is_empty() {
             Vec::new()
@@ -2537,7 +2539,7 @@ impl CodexMessageProcessor {
                     .unwrap_or(codex_app_server_protocol::ThreadStartSource::Startup)
                 {
                     codex_app_server_protocol::ThreadStartSource::Startup => InitialHistory::New,
-                    codex_app_server_protocol::ThreadStartSource::Clear => InitialHistory::Cleared,
+                    codex_app_server_protocol::ThreadStartSource::Clear => InitialHistory::New,
                 },
                 core_dynamic_tools,
                 persist_extended_history,
@@ -4092,7 +4094,7 @@ impl CodexMessageProcessor {
         };
 
         let fallback_model_provider = config.model_provider_id.clone();
-        let instruction_sources = Self::instruction_sources_from_config(&config).await;
+        let instruction_sources = self.instruction_sources_from_config(&config).await;
         let response_history = thread_history.clone();
 
         match self
@@ -4172,7 +4174,8 @@ impl CodexMessageProcessor {
                     model: session_configured.model,
                     model_provider: session_configured.model_provider_id,
                     service_tier: session_configured.service_tier,
-                    cwd: session_configured.cwd,
+                    cwd: AbsolutePathBuf::from_absolute_path_checked(session_configured.cwd)
+                        .expect("session configured cwd must be absolute"),
                     instruction_sources,
                     approval_policy: session_configured.approval_policy.into(),
                     approvals_reviewer: session_configured.approvals_reviewer.into(),
@@ -4356,9 +4359,10 @@ impl CodexMessageProcessor {
                 );
             }
             let mut config_for_instruction_sources = self.config.as_ref().clone();
-            config_for_instruction_sources.cwd = config_snapshot.cwd.clone();
-            let instruction_sources =
-                Self::instruction_sources_from_config(&config_for_instruction_sources).await;
+            config_for_instruction_sources.cwd = config_snapshot.cwd.clone().to_path_buf();
+            let instruction_sources = self
+                .instruction_sources_from_config(&config_for_instruction_sources)
+                .await;
             let thread_summary = match load_thread_summary_for_rollout(
                 &self.config,
                 existing_thread_id,
@@ -4525,7 +4529,7 @@ impl CodexMessageProcessor {
                 thread.preview = preview_from_rollout_items(items);
                 Ok(thread)
             }
-            InitialHistory::New | InitialHistory::Cleared => Err(format!(
+            InitialHistory::New => Err(format!(
                 "failed to build resume response for thread {thread_id}: initial history missing"
             )),
         };
@@ -4672,7 +4676,7 @@ impl CodexMessageProcessor {
         };
 
         let fallback_model_provider = config.model_provider_id.clone();
-        let instruction_sources = Self::instruction_sources_from_config(&config).await;
+        let instruction_sources = self.instruction_sources_from_config(&config).await;
 
         let NewThread {
             thread_id,
@@ -4826,7 +4830,8 @@ impl CodexMessageProcessor {
             model: session_configured.model,
             model_provider: session_configured.model_provider_id,
             service_tier: session_configured.service_tier,
-            cwd: session_configured.cwd,
+            cwd: AbsolutePathBuf::from_absolute_path_checked(session_configured.cwd)
+                .expect("session configured cwd must be absolute"),
             instruction_sources,
             approval_policy: session_configured.approval_policy.into(),
             approvals_reviewer: session_configured.approvals_reviewer.into(),
@@ -6116,23 +6121,7 @@ impl CodexMessageProcessor {
         };
         let skills_manager = self.thread_manager.skills_manager();
         let plugins_manager = self.thread_manager.plugins_manager();
-        let fs = match self.thread_manager.environment_manager().current().await {
-            Ok(Some(environment)) => Some(environment.get_filesystem()),
-            Ok(None) => None,
-            Err(err) => {
-                self.outgoing
-                    .send_error(
-                        request_id,
-                        JSONRPCErrorError {
-                            code: INTERNAL_ERROR_CODE,
-                            message: format!("failed to create environment: {err}"),
-                            data: None,
-                        },
-                    )
-                    .await;
-                return;
-            }
-        };
+        let fs = self.thread_manager.current_environment_filesystem().await;
         let cli_overrides = self.current_cli_overrides();
         let mut data = Vec::new();
         for cwd in cwds {
@@ -6155,7 +6144,6 @@ impl CodexMessageProcessor {
                 }
             };
             let config_layer_stack = match load_config_layers_state(
-                LOCAL_FS.as_ref(),
                 &self.config.codex_home,
                 Some(cwd_abs.clone()),
                 &cli_overrides,
@@ -6552,6 +6540,10 @@ impl CodexMessageProcessor {
 
         match install_result {
             Ok(result) => {
+                let plugin_roots = vec![result.installed_path.clone()];
+                plugins_manager.maybe_start_non_curated_plugin_cache_refresh(&plugin_roots);
+                self.handle_config_mutation();
+
                 let config = match self.load_latest_config(config_cwd).await {
                     Ok(config) => config,
                     Err(err) => {
@@ -6562,10 +6554,17 @@ impl CodexMessageProcessor {
                     }
                 };
 
-                self.clear_plugin_related_caches();
-
-                let plugin_mcp_servers =
-                    load_plugin_mcp_servers(result.installed_path.as_path()).await;
+                let plugin_outcome = plugins_manager.plugins_for_config(&config).await;
+                let installed_plugin_caps = plugin_outcome
+                    .active_plugin_capabilities_by_config_name(result.plugin_id.as_key());
+                if installed_plugin_caps.is_none() {
+                    warn!(
+                        plugin = result.plugin_id.as_key(),
+                        "installed plugin was not present in the refreshed plugin outcome"
+                    );
+                }
+                let (plugin_mcp_servers, plugin_apps) =
+                    installed_plugin_caps.unwrap_or_default();
 
                 if !plugin_mcp_servers.is_empty() {
                     if let Err(err) = self.queue_mcp_server_refresh_for_config(&config).await {
@@ -6578,7 +6577,6 @@ impl CodexMessageProcessor {
                         .await;
                 }
 
-                let plugin_apps = load_plugin_apps(result.installed_path.as_path()).await;
                 let auth = self.auth_manager.auth().await;
                 let apps_needing_auth = if plugin_apps.is_empty()
                     || !config.features.apps_enabled_for_auth(
@@ -7165,20 +7163,7 @@ impl CodexMessageProcessor {
             .submit_core_op(
                 &request_id,
                 thread.as_ref(),
-                Op::RealtimeConversationStart(ConversationStartParams {
-                    output_modality: params.output_modality,
-                    prompt: params.prompt,
-                    session_id: params.session_id,
-                    transport: params.transport.map(|transport| match transport {
-                        ThreadRealtimeStartTransport::Websocket => {
-                            ConversationStartTransport::Websocket
-                        }
-                        ThreadRealtimeStartTransport::Webrtc { sdp } => {
-                            ConversationStartTransport::Webrtc { sdp }
-                        }
-                    }),
-                    voice: params.voice,
-                }),
+                Op::RealtimeConversationStart(params.into()),
             )
             .await;
 
@@ -8132,39 +8117,26 @@ impl CodexMessageProcessor {
             }
             let state_db_ctx = get_state_db(&self.config).await;
             let feedback_thread_ids = match conversation_id {
-                Some(conversation_id) => match self
-                    .thread_manager
-                    .list_agent_subtree_thread_ids(conversation_id)
-                    .await
-                {
-                    Ok(thread_ids) => thread_ids,
-                    Err(err) => {
-                        warn!(
-                            "failed to list feedback subtree for thread_id={conversation_id}: {err}"
-                        );
-                        let mut thread_ids = vec![conversation_id];
-                        if let Some(state_db_ctx) = state_db_ctx.as_ref() {
-                            for status in [
-                                codex_state::DirectionalThreadSpawnEdgeStatus::Open,
-                                codex_state::DirectionalThreadSpawnEdgeStatus::Closed,
-                            ] {
-                                match state_db_ctx
-                                    .list_thread_spawn_descendants_with_status(
-                                        conversation_id,
-                                        status,
-                                    )
-                                    .await
-                                {
-                                    Ok(descendant_ids) => thread_ids.extend(descendant_ids),
-                                    Err(err) => warn!(
-                                        "failed to list persisted feedback subtree for thread_id={conversation_id}: {err}"
-                                    ),
-                                }
+                Some(conversation_id) => {
+                    let mut thread_ids = vec![conversation_id];
+                    if let Some(state_db_ctx) = state_db_ctx.as_ref() {
+                        for status in [
+                            codex_state::DirectionalThreadSpawnEdgeStatus::Open,
+                            codex_state::DirectionalThreadSpawnEdgeStatus::Closed,
+                        ] {
+                            match state_db_ctx
+                                .list_thread_spawn_descendants_with_status(conversation_id, status)
+                                .await
+                            {
+                                Ok(descendant_ids) => thread_ids.extend(descendant_ids),
+                                Err(err) => warn!(
+                                    "failed to list persisted feedback subtree for thread_id={conversation_id}: {err}"
+                                ),
                             }
                         }
-                        thread_ids
                     }
-                },
+                    thread_ids
+                }
                 None => Vec::new(),
             };
             let sqlite_feedback_logs = if let Some(state_db_ctx) = state_db_ctx.as_ref()
@@ -8865,7 +8837,7 @@ fn skills_to_info(
 
 fn plugin_skills_to_info(
     skills: &[codex_core::skills::SkillMetadata],
-    disabled_skill_paths: &std::collections::HashSet<AbsolutePathBuf>,
+    disabled_skill_paths: &std::collections::HashSet<PathBuf>,
 ) -> Vec<SkillSummary> {
     skills
         .iter()
@@ -8884,7 +8856,7 @@ fn plugin_skills_to_info(
                 }
             }),
             path: skill.path_to_skills_md.clone(),
-            enabled: !disabled_skill_paths.contains(&skill.path_to_skills_md),
+            enabled: !disabled_skill_paths.contains(skill.path_to_skills_md.as_path()),
         })
         .collect()
 }
@@ -9416,7 +9388,7 @@ pub(crate) async fn read_rollout_items_from_rollout(
     path: &Path,
 ) -> std::io::Result<Vec<RolloutItem>> {
     let items = match RolloutRecorder::get_rollout_history(path).await? {
-        InitialHistory::New | InitialHistory::Cleared => Vec::new(),
+        InitialHistory::New => Vec::new(),
         InitialHistory::Forked(items) => items,
         InitialHistory::Resumed(resumed) => resumed.history,
     };
@@ -9626,10 +9598,7 @@ fn build_thread_from_snapshot(
     }
 }
 
-pub(crate) fn summary_to_thread(
-    summary: ConversationSummary,
-    fallback_cwd: &AbsolutePathBuf,
-) -> Thread {
+pub(crate) fn summary_to_thread(summary: ConversationSummary, fallback_cwd: &Path) -> Thread {
     let ConversationSummary {
         conversation_id,
         path,
@@ -9657,7 +9626,8 @@ pub(crate) fn summary_to_thread(
                     path = %path.display(),
                     "failed to normalize thread cwd while summarizing thread: {err}"
                 );
-                fallback_cwd.clone()
+                AbsolutePathBuf::from_absolute_path_checked(fallback_cwd)
+                    .expect("fallback cwd must be absolute")
             });
 
     Thread {

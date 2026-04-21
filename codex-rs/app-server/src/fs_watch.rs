@@ -21,7 +21,6 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::time::Instant;
 use tracing::warn;
-use uuid::Uuid;
 
 const FS_CHANGED_NOTIFICATION_DEBOUNCE: Duration = Duration::from_millis(200);
 
@@ -161,7 +160,7 @@ impl FsWatchManager {
         connection_id: ConnectionId,
         params: FsWatchParams,
     ) -> Result<FsWatchResponse, JSONRPCErrorError> {
-        let watch_id = Uuid::now_v7().to_string();
+        let watch_id = params.watch_id.clone();
         let outgoing = self.outgoing.clone();
         let (subscriber, rx) = self.file_watcher.add_subscriber();
         let watch_root = params.path.to_path_buf().clone();
@@ -200,17 +199,10 @@ impl FsWatchManager {
                     .paths
                     .into_iter()
                     .filter_map(|path| {
-                        match AbsolutePathBuf::resolve_path_against_base(&path, &watch_root) {
-                            Ok(path) => Some(path),
-                            Err(err) => {
-                                warn!(
-                                    "failed to normalize watch event path ({}) for {}: {err}",
-                                    path.display(),
-                                    watch_root.display()
-                                );
-                                None
-                            }
-                        }
+                        Some(AbsolutePathBuf::resolve_path_against_base(
+                            &path,
+                            &watch_root,
+                        ))
                     })
                     .collect::<Vec<_>>();
                 changed_paths.sort_by(|left, right| left.as_path().cmp(right.as_path()));
@@ -228,10 +220,7 @@ impl FsWatchManager {
             }
         });
 
-        Ok(FsWatchResponse {
-            watch_id,
-            path: params.path,
-        })
+        Ok(FsWatchResponse { path: params.path })
     }
 
     pub(crate) async fn unwatch(
@@ -269,7 +258,6 @@ mod tests {
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
-    use uuid::Version;
 
     fn absolute_path(path: PathBuf) -> AbsolutePathBuf {
         assert!(
@@ -298,22 +286,22 @@ mod tests {
         let manager = manager_with_noop_watcher();
         let path = absolute_path(head_path);
         let response = manager
-            .watch(ConnectionId(1), FsWatchParams { path: path.clone() })
+            .watch(
+                ConnectionId(1),
+                FsWatchParams {
+                    watch_id: "watch-1".to_string(),
+                    path: path.clone(),
+                },
+            )
             .await
             .expect("watch should succeed");
 
         assert_eq!(response.path, path);
-        let watch_id = Uuid::parse_str(&response.watch_id).expect("watch id should be a UUID");
-        assert_eq!(watch_id.get_version(), Some(Version::SortRand));
-
         let state = manager.state.lock().await;
-        assert_eq!(
-            state.entries.keys().cloned().collect::<HashSet<_>>(),
-            HashSet::from([WatchKey {
-                connection_id: ConnectionId(1),
-                watch_id: response.watch_id,
-            }])
-        );
+        let entries = state.entries.keys().cloned().collect::<HashSet<_>>();
+        assert_eq!(entries.len(), 1);
+        let watch_key = entries.into_iter().next().expect("one watch should exist");
+        assert_eq!(watch_key.connection_id, ConnectionId(1));
     }
 
     #[tokio::test]
@@ -323,25 +311,36 @@ mod tests {
         std::fs::write(&head_path, "ref: refs/heads/main\n").expect("write HEAD");
 
         let manager = manager_with_noop_watcher();
-        let response = manager
+        let _response = manager
             .watch(
                 ConnectionId(1),
                 FsWatchParams {
+                    watch_id: "watch-1".to_string(),
                     path: absolute_path(head_path),
                 },
             )
             .await
             .expect("watch should succeed");
+        let watch_id = {
+            let state = manager.state.lock().await;
+            state
+                .entries
+                .keys()
+                .find(|key| key.connection_id == ConnectionId(1))
+                .expect("watch entry should exist")
+                .watch_id
+                .clone()
+        };
         let watch_key = WatchKey {
             connection_id: ConnectionId(1),
-            watch_id: response.watch_id.clone(),
+            watch_id: watch_id.clone(),
         };
 
         manager
             .unwatch(
                 ConnectionId(2),
                 FsUnwatchParams {
-                    watch_id: response.watch_id.clone(),
+                    watch_id: watch_id.clone(),
                 },
             )
             .await
@@ -349,12 +348,7 @@ mod tests {
         assert!(manager.state.lock().await.entries.contains_key(&watch_key));
 
         manager
-            .unwatch(
-                ConnectionId(1),
-                FsUnwatchParams {
-                    watch_id: response.watch_id,
-                },
-            )
+            .unwatch(ConnectionId(1), FsUnwatchParams { watch_id })
             .await
             .expect("owner unwatch should succeed");
         assert!(!manager.state.lock().await.entries.contains_key(&watch_key));
@@ -371,33 +365,66 @@ mod tests {
         std::fs::write(&packed_refs_path, "refs\n").expect("write packed-refs");
 
         let manager = manager_with_noop_watcher();
-        let response_1 = manager
+        let _response_1 = manager
             .watch(
                 ConnectionId(1),
                 FsWatchParams {
+                    watch_id: "watch-1".to_string(),
                     path: absolute_path(head_path),
                 },
             )
             .await
             .expect("first watch should succeed");
-        let response_2 = manager
+        let _response_2 = manager
             .watch(
                 ConnectionId(1),
                 FsWatchParams {
+                    watch_id: "watch-2".to_string(),
                     path: absolute_path(fetch_head_path),
                 },
             )
             .await
             .expect("second watch should succeed");
-        let response_3 = manager
+        let _response_3 = manager
             .watch(
                 ConnectionId(2),
                 FsWatchParams {
+                    watch_id: "watch-3".to_string(),
                     path: absolute_path(packed_refs_path),
                 },
             )
             .await
             .expect("third watch should succeed");
+        let watch_id_1 = {
+            let state = manager.state.lock().await;
+            state
+                .entries
+                .keys()
+                .find(|key| key.connection_id == ConnectionId(1))
+                .expect("first watch should exist")
+                .watch_id
+                .clone()
+        };
+        let watch_id_2 = {
+            let state = manager.state.lock().await;
+            state
+                .entries
+                .keys()
+                .find(|key| key.connection_id == ConnectionId(1) && key.watch_id != watch_id_1)
+                .expect("second watch should exist")
+                .watch_id
+                .clone()
+        };
+        let watch_id_3 = {
+            let state = manager.state.lock().await;
+            state
+                .entries
+                .keys()
+                .find(|key| key.connection_id == ConnectionId(2))
+                .expect("third watch should exist")
+                .watch_id
+                .clone()
+        };
 
         manager.connection_closed(ConnectionId(1)).await;
 
@@ -412,9 +439,9 @@ mod tests {
                 .collect::<HashSet<_>>(),
             HashSet::from([WatchKey {
                 connection_id: ConnectionId(2),
-                watch_id: response_3.watch_id,
+                watch_id: watch_id_3,
             }])
         );
-        assert_ne!(response_1.watch_id, response_2.watch_id);
+        assert_ne!(watch_id_1, watch_id_2);
     }
 }

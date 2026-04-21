@@ -385,8 +385,11 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
         });
 
         let processor_outgoing = Arc::clone(&outgoing_message_sender);
-        let auth_manager =
-            AuthManager::shared_from_config(args.config.as_ref(), args.enable_codex_api_key_env);
+        let auth_manager = Arc::new(AuthManager::new(
+            args.config.codex_home.clone(),
+            args.enable_codex_api_key_env,
+            args.config.cli_auth_credentials_store_mode,
+        ));
         let (processor_tx, mut processor_rx) = mpsc::channel::<ProcessorCommand>(channel_capacity);
         let mut processor_handle = tokio::spawn(async move {
             let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {

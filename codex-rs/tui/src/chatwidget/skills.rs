@@ -95,7 +95,7 @@ impl ChatWidget {
 
     pub(crate) fn update_skill_enabled(&mut self, path: AbsolutePathBuf, enabled: bool) {
         for skill in &mut self.skills_all {
-            if skill.path == path {
+            if skill.path == path.to_path_buf() {
                 skill.enabled = enabled;
             }
         }
@@ -136,7 +136,9 @@ impl ChatWidget {
     }
 
     pub(crate) fn set_skills_from_response(&mut self, response: &ListSkillsResponseEvent) {
-        let skills = skills_for_cwd(&self.config.cwd, &response.skills);
+        let cwd = AbsolutePathBuf::from_absolute_path(&self.config.cwd)
+            .expect("config cwd must be absolute");
+        let skills = skills_for_cwd(&cwd, &response.skills);
         self.skills_all = skills;
         self.set_skills(Some(enabled_skills_for_mentions(&self.skills_all)));
     }
@@ -198,8 +200,12 @@ fn protocol_skill_to_core(skill: &ProtocolSkillMetadata) -> SkillMetadata {
         interface: skill.interface.clone().map(|interface| SkillInterface {
             display_name: interface.display_name,
             short_description: interface.short_description,
-            icon_small: interface.icon_small,
-            icon_large: interface.icon_large,
+            icon_small: interface
+                .icon_small
+                .map(|path| AbsolutePathBuf::from_absolute_path(path).expect("absolute icon path")),
+            icon_large: interface
+                .icon_large
+                .map(|path| AbsolutePathBuf::from_absolute_path(path).expect("absolute icon path")),
             brand_color: interface.brand_color,
             default_prompt: interface.default_prompt,
         }),
@@ -221,7 +227,8 @@ fn protocol_skill_to_core(skill: &ProtocolSkillMetadata) -> SkillMetadata {
                     .collect(),
             }),
         policy: None,
-        path_to_skills_md: skill.path.clone(),
+        path_to_skills_md: AbsolutePathBuf::from_absolute_path(&skill.path)
+            .expect("skill path must be absolute"),
         scope: skill.scope,
     }
 }

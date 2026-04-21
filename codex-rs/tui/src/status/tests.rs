@@ -85,7 +85,7 @@ async fn token_info_for(
     usage: &TokenUsage,
 ) -> TokenUsageInfo {
     let context_window = models_manager
-        .get_model_info(model_slug, config)
+        .get_model_info(model_slug, &config.to_models_manager_config())
         .await
         .context_window;
     TokenUsageInfo {

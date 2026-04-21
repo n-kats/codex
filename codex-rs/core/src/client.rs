@@ -109,8 +109,6 @@ use codex_login::api_bridge::auth_provider_from_auth;
 use codex_login::auth_env_telemetry::AuthEnvTelemetry;
 use codex_login::auth_env_telemetry::collect_auth_env_telemetry;
 use codex_login::provider_auth::auth_manager_for_provider;
-#[cfg(test)]
-use codex_model_provider_info::DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
 use codex_protocol::error::CodexErr;
@@ -134,8 +132,7 @@ const RESPONSES_ENDPOINT: &str = "/responses";
 const RESPONSES_COMPACT_ENDPOINT: &str = "/responses/compact";
 const MEMORIES_SUMMARIZE_ENDPOINT: &str = "/memories/trace_summarize";
 #[cfg(test)]
-pub(crate) const WEBSOCKET_CONNECT_TIMEOUT: Duration =
-    Duration::from_millis(DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS);
+pub(crate) const WEBSOCKET_CONNECT_TIMEOUT: Duration = Duration::from_millis(15_000);
 
 /// Session-scoped state shared by all [`ModelClient`] clones.
 ///

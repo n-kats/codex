@@ -349,6 +349,7 @@ async fn with_additional_permissions_requires_approval_under_on_request() -> Res
             read: Some(vec![]),
             write: Some(vec![absolute_path(&requested_dir_canonical)]),
         }),
+        macos: None,
         ..Default::default()
     };
     let event = shell_event_with_request_permissions(call_id, command, &requested_permissions)?;
@@ -528,6 +529,7 @@ async fn relative_additional_permissions_resolve_against_tool_workdir() -> Resul
             read: None,
             write: Some(vec![absolute_path(&nested_dir_canonical)]),
         }),
+        macos: None,
         ..Default::default()
     };
     let event = shell_event_with_raw_request_permissions(
@@ -631,6 +633,7 @@ async fn read_only_with_additional_permissions_does_not_widen_to_unrequested_cwd
             read: Some(vec![]),
             write: Some(vec![absolute_path(&requested_write)]),
         }),
+        macos: None,
         ..Default::default()
     };
     let event = shell_event_with_request_permissions(call_id, &command, &requested_permissions)?;
@@ -732,6 +735,7 @@ async fn read_only_with_additional_permissions_does_not_widen_to_unrequested_tmp
             read: Some(vec![]),
             write: Some(vec![absolute_path(&requested_write)]),
         }),
+        macos: None,
         ..Default::default()
     };
     let event = shell_event_with_request_permissions(call_id, &command, &requested_permissions)?;
@@ -934,6 +938,7 @@ async fn with_additional_permissions_denied_approval_blocks_execution() -> Resul
             read: Some(vec![]),
             write: Some(vec![absolute_path(outside_dir.path())]),
         }),
+        macos: None,
         ..Default::default()
     };
     let normalized_requested_permissions = PermissionProfile {
@@ -943,6 +948,7 @@ async fn with_additional_permissions_denied_approval_blocks_execution() -> Resul
                 outside_dir.path().canonicalize()?,
             )?]),
         }),
+        macos: None,
         ..Default::default()
     };
     let event = shell_event_with_request_permissions(call_id, &command, &requested_permissions)?;
@@ -1530,6 +1536,7 @@ async fn partial_request_permissions_grants_do_not_preapprove_new_permissions() 
                 AbsolutePathBuf::try_from(second_dir.path().canonicalize()?)?,
             ]),
         }),
+        macos: None,
         ..Default::default()
     };
 

@@ -10,6 +10,7 @@ use crate::config_loader::layer_io::LoadedConfigLayers;
 use codex_app_server_protocol::ConfigLayerSource;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::ConfigRequirementsWithSources;
+use codex_exec_server::LOCAL_FS;
 use codex_git_utils::resolve_root_git_project_for_trust;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::TrustLevel;
@@ -145,7 +146,7 @@ pub async fn load_config_layers_state(
     // Make a best-effort to support the legacy `managed_config.toml` as a
     // requirements specification.
     let loaded_config_layers =
-        layer_io::load_config_layers_internal(codex_home, &overrides).await?;
+        layer_io::load_config_layers_internal(LOCAL_FS.as_ref(), codex_home, &overrides).await?;
     load_requirements_from_legacy_scheme(
         &mut config_requirements_toml,
         loaded_config_layers.clone(),
@@ -188,7 +189,7 @@ pub async fn load_config_layers_state(
     // flag) or disabled entirely.
     let user_config_file = match &overrides.user_config_path {
         Some(path) => AbsolutePathBuf::try_from(path.as_path())?,
-        None => AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home)?,
+        None => AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home),
     };
     if !overrides.disable_user_config {
         let user_layer = load_config_toml_for_required_layer(&user_config_file, |config_toml| {
@@ -655,11 +656,11 @@ async fn project_trust_context(
     let project_root = find_project_root(cwd, project_root_markers).await?;
     let projects = project_trust_config.projects.unwrap_or_default();
 
-    let project_root_key = project_root.as_path().to_string_lossy().to_string();
-    let repo_root = resolve_root_git_project_for_trust(cwd.as_path());
+    let project_root_key = project_trust_key(project_root.as_path());
+    let repo_root = resolve_root_git_project_for_trust(LOCAL_FS.as_ref(), cwd).await;
     let repo_root_key = repo_root
         .as_ref()
-        .map(|root| root.to_string_lossy().to_string());
+        .map(|root| project_trust_key(root.as_path()));
 
     let projects_trust = projects
         .into_iter()
@@ -673,6 +674,17 @@ async fn project_trust_context(
         projects_trust,
         user_config_file: user_config_file.clone(),
     })
+}
+
+/// Canonicalize a project path for use as a key in the projects trust map.
+///
+/// On Windows, attempts to normalize UNC paths so the same location maps to
+/// the same key regardless of path spelling.
+pub fn project_trust_key(project_path: &Path) -> String {
+    normalize_path(project_path)
+        .unwrap_or_else(|_| project_path.to_path_buf())
+        .to_string_lossy()
+        .to_string()
 }
 
 /// Takes a `toml::Value` parsed from a config.toml file and walks through it,
@@ -803,7 +815,7 @@ async fn load_project_layers(
         if dot_codex_abs == codex_home_abs || dot_codex_normalized == codex_home_normalized {
             continue;
         }
-        let config_file = dot_codex_abs.join(CONFIG_TOML_FILE)?;
+        let config_file = dot_codex_abs.join(CONFIG_TOML_FILE);
         match tokio::fs::read_to_string(&config_file).await {
             Ok(contents) => {
                 let config: TomlValue = match toml::from_str(&contents) {
@@ -934,7 +946,7 @@ foo = "xyzzy"
         expected_toml_value.insert(
             "model_instructions_file".to_string(),
             TomlValue::String(
-                AbsolutePathBuf::resolve_path_against_base("./some_file.md", base_dir)?
+                AbsolutePathBuf::resolve_path_against_base("./some_file.md", base_dir)
                     .as_path()
                     .to_string_lossy()
                     .to_string(),

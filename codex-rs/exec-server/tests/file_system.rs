@@ -479,6 +479,7 @@ async fn file_system_sandboxed_write_allows_additional_write_root(use_remote: bo
             read: None,
             write: Some(vec![absolute_path(writable_dir)]),
         }),
+        macos: None,
     });
 
     file_system

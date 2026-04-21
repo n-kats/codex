@@ -36,9 +36,10 @@ use crate::tools::runtimes::shell::ShellRequest;
 use crate::tools::runtimes::shell::ShellRuntime;
 use crate::tools::runtimes::shell::ShellRuntimeBackend;
 use crate::tools::sandboxing::ToolCtx;
-use crate::tools::spec::ShellCommandBackendConfig;
 use codex_features::Feature;
 use codex_protocol::models::PermissionProfile;
+use codex_tools::ShellCommandBackendConfig;
+use codex_utils_absolute_path::AbsolutePathBuf;
 
 pub struct ShellHandler;
 
@@ -236,9 +237,10 @@ impl ToolHandler for ShellHandler {
 
         match payload {
             ToolPayload::Function { arguments } => {
-                let cwd = resolve_workdir_base_path(&arguments, turn.cwd.as_path())?;
-                let params: ShellToolCallParams =
-                    parse_arguments_with_base_path(&arguments, cwd.as_path())?;
+                let cwd_base = AbsolutePathBuf::from_absolute_path(&turn.cwd)
+                    .expect("turn cwd must be absolute");
+                let cwd = resolve_workdir_base_path(&arguments, &cwd_base)?;
+                let params: ShellToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
                 let prefix_rule = params.prefix_rule.clone();
                 let exec_params =
                     Self::to_exec_params(&params, turn.as_ref(), session.conversation_id);
@@ -348,10 +350,13 @@ impl ToolHandler for ShellCommandHandler {
             )));
         };
 
-        let cwd = resolve_workdir_base_path(&arguments, turn.cwd.as_path())?;
-        let params: ShellCommandToolCallParams =
-            parse_arguments_with_base_path(&arguments, cwd.as_path())?;
-        let workdir = turn.resolve_path(params.workdir.clone());
+        let cwd_base =
+            AbsolutePathBuf::from_absolute_path(&turn.cwd).expect("turn cwd must be absolute");
+        let cwd = resolve_workdir_base_path(&arguments, &cwd_base)?;
+        let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
+        let workdir =
+            AbsolutePathBuf::from_absolute_path(&turn.resolve_path(params.workdir.clone()))
+                .expect("turn workdir must be absolute");
         crate::skills::maybe_emit_implicit_skill_invocation(
             session.as_ref(),
             turn.as_ref(),
@@ -480,7 +485,8 @@ impl ShellHandler {
         let source = ExecCommandSource::Agent;
         let emitter = ToolEmitter::shell(
             exec_params.command.clone(),
-            exec_params.cwd.clone(),
+            AbsolutePathBuf::from_absolute_path_checked(exec_params.cwd.clone())
+                .expect("exec cwd must be absolute"),
             source,
             freeform,
         );

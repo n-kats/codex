@@ -101,6 +101,20 @@ impl<M: Clone> PluginLoadOutcome<M> {
         }
     }
 
+    pub fn active_plugin_by_config_name(&self, config_name: &str) -> Option<&LoadedPlugin<M>> {
+        self.plugins
+            .iter()
+            .find(|plugin| plugin.is_active() && plugin.config_name == config_name)
+    }
+
+    pub fn active_plugin_capabilities_by_config_name(
+        &self,
+        config_name: &str,
+    ) -> Option<(HashMap<String, M>, Vec<AppConnectorId>)> {
+        self.active_plugin_by_config_name(config_name)
+            .map(|plugin| (plugin.mcp_servers.clone(), plugin.apps.clone()))
+    }
+
     pub fn effective_skill_roots(&self) -> Vec<AbsolutePathBuf> {
         let mut skill_roots: Vec<AbsolutePathBuf> = self
             .plugins
@@ -158,5 +172,77 @@ pub trait EffectiveSkillRoots {
 impl<M: Clone> EffectiveSkillRoots for PluginLoadOutcome<M> {
     fn effective_skill_roots(&self) -> Vec<AbsolutePathBuf> {
         PluginLoadOutcome::effective_skill_roots(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_plugin_by_config_name_only_returns_active_plugins() {
+        let active = LoadedPlugin {
+            config_name: "active@test".to_string(),
+            manifest_name: None,
+            manifest_description: None,
+            root: AbsolutePathBuf::try_from("/tmp/active").expect("root"),
+            enabled: true,
+            skill_roots: Vec::new(),
+            disabled_skill_paths: HashSet::new(),
+            has_enabled_skills: false,
+            mcp_servers: HashMap::new(),
+            apps: Vec::new(),
+            error: None,
+        };
+        let inactive = LoadedPlugin {
+            config_name: "inactive@test".to_string(),
+            manifest_name: None,
+            manifest_description: None,
+            root: AbsolutePathBuf::try_from("/tmp/inactive").expect("root"),
+            enabled: true,
+            skill_roots: Vec::new(),
+            disabled_skill_paths: HashSet::new(),
+            has_enabled_skills: false,
+            mcp_servers: HashMap::new(),
+            apps: Vec::new(),
+            error: Some("boom".to_string()),
+        };
+        let outcome = PluginLoadOutcome::from_plugins(vec![inactive, active.clone()]);
+
+        let found = outcome
+            .active_plugin_by_config_name("active@test")
+            .expect("active plugin");
+        assert_eq!(found.config_name, active.config_name);
+        assert!(outcome.active_plugin_by_config_name("inactive@test").is_none());
+        assert!(outcome.active_plugin_by_config_name("missing@test").is_none());
+    }
+
+    #[test]
+    fn active_plugin_capabilities_by_config_name_returns_owned_capabilities_for_active_plugin() {
+        let active = LoadedPlugin {
+            config_name: "active@test".to_string(),
+            manifest_name: None,
+            manifest_description: None,
+            root: AbsolutePathBuf::try_from("/tmp/active").expect("root"),
+            enabled: true,
+            skill_roots: Vec::new(),
+            disabled_skill_paths: HashSet::new(),
+            has_enabled_skills: false,
+            mcp_servers: HashMap::from([("mcp".to_string(), 1)]),
+            apps: vec![AppConnectorId("app".to_string())],
+            error: None,
+        };
+        let outcome = PluginLoadOutcome::from_plugins(vec![active]);
+
+        let (mcp_servers, apps) = outcome
+            .active_plugin_capabilities_by_config_name("active@test")
+            .expect("active plugin capabilities");
+        assert_eq!(mcp_servers.get("mcp"), Some(&1));
+        assert_eq!(apps, vec![AppConnectorId("app".to_string())]);
+        assert!(
+            outcome
+                .active_plugin_capabilities_by_config_name("missing@test")
+                .is_none()
+        );
     }
 }

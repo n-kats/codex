@@ -97,7 +97,10 @@ impl SessionConfiguration {
             approval_policy: self.approval_policy.value(),
             approvals_reviewer: self.approvals_reviewer,
             sandbox_policy: self.sandbox_policy.get().clone(),
-            cwd: self.cwd.clone(),
+            cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+                self.cwd.clone(),
+            )
+            .expect("thread cwd must be absolute"),
             ephemeral: self.original_config_do_not_use.ephemeral,
             reasoning_effort: self.collaboration_mode.reasoning_effort(),
             personality: self.personality,
@@ -727,7 +730,10 @@ impl Session {
                 approval_policy: session_configuration.approval_policy.value(),
                 approvals_reviewer: session_configuration.approvals_reviewer,
                 sandbox_policy: session_configuration.sandbox_policy.get().clone(),
-                cwd: session_configuration.cwd.clone(),
+                cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+                    session_configuration.cwd.clone(),
+                )
+                .expect("session cwd must be absolute"),
                 reasoning_effort: session_configuration.collaboration_mode.reasoning_effort(),
                 history_log_id,
                 history_entry_count,

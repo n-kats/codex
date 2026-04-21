@@ -1,6 +1,11 @@
 use super::ShellRequest;
+use crate::error::CodexErr;
+use crate::error::SandboxErr;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
+use crate::exec::ExecToolCallOutput;
+use crate::exec::SandboxType;
+use crate::exec::StreamOutput;
 use crate::exec::is_likely_sandbox_denied;
 use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::guardian_rejection_message;
@@ -18,22 +23,19 @@ use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::SandboxablePreference;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
+use codex_exec_server::ExecutorFileSystem;
 use codex_execpolicy::Decision;
 use codex_execpolicy::Evaluation;
 use codex_execpolicy::MatchOptions;
 use codex_execpolicy::Policy;
 use codex_execpolicy::RuleMatch;
 use codex_features::Feature;
+use codex_protocol::approvals::GuardianCommandSource;
 use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::SandboxErr;
-use codex_protocol::exec_output::ExecToolCallOutput;
-use codex_protocol::exec_output::StreamOutput;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::GuardianCommandSource;
 use codex_protocol::protocol::NetworkPolicyRuleAction;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::SandboxPolicy;
@@ -162,7 +164,8 @@ pub(super) async fn try_run_zsh_fork(
         sandbox_permissions,
         justification,
         arg0,
-        sandbox_policy_cwd: ctx.turn.cwd.clone(),
+        sandbox_policy_cwd: AbsolutePathBuf::from_absolute_path_checked(ctx.turn.cwd.clone())
+            .expect("turn cwd must be absolute"),
         codex_linux_sandbox_exe: ctx.turn.codex_linux_sandbox_exe.clone(),
         use_legacy_landlock: ctx.turn.features.use_legacy_landlock(),
     };
@@ -263,7 +266,8 @@ pub(crate) async fn prepare_unified_exec_zsh_fork(
         sandbox_permissions: exec_request.sandbox_permissions,
         justification: exec_request.justification.clone(),
         arg0: exec_request.arg0.clone(),
-        sandbox_policy_cwd: ctx.turn.cwd.clone(),
+        sandbox_policy_cwd: AbsolutePathBuf::from_absolute_path_checked(ctx.turn.cwd.clone())
+            .expect("turn cwd must be absolute"),
         codex_linux_sandbox_exe: ctx.turn.codex_linux_sandbox_exe.clone(),
         use_legacy_landlock: ctx.turn.features.use_legacy_landlock(),
     };
@@ -439,13 +443,12 @@ impl CoreShellActionProvider {
                         call_id,
                         approval_id,
                         command,
-                        workdir.clone(),
+                        workdir.clone().to_path_buf(),
                         /*reason*/ None,
                         /*network_approval_context*/ None,
                         /*proposed_execpolicy_amendment*/ None,
                         additional_permissions,
                         available_decisions,
-                    )
                     )
                     .await;
                 PromptDecision {
@@ -467,12 +470,14 @@ impl CoreShellActionProvider {
             .skills_manager
             .skills_for_cwd(
                 &crate::skills::SkillsLoadInput::new(
-                    self.turn.cwd.clone(),
+                    AbsolutePathBuf::from_absolute_path_checked(self.turn.cwd.clone())
+                        .expect("turn cwd must be absolute"),
                     Vec::new(),
                     self.turn.config.config_layer_stack.clone(),
                     self.turn.config.bundled_skills_enabled(),
                 ),
                 force_reload,
+                Some(self.turn.environment.get_filesystem()),
             )
             .await;
 

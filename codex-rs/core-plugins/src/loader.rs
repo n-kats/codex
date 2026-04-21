@@ -710,22 +710,6 @@ pub async fn plugin_telemetry_metadata_from_root(
     }
 }
 
-pub async fn load_plugin_mcp_servers(plugin_root: &Path) -> HashMap<String, McpServerConfig> {
-    let Some(manifest) = load_plugin_manifest(plugin_root) else {
-        return HashMap::new();
-    };
-
-    let mut mcp_servers = HashMap::new();
-    for mcp_config_path in plugin_mcp_config_paths(plugin_root, &manifest.paths) {
-        let plugin_mcp = load_mcp_servers_from_file(plugin_root, &mcp_config_path).await;
-        for (name, config) in plugin_mcp.mcp_servers {
-            mcp_servers.entry(name).or_insert(config);
-        }
-    }
-
-    mcp_servers
-}
-
 pub async fn installed_plugin_telemetry_metadata(
     codex_home: &Path,
     plugin_id: &PluginId,

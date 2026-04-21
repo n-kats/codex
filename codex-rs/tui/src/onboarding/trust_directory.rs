@@ -2,7 +2,9 @@ use std::path::PathBuf;
 
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::git_info::resolve_root_git_project_for_trust;
+use codex_exec_server::LOCAL_FS;
 use codex_protocol::config_types::TrustLevel;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -159,8 +161,15 @@ impl StepStateProvider for TrustDirectoryWidget {
 
 impl TrustDirectoryWidget {
     fn handle_trust(&mut self) {
-        let target =
-            resolve_root_git_project_for_trust(&self.cwd).unwrap_or_else(|| self.cwd.clone());
+        let cwd_abs = AbsolutePathBuf::from_absolute_path(&self.cwd)
+            .expect("trust directory cwd must be absolute");
+        let target = tokio::runtime::Handle::current()
+            .block_on(resolve_root_git_project_for_trust(
+                LOCAL_FS.as_ref(),
+                &cwd_abs,
+            ))
+            .map(|path| path.to_path_buf())
+            .unwrap_or_else(|| self.cwd.clone());
         let Some(config_path) = self.config_toml_file.clone() else {
             self.error =
                 Some("Config persistence is disabled; cannot set trust level.".to_string());
@@ -180,8 +189,15 @@ impl TrustDirectoryWidget {
 
     fn handle_dont_trust(&mut self) {
         self.highlighted = TrustDirectorySelection::DontTrust;
-        let target =
-            resolve_root_git_project_for_trust(&self.cwd).unwrap_or_else(|| self.cwd.clone());
+        let cwd_abs = AbsolutePathBuf::from_absolute_path(&self.cwd)
+            .expect("trust directory cwd must be absolute");
+        let target = tokio::runtime::Handle::current()
+            .block_on(resolve_root_git_project_for_trust(
+                LOCAL_FS.as_ref(),
+                &cwd_abs,
+            ))
+            .map(|path| path.to_path_buf())
+            .unwrap_or_else(|| self.cwd.clone());
         let Some(config_path) = self.config_toml_file.clone() else {
             self.error =
                 Some("Config persistence is disabled; cannot set trust level.".to_string());

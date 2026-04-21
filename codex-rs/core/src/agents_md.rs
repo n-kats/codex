@@ -170,7 +170,10 @@ impl<'a> AgentsMdManager<'a> {
 
     /// Returns all instruction source files included in the current config.
     pub async fn instruction_sources(&self, fs: &dyn ExecutorFileSystem) -> Vec<AbsolutePathBuf> {
-        let mut paths = Self::load_global_instructions(Some(&self.config.codex_home))
+        let mut paths = AbsolutePathBuf::try_from(self.config.codex_home.as_path())
+            .ok()
+            .as_ref()
+            .and_then(|codex_home| Self::load_global_instructions(Some(codex_home)))
             .map(|loaded| vec![loaded.path])
             .unwrap_or_default();
         match self.agents_md_paths(fs).await {
@@ -260,7 +263,8 @@ impl<'a> AgentsMdManager<'a> {
             return Ok(Vec::new());
         }
 
-        let mut dir = self.config.cwd.clone();
+        let mut dir =
+            AbsolutePathBuf::try_from(self.config.cwd.as_path()).map_err(io::Error::other)?;
         if let Ok(canon) = normalize_path(&dir) {
             dir = AbsolutePathBuf::try_from(canon)?;
         }
@@ -287,7 +291,8 @@ impl<'a> AgentsMdManager<'a> {
         if !project_root_markers.is_empty() {
             for ancestor in dir.ancestors() {
                 for marker in &project_root_markers {
-                    let marker_path = ancestor.join(marker);
+                    let marker_path = AbsolutePathBuf::try_from(ancestor.join(marker))
+                        .expect("ancestor path must be absolute");
                     let marker_exists = match fs.get_metadata(&marker_path, /*sandbox*/ None).await
                     {
                         Ok(_) => true,
@@ -295,7 +300,10 @@ impl<'a> AgentsMdManager<'a> {
                         Err(err) => return Err(err),
                     };
                     if marker_exists {
-                        project_root = Some(ancestor.clone());
+                        project_root = Some(
+                            AbsolutePathBuf::try_from(ancestor)
+                                .expect("ancestor path must be absolute"),
+                        );
                         break;
                     }
                 }
@@ -316,7 +324,7 @@ impl<'a> AgentsMdManager<'a> {
                 let Some(parent) = cursor.parent() else {
                     break;
                 };
-                cursor = parent;
+                cursor = AbsolutePathBuf::try_from(parent).expect("parent path must be absolute");
             }
             dirs.reverse();
             dirs

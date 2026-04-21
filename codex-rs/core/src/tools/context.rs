@@ -1,4 +1,3 @@
-use crate::client_common::tools::ToolSearchOutputTool;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::tools::TELEMETRY_PREVIEW_MAX_BYTES;
@@ -16,6 +15,7 @@ use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::SearchToolCallParams;
 use codex_protocol::models::ShellToolCallParams;
 use codex_protocol::models::function_call_output_content_items_to_text;
+use codex_tools::ToolSearchOutputTool;
 use codex_utils_string::take_bytes_at_char_boundary;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -207,6 +207,93 @@ impl ToolOutput for FunctionToolOutput {
 
     fn post_tool_use_response(&self, _call_id: &str, _payload: &ToolPayload) -> Option<JsonValue> {
         self.post_tool_use_response.clone()
+    }
+}
+
+pub struct McpToolOutput {
+    pub result: CallToolResult,
+    pub wall_time: Duration,
+    pub original_image_detail_supported: bool,
+}
+
+impl McpToolOutput {
+    fn wall_time_prefix(&self) -> String {
+        format!(
+            "Wall time: {:.4} seconds\nOutput:",
+            self.wall_time.as_secs_f64()
+        )
+    }
+}
+
+impl ToolOutput for McpToolOutput {
+    fn log_preview(&self) -> String {
+        let _ = self.original_image_detail_supported;
+        let output = self.result.as_function_call_output_payload();
+        let body_text = match output.body {
+            codex_protocol::models::FunctionCallOutputBody::Text(text) => text,
+            codex_protocol::models::FunctionCallOutputBody::ContentItems(items) => {
+                serde_json::to_string(&items).unwrap_or_default()
+            }
+        };
+        telemetry_preview(&format!("{}\n{}", self.wall_time_prefix(), body_text))
+    }
+
+    fn success_for_logging(&self) -> bool {
+        self.result.success()
+    }
+
+    fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
+        let _ = self.original_image_detail_supported;
+        let output = self.result.as_function_call_output_payload();
+        let prefix = FunctionCallOutputContentItem::InputText {
+            text: self.wall_time_prefix(),
+        };
+        let output = match output.body {
+            codex_protocol::models::FunctionCallOutputBody::Text(text) => {
+                FunctionCallOutputPayload {
+                    body: codex_protocol::models::FunctionCallOutputBody::Text(format!(
+                        "{}\n{text}",
+                        self.wall_time_prefix()
+                    )),
+                    success: Some(self.result.success()),
+                }
+            }
+            codex_protocol::models::FunctionCallOutputBody::ContentItems(items) => {
+                if items
+                    .iter()
+                    .all(|item| matches!(item, FunctionCallOutputContentItem::InputText { .. }))
+                {
+                    FunctionCallOutputPayload {
+                        body: codex_protocol::models::FunctionCallOutputBody::Text(format!(
+                            "{}\n{}",
+                            self.wall_time_prefix(),
+                            serde_json::to_string(&self.result.content).unwrap_or_else(|err| {
+                                format!("failed to serialize mcp result content: {err}")
+                            })
+                        )),
+                        success: Some(self.result.success()),
+                    }
+                } else {
+                    let mut items = items;
+                    items.insert(0, prefix);
+                    FunctionCallOutputPayload {
+                        body: codex_protocol::models::FunctionCallOutputBody::ContentItems(items),
+                        success: Some(self.result.success()),
+                    }
+                }
+            }
+        };
+        let _ = payload;
+        ResponseInputItem::FunctionCallOutput {
+            call_id: call_id.to_string(),
+            output,
+        }
+    }
+
+    fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
+        serde_json::to_value(&self.result).unwrap_or_else(|err| {
+            JsonValue::String(format!("failed to serialize mcp result: {err}"))
+        })
     }
 }
 

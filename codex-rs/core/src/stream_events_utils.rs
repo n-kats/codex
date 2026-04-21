@@ -10,14 +10,14 @@ use tokio_util::sync::CancellationToken;
 
 use crate::codex::Session;
 use crate::codex::TurnContext;
+use crate::error::CodexErr;
+use crate::error::Result as CodexResult;
 use crate::function_tool::FunctionCallError;
 use crate::memories::citations::get_thread_id_from_citations;
 use crate::memories::citations::parse_memory_citation;
 use crate::parse_turn_item;
 use crate::tools::parallel::ToolCallRuntime;
 use crate::tools::router::ToolRouter;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result;
 use codex_protocol::models::DeveloperInstructions;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputPayload;
@@ -28,6 +28,7 @@ use codex_rollout::state_db;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_stream_parser::strip_proposed_plan_blocks;
 use futures::Future;
+use futures::TryFutureExt;
 use tracing::debug;
 use tracing::instrument;
 
@@ -107,7 +108,7 @@ async fn save_image_generation_result(
     session_id: &str,
     call_id: &str,
     result: &str,
-) -> Result<AbsolutePathBuf> {
+) -> CodexResult<AbsolutePathBuf> {
     let bytes = BASE64_STANDARD
         .decode(result.trim().as_bytes())
         .map_err(|err| {
@@ -129,13 +130,10 @@ pub(crate) async fn record_completed_response_item(
 ) {
     sess.record_conversation_items(turn_context, std::slice::from_ref(item))
         .await;
-    if completed_item_defers_mailbox_delivery_to_next_turn(
+    let _ = completed_item_defers_mailbox_delivery_to_next_turn(
         item,
         turn_context.collaboration_mode.mode == ModeKind::Plan,
-    ) {
-        sess.defer_mailbox_delivery_to_next_turn(&turn_context.sub_id)
-            .await;
-    }
+    );
     mark_thread_memory_mode_polluted_if_external_context(sess, turn_context, item).await;
     record_stage1_output_usage_for_completed_item(turn_context, item).await;
 }
@@ -193,7 +191,7 @@ async fn record_stage1_output_usage_for_completed_item(
 /// queuing any tool execution futures. This records items immediately so
 /// history and rollout stay in sync even if the turn is later cancelled.
 pub(crate) type InFlightFuture<'f> =
-    Pin<Box<dyn Future<Output = Result<ResponseInputItem>> + Send + 'f>>;
+    Pin<Box<dyn Future<Output = CodexResult<ResponseInputItem>> + Send + 'f>>;
 
 #[derive(Default)]
 pub(crate) struct OutputItemResult {
@@ -214,17 +212,13 @@ pub(crate) async fn handle_output_item_done(
     ctx: &mut HandleOutputCtx,
     item: ResponseItem,
     previously_active_item: Option<TurnItem>,
-) -> Result<OutputItemResult> {
+) -> CodexResult<OutputItemResult> {
     let mut output = OutputItemResult::default();
     let plan_mode = ctx.turn_context.collaboration_mode.mode == ModeKind::Plan;
 
     match ToolRouter::build_tool_call(ctx.sess.as_ref(), item.clone()).await {
         // The model emitted a tool call; log it, persist the item immediately, and queue the tool execution.
         Ok(Some(call)) => {
-            ctx.sess
-                .accept_mailbox_delivery_for_current_turn(&ctx.turn_context.sub_id)
-                .await;
-
             let payload_preview = call.payload.log_payload().into_owned();
             tracing::info!(
                 thread_id = %ctx.sess.conversation_id,
@@ -240,7 +234,8 @@ pub(crate) async fn handle_output_item_done(
             let tool_future: InFlightFuture<'static> = Box::pin(
                 ctx.tool_runtime
                     .clone()
-                    .handle_tool_call(call, cancellation_token),
+                    .handle_tool_call(call, cancellation_token)
+                    .map_err(Into::into),
             );
 
             output.needs_follow_up = true;
@@ -368,8 +363,12 @@ pub(crate) async fn handle_non_tool_response_item(
             }
             if let TurnItem::ImageGeneration(image_item) = &mut turn_item {
                 let session_id = sess.conversation_id.to_string();
+                let codex_home = AbsolutePathBuf::from_absolute_path_checked(
+                    turn_context.config.codex_home.clone(),
+                )
+                .expect("turn context codex_home must be absolute");
                 match save_image_generation_result(
-                    &turn_context.config.codex_home,
+                    &codex_home,
                     &session_id,
                     &image_item.id,
                     &image_item.result,
@@ -378,14 +377,11 @@ pub(crate) async fn handle_non_tool_response_item(
                 {
                     Ok(path) => {
                         image_item.saved_path = Some(path);
-                        let image_output_path = image_generation_artifact_path(
-                            &turn_context.config.codex_home,
-                            &session_id,
-                            "<image_id>",
-                        );
+                        let image_output_path =
+                            image_generation_artifact_path(&codex_home, &session_id, "<image_id>");
                         let image_output_dir = image_output_path
                             .parent()
-                            .unwrap_or_else(|| turn_context.config.codex_home.clone());
+                            .unwrap_or_else(|| codex_home.clone());
                         let message: ResponseItem = DeveloperInstructions::new(format!(
                             "Generated images are saved to {} as {} by default.\nIf you need to use a generated image at another path, copy it and leave the original in place unless the user explicitly asks you to delete it.",
                             image_output_dir.display(),
@@ -397,13 +393,11 @@ pub(crate) async fn handle_non_tool_response_item(
                     }
                     Err(err) => {
                         let output_path = image_generation_artifact_path(
-                            &turn_context.config.codex_home,
+                            &codex_home,
                             &session_id,
                             &image_item.id,
                         );
-                        let output_dir = output_path
-                            .parent()
-                            .unwrap_or_else(|| turn_context.config.codex_home.clone());
+                        let output_dir = output_path.parent().unwrap_or_else(|| codex_home.clone());
                         tracing::warn!(
                             call_id = %image_item.id,
                             output_dir = %output_dir.display(),

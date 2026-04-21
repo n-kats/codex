@@ -25,6 +25,7 @@ use codex_core::exec::ExecExpiration;
 use codex_core::exec::IO_DRAIN_TIMEOUT_MS;
 use codex_core::exec::SandboxType;
 use codex_core::sandboxing::ExecRequest;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
 use codex_utils_pty::ProcessHandle;
 use codex_utils_pty::SpawnedProcess;
@@ -701,7 +702,6 @@ fn internal_error(message: String) -> JSONRPCErrorError {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::path::PathBuf;
 
     use codex_protocol::config_types::WindowsSandboxLevel;
     use codex_protocol::permissions::FileSystemSandboxPolicy;
@@ -727,24 +727,25 @@ mod tests {
             access: ReadOnlyAccess::FullAccess,
             network_access: false,
         };
-        ExecRequest {
-            command: vec!["cmd".to_string()],
-            cwd: PathBuf::from("."),
-            env: HashMap::new(),
-            network: None,
-            expiration: ExecExpiration::DefaultTimeout,
-            capture_policy: codex_core::exec::ExecCapturePolicy::ShellTool,
-            sandbox: SandboxType::WindowsRestrictedToken,
-            windows_sandbox_level: WindowsSandboxLevel::Disabled,
-            windows_sandbox_private_desktop: false,
-            run_as: None,
-            sandbox_permissions: codex_core::sandboxing::SandboxPermissions::UseDefault,
-            sandbox_policy: sandbox_policy.clone(),
-            file_system_sandbox_policy: FileSystemSandboxPolicy::from(&sandbox_policy),
-            network_sandbox_policy: NetworkSandboxPolicy::from(&sandbox_policy),
-            justification: None,
-            arg0: None,
-        }
+        ExecRequest::new(
+            vec!["cmd".to_string()],
+            AbsolutePathBuf::from_absolute_path(std::env::current_dir().expect("cwd"))
+                .expect("absolute cwd"),
+            HashMap::new(),
+            None,
+            ExecExpiration::DefaultTimeout,
+            codex_core::exec::ExecCapturePolicy::ShellTool,
+            SandboxType::WindowsRestrictedToken,
+            WindowsSandboxLevel::Disabled,
+            false,
+            None,
+            codex_core::sandboxing::SandboxPermissions::UseDefault,
+            sandbox_policy.clone(),
+            FileSystemSandboxPolicy::from(&sandbox_policy),
+            NetworkSandboxPolicy::from(&sandbox_policy),
+            None,
+            None,
+        )
     }
 
     #[tokio::test]
@@ -842,24 +843,25 @@ mod tests {
                 outgoing: Arc::new(OutgoingMessageSender::new(tx)),
                 request_id: request_id.clone(),
                 process_id: Some("proc-100".to_string()),
-                exec_request: ExecRequest {
-                    command: vec!["sh".to_string(), "-lc".to_string(), "sleep 30".to_string()],
-                    cwd: PathBuf::from("."),
-                    env: HashMap::new(),
-                    network: None,
-                    expiration: ExecExpiration::Cancellation(CancellationToken::new()),
-                    capture_policy: codex_core::exec::ExecCapturePolicy::ShellTool,
-                    sandbox: SandboxType::None,
-                    windows_sandbox_level: WindowsSandboxLevel::Disabled,
-                    windows_sandbox_private_desktop: false,
-                    run_as: None,
-                    sandbox_permissions: codex_core::sandboxing::SandboxPermissions::UseDefault,
-                    sandbox_policy: sandbox_policy.clone(),
-                    file_system_sandbox_policy: FileSystemSandboxPolicy::from(&sandbox_policy),
-                    network_sandbox_policy: NetworkSandboxPolicy::from(&sandbox_policy),
-                    justification: None,
-                    arg0: None,
-                },
+                exec_request: ExecRequest::new(
+                    vec!["sh".to_string(), "-lc".to_string(), "sleep 30".to_string()],
+                    AbsolutePathBuf::from_absolute_path(std::env::current_dir().expect("cwd"))
+                        .expect("absolute cwd"),
+                    HashMap::new(),
+                    None,
+                    ExecExpiration::Cancellation(CancellationToken::new()),
+                    codex_core::exec::ExecCapturePolicy::ShellTool,
+                    SandboxType::None,
+                    WindowsSandboxLevel::Disabled,
+                    false,
+                    None,
+                    codex_core::sandboxing::SandboxPermissions::UseDefault,
+                    sandbox_policy.clone(),
+                    FileSystemSandboxPolicy::from(&sandbox_policy),
+                    NetworkSandboxPolicy::from(&sandbox_policy),
+                    None,
+                    None,
+                ),
                 started_network_proxy: None,
                 tty: false,
                 stream_stdin: false,

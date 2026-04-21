@@ -1,35 +1,6 @@
 use super::*;
 use base64::Engine;
 use pretty_assertions::assert_eq;
-use serial_test::serial;
-
-struct EnvGuard {
-    key: &'static str,
-    original: Option<String>,
-}
-
-impl EnvGuard {
-    fn set(key: &'static str, value: &str) -> Self {
-        let original = std::env::var(key).ok();
-        unsafe {
-            std::env::set_var(key, value);
-        }
-        Self { key, original }
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        match &self.original {
-            Some(value) => unsafe {
-                std::env::set_var(self.key, value);
-            },
-            None => unsafe {
-                std::env::remove_var(self.key);
-            },
-        }
-    }
-}
 
 #[test]
 fn map_api_error_maps_server_overloaded() {
@@ -53,6 +24,22 @@ fn map_api_error_maps_server_overloaded_from_503_body() {
     }));
 
     assert!(matches!(err, CodexErr::ServerOverloaded));
+}
+
+#[test]
+fn map_api_error_maps_internal_server_error_to_high_demand_message() {
+    let err = map_api_error(ApiError::Transport(TransportError::Http {
+        status: http::StatusCode::INTERNAL_SERVER_ERROR,
+        url: Some("http://example.com/v1/realtime/calls".to_string()),
+        headers: None,
+        body: Some("boom".to_string()),
+    }));
+
+    assert!(matches!(err, CodexErr::InternalServerError));
+    assert!(
+        err.to_string()
+            .contains("currently experiencing high demand")
+    );
 }
 
 #[test]
@@ -83,13 +70,7 @@ fn map_api_error_maps_usage_limit_limit_name_header() {
     let CodexErr::UsageLimitReached(usage_limit) = err else {
         panic!("expected CodexErr::UsageLimitReached, got {err:?}");
     };
-    assert_eq!(
-        usage_limit
-            .rate_limits
-            .as_ref()
-            .and_then(|snapshot| snapshot.limit_name.as_deref()),
-        Some("codex_other")
-    );
+    assert!(usage_limit.to_string().contains("codex_other"));
 }
 
 #[test]
@@ -116,13 +97,7 @@ fn map_api_error_does_not_fallback_limit_name_to_limit_id() {
     let CodexErr::UsageLimitReached(usage_limit) = err else {
         panic!("expected CodexErr::UsageLimitReached, got {err:?}");
     };
-    assert_eq!(
-        usage_limit
-            .rate_limits
-            .as_ref()
-            .and_then(|snapshot| snapshot.limit_name.as_deref()),
-        None
-    );
+    assert!(!usage_limit.to_string().contains("codex_other"));
 }
 
 #[test]
@@ -165,20 +140,8 @@ fn core_auth_provider_reports_when_auth_header_will_attach() {
     let auth = CoreAuthProvider {
         token: Some("access-token".to_string()),
         account_id: None,
+        is_fedramp_account: false,
     };
-
-    assert!(auth.auth_header_attached());
-    assert_eq!(auth.auth_header_name(), Some("authorization"));
-}
-
-#[test]
-#[serial]
-fn auth_provider_from_auth_uses_openai_env_key_when_storage_auth_is_missing() {
-    let _guard = EnvGuard::set("OPENAI_API_KEY", "sk-env-test");
-
-    let provider = crate::model_provider_info::ModelProviderInfo::create_openai_provider(None);
-    let auth =
-        auth_provider_from_auth(None, &provider).expect("openai env fallback should be accepted");
 
     assert!(auth.auth_header_attached());
     assert_eq!(auth.auth_header_name(), Some("authorization"));

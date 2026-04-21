@@ -5,20 +5,22 @@ use crate::Prompt;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex::built_tools;
-use crate::compact::CompactionAnalyticsAttempt;
 use crate::compact::InitialContextInjection;
-use crate::compact::compaction_status_from_result;
 use crate::compact::insert_initial_context_before_last_real_user_or_summary;
 use crate::context_manager::ContextManager;
 use crate::context_manager::TotalTokenUsageBreakdown;
 use crate::context_manager::estimate_response_item_model_visible_bytes;
 use crate::context_manager::is_codex_generated_item;
+use crate::error::CodexErr;
+use crate::error::Result as CodexResult;
+use codex_analytics::CodexCompactionEvent;
 use codex_analytics::CompactionImplementation;
 use codex_analytics::CompactionPhase;
 use codex_analytics::CompactionReason;
+use codex_analytics::CompactionStatus;
+use codex_analytics::CompactionStrategy;
 use codex_analytics::CompactionTrigger;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
+use codex_analytics::now_unix_seconds;
 use codex_protocol::items::ContextCompactionItem;
 use codex_protocol::items::TurnItem;
 use codex_protocol::models::BaseInstructions;
@@ -30,6 +32,70 @@ use futures::TryFutureExt;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 use tracing::info;
+
+struct CompactionAnalyticsAttempt {
+    started_at: u64,
+    trigger: CompactionTrigger,
+    reason: CompactionReason,
+    implementation: CompactionImplementation,
+    phase: CompactionPhase,
+}
+
+impl CompactionAnalyticsAttempt {
+    async fn begin(
+        _sess: &Session,
+        _turn_context: &TurnContext,
+        trigger: CompactionTrigger,
+        reason: CompactionReason,
+        implementation: CompactionImplementation,
+        phase: CompactionPhase,
+    ) -> Self {
+        Self {
+            started_at: now_unix_seconds(),
+            trigger,
+            reason,
+            implementation,
+            phase,
+        }
+    }
+
+    async fn track(
+        &self,
+        sess: &Session,
+        turn_context: &TurnContext,
+        status: CompactionStatus,
+        error: Option<String>,
+    ) {
+        sess.services
+            .analytics_events_client
+            .track_compaction(CodexCompactionEvent {
+                thread_id: sess.conversation_id.to_string(),
+                turn_id: turn_context.sub_id.clone(),
+                trigger: self.trigger,
+                reason: self.reason,
+                implementation: self.implementation,
+                phase: self.phase,
+                strategy: CompactionStrategy::Memento,
+                status,
+                error,
+                active_context_tokens_before: turn_context
+                    .model_context_window()
+                    .unwrap_or_default(),
+                active_context_tokens_after: 0,
+                started_at: self.started_at,
+                completed_at: now_unix_seconds(),
+                duration_ms: None,
+            });
+    }
+}
+
+fn compaction_status_from_result<T>(result: &CodexResult<T>) -> CompactionStatus {
+    match result {
+        Ok(_) => CompactionStatus::Completed,
+        Err(CodexErr::Interrupted) => CompactionStatus::Interrupted,
+        Err(_) => CompactionStatus::Failed,
+    }
+}
 
 pub(crate) async fn run_inline_remote_auto_compact_task(
     sess: Arc<Session>,
@@ -95,6 +161,7 @@ async fn run_remote_compact_task_inner(
     attempt
         .track(
             sess.as_ref(),
+            turn_context.as_ref(),
             compaction_status_from_result(&result),
             result.as_ref().err().map(ToString::to_string),
         )
@@ -172,6 +239,7 @@ async fn run_remote_compact_task_inner_impl(
             let total_usage_breakdown = sess.get_total_token_usage_breakdown().await;
             let compact_request_log_data =
                 build_compact_request_log_data(&prompt.input, &prompt.base_instructions.text);
+            let err: CodexErr = err.into();
             log_remote_compact_failure(
                 turn_context,
                 &compact_request_log_data,

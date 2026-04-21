@@ -38,6 +38,7 @@ where
     })
 }
 
+#[async_trait::async_trait]
 impl ToolHandler for CodeModeWaitHandler {
     type Output = FunctionToolOutput;
 
@@ -55,9 +56,7 @@ impl ToolHandler for CodeModeWaitHandler {
         } = invocation;
 
         match payload {
-            ToolPayload::Function { arguments }
-                if tool_name.namespace.is_none() && tool_name.name.as_str() == WAIT_TOOL_NAME =>
-            {
+            ToolPayload::Function { arguments } if tool_name.as_str() == WAIT_TOOL_NAME => {
                 let args: ExecWaitArgs = parse_arguments(&arguments)?;
                 let exec = ExecContext { session, turn };
                 let started_at = std::time::Instant::now();

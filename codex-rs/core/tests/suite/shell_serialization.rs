@@ -555,7 +555,7 @@ A {file_name}
     );
     assert_regex_match(&expected_pattern, output.as_str());
 
-    let created_contents = harness.read_file_text(file_name).await?;
+    let created_contents = std::fs::read_to_string(harness.path(file_name))?;
     assert_eq!(
         created_contents, "custom tool content\n",
         "expected file contents for {file_name}"
@@ -578,7 +578,7 @@ async fn apply_patch_custom_tool_call_updates_existing_file(
 
     let call_id = "apply-patch-update-file";
     let file_name = "custom_tool_apply_patch_existing.txt";
-    harness.write_file(file_name, "before\n").await?;
+    std::fs::write(harness.path(file_name), "before\n")?;
     let patch = format!(
         "*** Begin Patch\n*** Update File: {file_name}\n@@\n-before\n+after\n*** End Patch\n"
     );
@@ -611,7 +611,7 @@ M {file_name}
     );
     assert_regex_match(&expected_pattern, output.as_str());
 
-    let updated_contents = harness.read_file_text(file_name).await?;
+    let updated_contents = std::fs::read_to_string(harness.path(file_name))?;
     assert_eq!(updated_contents, "after\n", "expected updated file content");
 
     Ok(())

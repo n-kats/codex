@@ -306,6 +306,25 @@ fn usage_limit_reached_error_formats_pro_plan_with_reset() {
 }
 
 #[test]
+fn usage_limit_reached_error_formats_pro_lite_plan_with_reset() {
+    let base = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
+    let resets_at = base + ChronoDuration::hours(1);
+    with_now_override(base, move || {
+        let expected_time = format_retry_timestamp(&resets_at);
+        let err = UsageLimitReachedError {
+            plan_type: Some(PlanType::Known(KnownPlan::ProLite)),
+            resets_at: Some(resets_at),
+            rate_limits: Some(Box::new(rate_limit_snapshot())),
+            promo_message: None,
+        };
+        let expected = format!(
+            "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at {expected_time}."
+        );
+        assert_eq!(err.to_string(), expected);
+    });
+}
+
+#[test]
 fn usage_limit_reached_error_hides_upsell_for_non_codex_limit_name() {
     let base = Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap();
     let resets_at = base + ChronoDuration::hours(1);

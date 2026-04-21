@@ -79,7 +79,7 @@ async fn cli_overrides_resolve_relative_paths_against_cwd() -> std::io::Result<(
         .build()
         .await?;
 
-    let expected = AbsolutePathBuf::resolve_path_against_base("run-logs", cwd_path)?;
+    let expected = AbsolutePathBuf::resolve_path_against_base("run-logs", cwd_path);
     assert_eq!(config.log_dir, expected.to_path_buf());
     Ok(())
 }
@@ -259,7 +259,6 @@ async fn returns_empty_when_all_layers_missing() {
         &ConfigLayerEntry {
             name: super::ConfigLayerSource::User {
                 file: AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, tmp.path())
-                    .expect("resolve user config.toml path")
             },
             config: TomlValue::Table(toml::map::Map::new()),
             raw_toml: None,
@@ -685,6 +684,7 @@ allowed_approval_policies = ["on-request"]
         RequirementSource::CloudRequirements,
         ConfigRequirementsToml {
             allowed_approval_policies: Some(vec![AskForApproval::Never]),
+            allowed_approvals_reviewers: None,
             allowed_sandbox_modes: None,
             allowed_web_search_modes: None,
             feature_requirements: None,
@@ -694,6 +694,7 @@ allowed_approval_policies = ["on-request"]
             enforce_residency: None,
             network: None,
             guardian_developer_instructions: None,
+            guardian_policy_config: None,
         },
     );
     load_requirements_toml(&mut config_requirements_toml, &requirements_file).await?;
@@ -725,6 +726,7 @@ async fn load_config_layers_includes_cloud_requirements() -> anyhow::Result<()> 
 
     let requirements = ConfigRequirementsToml {
         allowed_approval_policies: Some(vec![AskForApproval::Never]),
+        allowed_approvals_reviewers: None,
         allowed_sandbox_modes: None,
         allowed_web_search_modes: None,
         feature_requirements: None,
@@ -734,6 +736,7 @@ async fn load_config_layers_includes_cloud_requirements() -> anyhow::Result<()> 
         enforce_residency: None,
         network: None,
         guardian_developer_instructions: None,
+        guardian_policy_config: None,
     };
     let expected = requirements.clone();
     let cloud_requirements = CloudRequirementsLoader::new(async move { Ok(Some(requirements)) });

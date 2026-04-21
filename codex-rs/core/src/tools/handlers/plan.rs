@@ -43,6 +43,7 @@ impl ToolOutput for PlanToolOutput {
     }
 }
 
+#[async_trait::async_trait]
 impl ToolHandler for PlanHandler {
     type Output = PlanToolOutput;
 

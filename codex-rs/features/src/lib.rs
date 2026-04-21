@@ -3,8 +3,6 @@
 //! This crate defines the feature registry plus the logic used to resolve an
 //! effective feature set from config-like inputs.
 
-use codex_login::AuthManager;
-use codex_login::CodexAuth;
 use codex_otel::SessionTelemetry;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
@@ -16,9 +14,34 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use toml::Table;
 
+mod feature_configs;
 mod legacy;
+pub use feature_configs::MultiAgentV2ConfigToml;
 use legacy::LegacyFeatureToggles;
 pub use legacy::legacy_feature_keys;
+
+/// Config payload stored under a feature flag when the feature supports a
+/// structured TOML table in addition to a plain boolean toggle.
+pub trait FeatureConfig {
+    fn enabled(&self) -> Option<bool>;
+}
+
+/// Either a plain boolean toggle or a structured feature config table.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum FeatureToml<T> {
+    Enabled(bool),
+    Config(T),
+}
+
+impl<T: FeatureConfig> FeatureToml<T> {
+    pub fn enabled(&self) -> Option<bool> {
+        match self {
+            Self::Enabled(enabled) => Some(*enabled),
+            Self::Config(config) => config.enabled(),
+        }
+    }
+}
 
 /// High-level lifecycle stage for a feature.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +114,8 @@ pub enum Feature {
     ShellZshFork,
     /// Include the freeform apply_patch tool.
     ApplyPatchFreeform,
+    /// Stream structured progress while apply_patch input is being generated.
+    ApplyPatchStreamingEvents,
     /// Allow exec tools to request additional permissions while staying sandboxed.
     ExecPermissionApprovals,
     /// Enable Claude-style lifecycle hooks loaded from hooks.json files.
@@ -130,10 +155,10 @@ pub enum Feature {
     Sqlite,
     /// Enable startup memory extraction and file-backed memory consolidation.
     MemoryTool,
+    /// Enable the Telepathy sidecar for passive screen-context memories.
+    Telepathy,
     /// Append additional AGENTS.md guidance to user instructions.
     ChildAgentsMd,
-    /// Allow the model to request `detail: "original"` image outputs on supported models.
-    ImageDetailOriginal,
     /// Compress request bodies (zstd) when sending streaming requests to codex-backend.
     EnableRequestCompression,
     /// Enable collab tools.
@@ -148,6 +173,8 @@ pub enum Feature {
     ToolSearch,
     /// Enable discoverable tool suggestions for apps.
     ToolSuggest,
+    /// Expose placeholder tools for unavailable historical tool calls.
+    UnavailableDummyTools,
     /// Enable plugins.
     Plugins,
     /// Allow the model to invoke the built-in image generation tool.
@@ -176,14 +203,25 @@ pub enum Feature {
     FastMode,
     /// Enable experimental realtime voice conversation mode in the TUI.
     RealtimeConversation,
-    /// Enable voice transcription controls in the TUI.
-    VoiceTranscription,
+    /// Connect app-server to the ChatGPT remote control service.
+    RemoteControl,
+    /// Removed compatibility flag retained as a no-op so old wrappers can
+    /// still pass `--enable image_detail_original`.
+    ImageDetailOriginal,
+    /// Removed compatibility flag. The TUI now always uses the app-server implementation.
+    TuiAppServer,
     /// Prevent idle system sleep while a turn is actively running.
     PreventIdleSleep,
     /// Legacy rollout flag for Responses API WebSocket transport experiments.
     ResponsesWebsockets,
     /// Legacy rollout flag for Responses API WebSocket transport v2 experiments.
     ResponsesWebsocketsV2,
+    /// Use the agent identity registration flow for ChatGPT-authenticated sessions.
+    UseAgentIdentity,
+    /// Enable workspace dependency support.
+    WorkspaceDependencies,
+    /// Enable voice transcription controls in the TUI.
+    VoiceTranscription,
 }
 
 impl Feature {
@@ -273,25 +311,16 @@ impl Features {
         self.enabled.contains(&f)
     }
 
-    pub async fn apps_enabled(&self, auth_manager: Option<&AuthManager>) -> bool {
-        if !self.enabled(Feature::Apps) {
-            return false;
-        }
-
-        let auth = match auth_manager {
-            Some(auth_manager) => auth_manager.auth().await,
-            None => None,
-        };
-        self.apps_enabled_for_auth(auth.as_ref())
+    pub fn apps_enabled(&self, has_chatgpt_auth: bool) -> bool {
+        self.enabled(Feature::Apps) && has_chatgpt_auth
     }
 
-    pub fn apps_enabled_cached(&self, auth_manager: Option<&AuthManager>) -> bool {
-        let auth = auth_manager.and_then(AuthManager::auth_cached);
-        self.apps_enabled_for_auth(auth.as_ref())
+    pub fn apps_enabled_cached(&self, has_chatgpt_auth: bool) -> bool {
+        self.enabled(Feature::Apps) && has_chatgpt_auth
     }
 
-    pub fn apps_enabled_for_auth(&self, auth: Option<&CodexAuth>) -> bool {
-        self.enabled(Feature::Apps) && auth.is_some_and(CodexAuth::is_chatgpt_auth)
+    pub fn apps_enabled_for_auth(&self, has_chatgpt_auth: bool) -> bool {
+        self.enabled(Feature::Apps) && has_chatgpt_auth
     }
 
     pub fn use_legacy_landlock(&self) -> bool {
@@ -407,7 +436,8 @@ impl Features {
             .apply(&mut features);
 
             if let Some(feature_entries) = source.features {
-                features.apply_map(&feature_entries.entries);
+                let entries = feature_entries.entries();
+                features.apply_map(&entries);
             }
         }
 
@@ -431,6 +461,15 @@ impl Features {
         if self.enabled(Feature::JsReplToolsOnly) && !self.enabled(Feature::JsRepl) {
             tracing::warn!("js_repl_tools_only requires js_repl; disabling js_repl_tools_only");
             self.disable(Feature::JsReplToolsOnly);
+        }
+    }
+}
+
+impl From<BTreeMap<String, bool>> for FeaturesToml {
+    fn from(entries: BTreeMap<String, bool>) -> Self {
+        Self {
+            entries,
+            multi_agent_v2: None,
         }
     }
 }
@@ -503,6 +542,18 @@ pub fn is_known_feature_key(key: &str) -> bool {
 pub struct FeaturesToml {
     #[serde(flatten)]
     pub entries: BTreeMap<String, bool>,
+    #[serde(default)]
+    pub multi_agent_v2: Option<FeatureToml<MultiAgentV2ConfigToml>>,
+}
+
+impl FeaturesToml {
+    pub fn entries(&self) -> BTreeMap<String, bool> {
+        let mut entries = self.entries.clone();
+        if let Some(enabled) = self.multi_agent_v2.as_ref().and_then(FeatureToml::enabled) {
+            entries.insert("multi_agent_v2".to_string(), enabled);
+        }
+        entries
+    }
 }
 
 /// Single, easy-to-read registry of all feature definitions.
@@ -620,6 +671,16 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::MemoryTool,
         key: "memories",
+        stage: Stage::Experimental {
+            name: "Memories",
+            menu_description: "Allow Codex to create new memories from conversations and bring relevant memories into new conversations.",
+            announcement: "NEW: Codex can now generate and uses memories. Try is now with `/memories`",
+        },
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::Telepathy,
+        key: "telepathy",
         stage: Stage::UnderDevelopment,
         default_enabled: false,
     },
@@ -632,12 +693,18 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::ImageDetailOriginal,
         key: "image_detail_original",
-        stage: Stage::UnderDevelopment,
+        stage: Stage::Removed,
         default_enabled: false,
     },
     FeatureSpec {
         id: Feature::ApplyPatchFreeform,
         key: "apply_patch_freeform",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::ApplyPatchStreamingEvents,
+        key: "apply_patch_streaming_events",
         stage: Stage::UnderDevelopment,
         default_enabled: false,
     },
@@ -668,7 +735,7 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::UseLegacyLandlock,
         key: "use_legacy_landlock",
-        stage: Stage::Stable,
+        stage: Stage::Deprecated,
         default_enabled: false,
     },
     FeatureSpec {
@@ -728,6 +795,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::ToolSearch,
         key: "tool_search",
+        stage: Stage::Stable,
+        default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::UnavailableDummyTools,
+        key: "unavailable_dummy_tools",
         stage: Stage::UnderDevelopment,
         default_enabled: false,
     },
@@ -820,10 +893,22 @@ pub const FEATURES: &[FeatureSpec] = &[
         default_enabled: false,
     },
     FeatureSpec {
+        id: Feature::RemoteControl,
+        key: "remote_control",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
         id: Feature::VoiceTranscription,
         key: "voice_transcription",
         stage: Stage::UnderDevelopment,
         default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::TuiAppServer,
+        key: "tui_app_server",
+        stage: Stage::Removed,
+        default_enabled: true,
     },
     FeatureSpec {
         id: Feature::PreventIdleSleep,
@@ -854,6 +939,18 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "responses_websockets_v2",
         stage: Stage::Removed,
         default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::UseAgentIdentity,
+        key: "use_agent_identity",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::WorkspaceDependencies,
+        key: "workspace_dependencies",
+        stage: Stage::Stable,
+        default_enabled: true,
     },
 ];
 

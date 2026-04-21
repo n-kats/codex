@@ -278,6 +278,7 @@ async fn override_turn_context_custom_agents_reflects_in_next_turn_context() -> 
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
+            responsesapi_client_metadata: None,
         })
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;

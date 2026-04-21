@@ -1,7 +1,41 @@
 use super::*;
+use crate::sandboxing::ExecServerEnvConfig;
 use pretty_assertions::assert_eq;
 use tokio::time::Duration;
 use tokio::time::Instant;
+
+fn env_overlay_for_exec_server(
+    request_env: &HashMap<String, String>,
+    local_policy_env: &HashMap<String, String>,
+) -> HashMap<String, String> {
+    request_env
+        .iter()
+        .filter_map(|(key, value)| {
+            (local_policy_env.get(key) != Some(value)).then_some((key.clone(), value.clone()))
+        })
+        .collect()
+}
+
+fn exec_server_params_for_request(
+    process_id: i32,
+    request: &ExecRequest,
+    tty: bool,
+) -> codex_exec_server::ExecParams {
+    let exec_server_env_config = request
+        .exec_server_env_config
+        .as_ref()
+        .expect("exec server env config");
+    codex_exec_server::ExecParams {
+        process_id: process_id.to_string().into(),
+        argv: request.command.clone(),
+        cwd: request.cwd.to_path_buf(),
+        env_policy: Some(exec_server_env_config.policy.clone()),
+        env: env_overlay_for_exec_server(&request.env, &exec_server_env_config.local_policy_env),
+        tty,
+        pipe_stdin: false,
+        arg0: request.arg0.clone(),
+    }
+}
 
 #[test]
 fn unified_exec_env_injects_defaults() {
@@ -94,15 +128,18 @@ fn exec_server_params_use_env_policy_overlay_contract() {
         network: None,
         expiration: crate::exec::ExecExpiration::DefaultTimeout,
         capture_policy: crate::exec::ExecCapturePolicy::ShellTool,
-        sandbox: codex_sandboxing::SandboxType::None,
+        sandbox: crate::exec::SandboxType::None,
         windows_sandbox_level: codex_protocol::config_types::WindowsSandboxLevel::Disabled,
         windows_sandbox_private_desktop: false,
+        run_as: None,
+        sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
         sandbox_policy: codex_protocol::protocol::SandboxPolicy::DangerFullAccess,
         file_system_sandbox_policy: codex_protocol::permissions::FileSystemSandboxPolicy::from(
             &codex_protocol::protocol::SandboxPolicy::DangerFullAccess,
         ),
         network_sandbox_policy: codex_protocol::permissions::NetworkSandboxPolicy::Restricted,
         windows_sandbox_filesystem_overrides: None,
+        justification: None,
         arg0: None,
     };
 

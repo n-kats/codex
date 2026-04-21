@@ -37,42 +37,12 @@ use codex_utils_absolute_path::test_support::test_path_buf;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
-use codex_exec::AgentMessageItem;
-use codex_exec::CodexStatus;
-use codex_exec::CollabAgentState;
-use codex_exec::CollabAgentStatus;
-use codex_exec::CollabTool;
-use codex_exec::CollabToolCallItem;
-use codex_exec::CollabToolCallStatus;
-use codex_exec::CollectedThreadEvents;
-use codex_exec::CommandExecutionItem;
-use codex_exec::CommandExecutionStatus;
-use codex_exec::ErrorItem;
-use codex_exec::EventProcessorWithJsonOutput;
-use codex_exec::ExecThreadItem;
-use codex_exec::FileChangeItem;
-use codex_exec::FileUpdateChange as ExecFileUpdateChange;
-use codex_exec::ItemCompletedEvent;
-use codex_exec::ItemStartedEvent;
-use codex_exec::ItemUpdatedEvent;
-use codex_exec::McpToolCallItem;
-use codex_exec::McpToolCallItemError;
-use codex_exec::McpToolCallItemResult;
-use codex_exec::McpToolCallStatus;
-use codex_exec::PatchApplyStatus;
-use codex_exec::PatchChangeKind;
-use codex_exec::ReasoningItem;
-use codex_exec::ThreadErrorEvent;
-use codex_exec::ThreadEvent;
-use codex_exec::ThreadItemDetails;
-use codex_exec::ThreadStartedEvent;
-use codex_exec::TodoItem;
-use codex_exec::TodoListItem;
-use codex_exec::TurnCompletedEvent;
-use codex_exec::TurnFailedEvent;
-use codex_exec::TurnStartedEvent;
-use codex_exec::Usage;
-use codex_exec::WebSearchItem;
+use codex_exec::event_processor_with_jsonl_output::CodexStatus;
+use codex_exec::event_processor_with_jsonl_output::CollectedThreadEvents;
+use codex_exec::event_processor_with_jsonl_output::EventProcessorWithJsonOutput;
+use codex_exec::exec_events::FileUpdateChange as ExecFileUpdateChange;
+use codex_exec::exec_events::ThreadItem as ExecThreadItem;
+use codex_exec::exec_events::*;
 
 #[test]
 fn map_todo_items_preserves_text_and_completion_state() {
@@ -115,7 +85,7 @@ fn session_configured_produces_thread_started_event() {
         approval_policy: AskForApproval::Never,
         approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
         sandbox_policy: SandboxPolicy::new_read_only_policy(),
-        cwd: test_path_buf("/tmp/project").abs(),
+        cwd: test_path_buf("/tmp/project").abs().to_path_buf(),
         reasoning_effort: None,
         history_log_id: 0,
         history_entry_count: 0,

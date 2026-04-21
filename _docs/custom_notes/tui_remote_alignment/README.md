@@ -148,3 +148,8 @@
 - config の loader overrides は修正済みだが、`custom.user_shell.no_inject` と `custom.exec.worker_user` は本家との差分がまだ残っている疑いがある。
 - `!` の履歴保存/注入、worker-user の run-as は、rebase 時に優先して見直す。
 - `AppServerSession` の bridge は hybrid のまま残っているため、approval/history の不整合が起きやすい。
+- `core/src/codex.rs` は turn_context の組み立てと配布が主で、`custom.exec.worker_user` や `custom.user_shell.no_inject` の適用場所ではない。
+- `custom.exec.worker_user` は `core/src/config/mod.rs` で正規化し、`core/src/spawn.rs` / `core/src/tools/runtimes/shell/unix_escalation.rs` の実行境界で効かせる。
+- `custom.user_shell.no_inject` は `core/src/tasks/user_shell.rs` の注入/履歴保存境界で効かせる。
+- `bwrap` と `sudo` は同一概念にせず、sandbox と run-as の別軸として合成する。
+- `tui/src/app.rs` の `ThreadManager` 参照は runtime の thread lifecycle ではなく、models manager の取得と test-only cleanup に残っている。

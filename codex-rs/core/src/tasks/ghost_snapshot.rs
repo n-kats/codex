@@ -25,6 +25,7 @@ pub(crate) struct GhostSnapshotTask {
 
 const SNAPSHOT_WARNING_THRESHOLD: Duration = Duration::from_secs(240);
 
+#[async_trait::async_trait]
 impl SessionTask for GhostSnapshotTask {
     fn kind(&self) -> TaskKind {
         TaskKind::Regular

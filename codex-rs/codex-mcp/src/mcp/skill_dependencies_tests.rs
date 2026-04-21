@@ -1,10 +1,10 @@
 use super::*;
+use codex_protocol::protocol::SkillDependencies;
+use codex_protocol::protocol::SkillMetadata;
 use codex_protocol::protocol::SkillScope;
+use codex_protocol::protocol::SkillToolDependency;
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
-
-use crate::skills::SkillMetadata;
-use crate::skills::model::SkillDependencies;
 
 fn skill_with_tools(tools: Vec<SkillToolDependency>) -> SkillMetadata {
     SkillMetadata {
@@ -13,9 +13,9 @@ fn skill_with_tools(tools: Vec<SkillToolDependency>) -> SkillMetadata {
         short_description: None,
         interface: None,
         dependencies: Some(SkillDependencies { tools }),
-        policy: None,
-        path_to_skills_md: PathBuf::from("skill"),
+        path: PathBuf::from("skill"),
         scope: SkillScope::User,
+        enabled: true,
     }
 }
 
@@ -39,11 +39,14 @@ fn collect_missing_respects_canonical_installed_key() {
                 http_headers: None,
                 env_http_headers: None,
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: None,
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -89,11 +92,14 @@ fn collect_missing_dedupes_by_canonical_key_but_preserves_original_name() {
                 http_headers: None,
                 env_http_headers: None,
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: None,
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,

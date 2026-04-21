@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-use codex_feedback::feedback_diagnostics::FEEDBACK_DIAGNOSTICS_ATTACHMENT_FILENAME;
-use codex_feedback::feedback_diagnostics::FeedbackDiagnostics;
+use codex_feedback::FEEDBACK_DIAGNOSTICS_ATTACHMENT_FILENAME;
+use codex_feedback::FeedbackDiagnostics;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -79,6 +79,7 @@ impl FeedbackNoteView {
         self.app_event_tx.send(AppEvent::SubmitFeedback {
             category: self.category,
             reason,
+            turn_id: None,
             include_logs: self.include_logs,
         });
         self.complete = true;
@@ -526,7 +527,8 @@ pub(crate) fn feedback_upload_consent_params(
             header_lines
                 .push(Line::from(vec!["  - ".into(), diagnostic.headline.clone().into()]).into());
             for detail in &diagnostic.details {
-                header_lines.push(Line::from(vec!["    - ".dim(), detail.clone().into()]).into());
+                header_lines
+                    .push(Line::from(vec!["    - ".dim(), Span::from(detail.clone())]).into());
             }
         }
     }
@@ -564,7 +566,7 @@ mod tests {
     use crate::app_event::AppEvent;
     use crate::app_event_sender::AppEventSender;
     use crate::history_cell;
-    use codex_feedback::feedback_diagnostics::FeedbackDiagnostic;
+    use codex_feedback::FeedbackDiagnostic;
     use pretty_assertions::assert_eq;
 
     fn render(view: &FeedbackNoteView, width: u16) -> String {
@@ -678,6 +680,7 @@ mod tests {
             AppEvent::SubmitFeedback {
                 category: FeedbackCategory::Bug,
                 reason: Some(reason),
+                turn_id: _,
                 include_logs: true,
             } if reason == "something broke"
         ));
@@ -702,6 +705,7 @@ mod tests {
             AppEvent::SubmitFeedback {
                 category: FeedbackCategory::GoodResult,
                 reason: None,
+                turn_id: _,
                 include_logs: false,
             }
         ));

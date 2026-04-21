@@ -207,7 +207,7 @@ async fn try_new_creates_and_deletes_snapshot_file() -> Result<()> {
     .expect("snapshot should be created");
     let path = snapshot.path.clone();
     assert!(path.exists());
-    assert_eq!(snapshot.cwd, dir.path().abs());
+    assert_eq!(snapshot.cwd, dir.path().abs().to_path_buf());
 
     drop(snapshot);
 

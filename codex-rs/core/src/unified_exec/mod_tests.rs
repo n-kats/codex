@@ -10,6 +10,7 @@ use crate::sandboxing::ExecRequest;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::process::OutputHandles;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
 use core_test_support::get_remote_test_env;
 use core_test_support::skip_if_sandbox;
@@ -51,7 +52,7 @@ fn shell_env() -> HashMap<String, String> {
 fn test_exec_request(
     turn: &TurnContext,
     command: Vec<String>,
-    cwd: AbsolutePathBuf,
+    cwd: PathBuf,
     env: HashMap<String, String>,
 ) -> ExecRequest {
     let windows_sandbox_private_desktop = false;
@@ -62,7 +63,7 @@ fn test_exec_request(
     let arg0 = None;
     ExecRequest {
         command,
-        cwd,
+        cwd: AbsolutePathBuf::try_from(cwd).expect("absolute path"),
         env,
         network,
         expiration: ExecExpiration::DefaultTimeout,
@@ -75,6 +76,8 @@ fn test_exec_request(
         sandbox_policy,
         file_system_sandbox_policy,
         network_sandbox_policy,
+        exec_server_env_config: None,
+        windows_sandbox_filesystem_overrides: None,
         justification: None,
         arg0,
     }
@@ -103,7 +106,7 @@ async fn exec_command_with_tty(
                 &request,
                 tty,
                 Box::new(NoopSpawnLifecycle),
-                turn.environment.as_ref().expect("turn environment"),
+                &turn.environment,
             )
             .await?,
     );
@@ -549,7 +552,7 @@ async fn unified_exec_uses_remote_exec_server_when_configured() -> anyhow::Resul
     let request = test_exec_request(
         &turn,
         vec!["bash".to_string(), "-i".to_string()],
-        remote_test_env.cwd().clone(),
+        turn.cwd.clone(),
         shell_env(),
     );
 
@@ -598,7 +601,7 @@ async fn remote_exec_server_rejects_inherited_fd_launches() -> anyhow::Result<()
 
     let remote_test_env = remote_test_env().await?;
     let (_, mut turn) = make_session_and_context().await;
-    turn.environment = Some(Arc::new(remote_test_env.environment().clone()));
+    turn.environment = Arc::new(remote_test_env.environment().clone());
 
     let request = test_exec_request(
         &turn,
@@ -616,7 +619,7 @@ async fn remote_exec_server_rejects_inherited_fd_launches() -> anyhow::Result<()
             Box::new(TestSpawnLifecycle {
                 inherited_fds: vec![42],
             }),
-            turn.environment.as_ref().expect("turn environment"),
+            &turn.environment,
         )
         .await
         .expect_err("expected inherited fd rejection");

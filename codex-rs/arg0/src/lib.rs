@@ -5,6 +5,7 @@ use std::path::Path;
 use std::path::PathBuf;
 
 use codex_apply_patch::CODEX_CORE_APPLY_PATCH_ARG1;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_home_dir::find_codex_home;
 #[cfg(unix)]
 use std::os::unix::fs::symlink;
@@ -94,7 +95,28 @@ pub fn arg0_dispatch() -> Option<Arg0PathEntryGuard> {
             Some(patch_arg) => {
                 let mut stdout = std::io::stdout();
                 let mut stderr = std::io::stderr();
-                match codex_apply_patch::apply_patch(&patch_arg, &mut stdout, &mut stderr) {
+                let cwd = match AbsolutePathBuf::current_dir() {
+                    Ok(cwd) => cwd,
+                    Err(_) => {
+                        eprintln!("Error: Failed to determine current directory.");
+                        std::process::exit(1);
+                    }
+                };
+                let runtime = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime,
+                    Err(_) => std::process::exit(1),
+                };
+                match runtime.block_on(codex_apply_patch::apply_patch(
+                    &patch_arg,
+                    &cwd,
+                    &mut stdout,
+                    &mut stderr,
+                    codex_exec_server::LOCAL_FS.as_ref(),
+                    None,
+                )) {
                     Ok(()) => 0,
                     Err(_) => 1,
                 }

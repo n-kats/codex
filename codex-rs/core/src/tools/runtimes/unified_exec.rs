@@ -31,7 +31,6 @@ use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::sandbox_override_for_first_attempt;
 use crate::tools::sandboxing::with_cached_approval;
-use crate::tools::spec::UnifiedExecShellMode;
 use crate::unified_exec::NoopSpawnLifecycle;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecProcess;
@@ -39,6 +38,8 @@ use crate::unified_exec::UnifiedExecProcessManager;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::ReviewDecision;
+use codex_tools::UnifiedExecShellMode;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -116,6 +117,8 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
         let call_id = ctx.call_id.to_string();
         let command = req.command.clone();
         let cwd = req.cwd.clone();
+        let guardian_cwd = AbsolutePathBuf::from_absolute_path(&req.cwd)
+            .expect("unified exec cwd should be absolute");
         let retry_reason = ctx.retry_reason.clone();
         let reason = retry_reason.clone().or_else(|| req.justification.clone());
         Box::pin(async move {
@@ -123,10 +126,11 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
                 return review_approval_request(
                     session,
                     turn,
+                    call_id.clone(),
                     GuardianApprovalRequest::ExecCommand {
-                        id: call_id,
+                        id: call_id.clone(),
                         command,
-                        cwd,
+                        cwd: guardian_cwd,
                         sandbox_permissions: req.sandbox_permissions,
                         additional_permissions: req.additional_permissions.clone(),
                         justification: req.justification.clone(),
@@ -197,6 +201,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             session_shell.as_ref(),
             &req.cwd,
             &req.explicit_env_overrides,
+            &std::collections::HashMap::new(),
         );
         let command = if matches!(session_shell.shell_type, ShellType::PowerShell) {
             prefix_powershell_script_with_utf8(&command)

@@ -96,6 +96,7 @@ pub(super) fn server_notification_thread_events(
                 msg: EventMsg::TurnStarted(TurnStartedEvent {
                     turn_id: notification.turn.id,
                     model_context_window: None,
+                    started_at: None,
                     collaboration_mode_kind: ModeKind::default(),
                 }),
             }],
@@ -326,6 +327,8 @@ fn append_terminal_turn_events(events: &mut Vec<Event>, turn: &Turn, include_fai
             msg: EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: turn.id.clone(),
                 last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
             }),
         }),
         TurnStatus::Interrupted => events.push(Event {
@@ -333,6 +336,8 @@ fn append_terminal_turn_events(events: &mut Vec<Event>, turn: &Turn, include_fai
             msg: EventMsg::TurnAborted(TurnAbortedEvent {
                 turn_id: Some(turn.id.clone()),
                 reason: TurnAbortReason::Interrupted,
+                completed_at: None,
+                duration_ms: None,
             }),
         }),
         TurnStatus::Failed => {
@@ -353,6 +358,8 @@ fn append_terminal_turn_events(events: &mut Vec<Event>, turn: &Turn, include_fai
                 msg: EventMsg::TurnComplete(TurnCompleteEvent {
                     turn_id: turn.id.clone(),
                     last_agent_message: None,
+                    completed_at: None,
+                    duration_ms: None,
                 }),
             });
         }
@@ -366,6 +373,7 @@ fn app_server_turn_to_events(thread_id: ThreadId, turn: &Turn) -> Vec<Event> {
         id: String::new(),
         msg: EventMsg::TurnStarted(TurnStartedEvent {
             turn_id: turn.id.clone(),
+            started_at: None,
             model_context_window: None,
             collaboration_mode_kind: ModeKind::default(),
         }),
@@ -382,9 +390,9 @@ fn app_server_turn_item_to_events(
     turn_id: &str,
     item: &ThreadItem,
 ) -> Vec<Event> {
-    if let Some(events) = command_execution_started_event(turn_id, item)
-        .and_then(|started| command_execution_completed_event(turn_id, item).map(|completed| (started, completed)))
-    {
+    if let Some(events) = command_execution_started_event(turn_id, item).and_then(|started| {
+        command_execution_completed_event(turn_id, item).map(|completed| (started, completed))
+    }) {
         return events.0.into_iter().chain(events.1).collect();
     }
 
@@ -423,7 +431,7 @@ fn command_execution_started_event(turn_id: &str, item: &ThreadItem) -> Option<V
             process_id: process_id.clone(),
             turn_id: turn_id.to_string(),
             command: split_command_string(command),
-            cwd: cwd.clone(),
+            cwd: cwd.clone().to_path_buf(),
             parsed_cmd: command_actions
                 .iter()
                 .cloned()
@@ -482,7 +490,7 @@ fn command_execution_completed_event(turn_id: &str, item: &ThreadItem) -> Option
             process_id: process_id.clone(),
             turn_id: turn_id.to_string(),
             command: split_command_string(command),
-            cwd: cwd.clone(),
+            cwd: cwd.clone().to_path_buf(),
             parsed_cmd: command_actions
                 .iter()
                 .cloned()

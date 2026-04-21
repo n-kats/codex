@@ -16,6 +16,7 @@ use codex_tools::verified_connector_suggestion_completed;
 use rmcp::model::RequestId;
 use tracing::warn;
 
+use crate::codex::public_mcp_tools_from_local;
 use crate::connectors;
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
@@ -27,6 +28,7 @@ use crate::tools::registry::ToolKind;
 
 pub struct ToolSuggestHandler;
 
+#[async_trait::async_trait]
 impl ToolHandler for ToolSuggestHandler {
     type Output = FunctionToolOutput;
 
@@ -74,7 +76,7 @@ impl ToolHandler for ToolSuggestHandler {
 
         let auth = session.services.auth_manager.auth().await;
         let manager = session.services.mcp_connection_manager.read().await;
-        let mcp_tools = manager.list_all_tools().await;
+        let mcp_tools = public_mcp_tools_from_local(&manager.list_all_tools().await);
         drop(manager);
         let accessible_connectors = connectors::with_app_enabled_state(
             connectors::accessible_connectors_from_mcp_tools(&mcp_tools),

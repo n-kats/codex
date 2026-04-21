@@ -58,7 +58,9 @@ async fn load_model_info_offline(model: &str, config: &codex_core::config::Confi
         None,
         CollaborationModesConfig::default(),
     );
-    models_manager.get_model_info(model, config).await
+    models_manager
+        .get_model_info(model, &config.to_models_manager_config())
+        .await
 }
 
 fn sse_completed(id: &str) -> String {
@@ -716,6 +718,7 @@ async fn ignores_remote_personality_if_remote_models_disabled() -> anyhow::Resul
         visibility: ModelVisibility::List,
         supported_in_api: true,
         priority: 1,
+        additional_speed_tiers: Vec::new(),
         availability_nux: None,
         upgrade: None,
         base_instructions: "base instructions".to_string(),
@@ -839,6 +842,7 @@ async fn remote_model_friendly_personality_instructions_with_feature() -> anyhow
         visibility: ModelVisibility::List,
         supported_in_api: true,
         priority: 1,
+        additional_speed_tiers: Vec::new(),
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: Some(ModelMessages {
@@ -959,6 +963,7 @@ async fn user_turn_personality_remote_model_template_includes_update_message() -
         visibility: ModelVisibility::List,
         supported_in_api: true,
         priority: 1,
+        additional_speed_tiers: Vec::new(),
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: Some(ModelMessages {

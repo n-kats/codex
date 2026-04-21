@@ -18,7 +18,7 @@ mod review_session;
 
 use std::time::Duration;
 
-use codex_protocol::protocol::GuardianAssessmentDecisionSource;
+use codex_protocol::approvals::GuardianAssessmentDecisionSource;
 use serde::Deserialize;
 use serde::Serialize;
 

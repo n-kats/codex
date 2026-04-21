@@ -21,25 +21,26 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use tracing::warn;
 
-use crate::codex::INITIAL_SUBMIT_ID;
 use crate::config::Config;
 use crate::config_loader::AppsRequirementsToml;
 use crate::mcp::McpManager;
+use crate::mcp_connection_manager::McpConnectionManager;
+use crate::mcp_connection_manager::SandboxState;
+use crate::mcp_connection_manager::ToolInfo;
 use crate::plugins::PluginsManager;
 use crate::plugins::list_tool_suggest_discoverable_plugins;
 use codex_config::types::AppToolApproval;
 use codex_config::types::AppsConfigToml;
 use codex_config::types::ToolSuggestDiscoverableType;
+pub use codex_connectors::metadata::connector_mention_slug;
 use codex_features::Feature;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_login::default_client::create_client;
 use codex_login::default_client::originator;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
-use codex_mcp::McpConnectionManager;
-use codex_mcp::ToolInfo;
+use codex_mcp::ToolInfo as PublicToolInfo;
 use codex_mcp::ToolPluginProvenance;
-use codex_mcp::codex_apps_tools_cache_key;
 use codex_mcp::compute_auth_statuses;
 use codex_mcp::with_codex_apps_mcp;
 
@@ -78,6 +79,95 @@ struct CachedAccessibleConnectors {
 
 static ACCESSIBLE_CONNECTORS_CACHE: LazyLock<StdMutex<Option<CachedAccessibleConnectors>>> =
     LazyLock::new(|| StdMutex::new(None));
+
+trait ConnectorToolInfo {
+    fn server_name(&self) -> &str;
+    fn connector_id(&self) -> Option<&str>;
+    fn connector_name(&self) -> Option<&str>;
+    fn connector_description(&self) -> Option<&str>;
+    fn plugin_display_names(&self) -> &[String];
+    fn tool_name(&self) -> &str;
+    fn tool_title(&self) -> Option<&str>;
+    fn tool_annotations(&self) -> Option<&ToolAnnotations>;
+}
+
+impl ConnectorToolInfo for ToolInfo {
+    fn server_name(&self) -> &str {
+        &self.server_name
+    }
+
+    fn connector_id(&self) -> Option<&str> {
+        self.connector_id.as_deref()
+    }
+
+    fn connector_name(&self) -> Option<&str> {
+        self.connector_name.as_deref()
+    }
+
+    fn connector_description(&self) -> Option<&str> {
+        self.connector_description.as_deref()
+    }
+
+    fn plugin_display_names(&self) -> &[String] {
+        &self.plugin_display_names
+    }
+
+    fn tool_name(&self) -> &str {
+        &self.tool.name
+    }
+
+    fn tool_title(&self) -> Option<&str> {
+        self.tool.title.as_deref()
+    }
+
+    fn tool_annotations(&self) -> Option<&ToolAnnotations> {
+        self.tool.annotations.as_ref()
+    }
+}
+
+impl ConnectorToolInfo for PublicToolInfo {
+    fn server_name(&self) -> &str {
+        &self.server_name
+    }
+
+    fn connector_id(&self) -> Option<&str> {
+        self.connector_id.as_deref()
+    }
+
+    fn connector_name(&self) -> Option<&str> {
+        self.connector_name.as_deref()
+    }
+
+    fn connector_description(&self) -> Option<&str> {
+        self.connector_description.as_deref()
+    }
+
+    fn plugin_display_names(&self) -> &[String] {
+        &self.plugin_display_names
+    }
+
+    fn tool_name(&self) -> &str {
+        &self.tool.name
+    }
+
+    fn tool_title(&self) -> Option<&str> {
+        self.tool.title.as_deref()
+    }
+
+    fn tool_annotations(&self) -> Option<&ToolAnnotations> {
+        self.tool.annotations.as_ref()
+    }
+}
+
+fn auth_manager_from_config(config: &Config) -> Arc<AuthManager> {
+    let auth_manager = Arc::new(AuthManager::new(
+        config.codex_home.to_path_buf(),
+        false,
+        config.cli_auth_credentials_store_mode,
+    ));
+    auth_manager.set_forced_chatgpt_workspace_id(config.forced_chatgpt_workspace_id.clone());
+    auth_manager
+}
 
 #[derive(Debug, Clone)]
 pub struct AccessibleConnectorsStatus {
@@ -139,8 +229,7 @@ pub(crate) async fn list_tool_suggest_discoverable_tools_with_auth(
 pub async fn list_cached_accessible_connectors_from_mcp_tools(
     config: &Config,
 ) -> Option<Vec<AppInfo>> {
-    let auth_manager =
-        AuthManager::shared_from_config(config, /*enable_codex_api_key_env*/ false);
+    let auth_manager = auth_manager_from_config(config);
     let auth = auth_manager.auth().await;
     if !config
         .features
@@ -189,8 +278,7 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_options_and_status(
     config: &Config,
     force_refetch: bool,
 ) -> anyhow::Result<AccessibleConnectorsStatus> {
-    let auth_manager =
-        AuthManager::shared_from_config(config, /*enable_codex_api_key_env*/ false);
+    let auth_manager = auth_manager_from_config(config);
     let auth = auth_manager.auth().await;
     if !config
         .features
@@ -238,11 +326,15 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_options_and_status(
         config.mcp_oauth_credentials_store_mode,
         auth_status_entries,
         &config.permissions.approval_policy,
-        INITIAL_SUBMIT_ID.to_owned(),
         tx_event,
-        SandboxPolicy::new_read_only_policy(),
+        SandboxState {
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            codex_linux_sandbox_exe: None,
+            sandbox_cwd: config.cwd.clone(),
+            use_legacy_landlock: false,
+        },
         config.codex_home.to_path_buf(),
-        codex_apps_tools_cache_key(auth.as_ref()),
+        crate::mcp_connection_manager::codex_apps_tools_cache_key(auth.as_ref()),
         ToolPluginProvenance::default(),
     )
     .await;
@@ -403,8 +495,7 @@ async fn list_directory_connectors_for_tool_suggest_with_auth(
     let token_data = if let Some(auth) = auth {
         auth.get_token_data().ok()
     } else {
-        let auth_manager =
-            AuthManager::shared_from_config(config, /*enable_codex_api_key_env*/ false);
+        let auth_manager = auth_manager_from_config(config);
         auth_manager
             .auth()
             .await
@@ -479,24 +570,82 @@ async fn chatgpt_get_request_with_token<T: DeserializeOwned>(
     }
 }
 
-pub(crate) fn accessible_connectors_from_mcp_tools(
-    mcp_tools: &HashMap<String, ToolInfo>,
+pub(crate) fn accessible_connectors_from_mcp_tools<T: ConnectorToolInfo>(
+    mcp_tools: &HashMap<String, T>,
 ) -> Vec<AppInfo> {
     // ToolInfo already carries plugin provenance, so app-level plugin sources
     // can be derived here instead of requiring a separate enrichment pass.
     let tools = mcp_tools.values().filter_map(|tool| {
-        if tool.server_name != CODEX_APPS_MCP_SERVER_NAME {
+        if tool.server_name() != CODEX_APPS_MCP_SERVER_NAME {
             return None;
         }
-        let connector_id = tool.connector_id.as_deref()?;
+        let connector_id = tool.connector_id()?;
         Some(codex_connectors::accessible::AccessibleConnectorTool {
             connector_id: connector_id.to_string(),
-            connector_name: tool.connector_name.clone(),
-            connector_description: tool.connector_description.clone(),
-            plugin_display_names: tool.plugin_display_names.clone(),
+            connector_name: tool.connector_name().map(str::to_string),
+            connector_description: tool.connector_description().map(str::to_string),
+            plugin_display_names: tool.plugin_display_names().to_vec(),
         })
     });
     codex_connectors::accessible::collect_accessible_connectors(tools)
+}
+
+pub(crate) fn merge_plugin_apps_with_accessible(
+    mut plugin_apps: Vec<AppInfo>,
+    accessible_connectors: Vec<AppInfo>,
+) -> Vec<AppInfo> {
+    let mut by_id = HashMap::with_capacity(plugin_apps.len() + accessible_connectors.len());
+    let mut merged = Vec::with_capacity(plugin_apps.len() + accessible_connectors.len());
+
+    for app in plugin_apps.drain(..) {
+        by_id.insert(app.id.clone(), merged.len());
+        merged.push(app);
+    }
+
+    for accessible in accessible_connectors {
+        match by_id.get(&accessible.id).copied() {
+            Some(index) => {
+                let app = &mut merged[index];
+                app.is_accessible |= accessible.is_accessible;
+                app.is_enabled &= accessible.is_enabled;
+                if app.description.is_none() {
+                    app.description = accessible.description.clone();
+                }
+                if app.logo_url.is_none() {
+                    app.logo_url = accessible.logo_url.clone();
+                }
+                if app.logo_url_dark.is_none() {
+                    app.logo_url_dark = accessible.logo_url_dark.clone();
+                }
+                if app.distribution_channel.is_none() {
+                    app.distribution_channel = accessible.distribution_channel.clone();
+                }
+                if app.branding.is_none() {
+                    app.branding = accessible.branding.clone();
+                }
+                if app.app_metadata.is_none() {
+                    app.app_metadata = accessible.app_metadata.clone();
+                }
+                if app.labels.is_none() {
+                    app.labels = accessible.labels.clone();
+                }
+                if app.install_url.is_none() {
+                    app.install_url = accessible.install_url.clone();
+                }
+                for name in accessible.plugin_display_names {
+                    if !app.plugin_display_names.contains(&name) {
+                        app.plugin_display_names.push(name);
+                    }
+                }
+            }
+            None => {
+                by_id.insert(accessible.id.clone(), merged.len());
+                merged.push(accessible);
+            }
+        }
+    }
+
+    merged
 }
 
 pub fn with_app_enabled_state(mut connectors: Vec<AppInfo>, config: &Config) -> Vec<AppInfo> {
@@ -554,17 +703,20 @@ pub(crate) fn app_tool_policy(
     )
 }
 
-pub(crate) fn codex_app_tool_is_enabled(config: &Config, tool_info: &ToolInfo) -> bool {
-    if tool_info.server_name != CODEX_APPS_MCP_SERVER_NAME {
+pub(crate) fn codex_app_tool_is_enabled<T: ConnectorToolInfo>(
+    config: &Config,
+    tool_info: &T,
+) -> bool {
+    if tool_info.server_name() != CODEX_APPS_MCP_SERVER_NAME {
         return true;
     }
 
     app_tool_policy(
         config,
-        tool_info.connector_id.as_deref(),
-        &tool_info.tool.name,
-        tool_info.tool.title.as_deref(),
-        tool_info.tool.annotations.as_ref(),
+        tool_info.connector_id(),
+        tool_info.tool_name(),
+        tool_info.tool_title(),
+        tool_info.tool_annotations(),
     )
     .enabled
 }

@@ -47,9 +47,9 @@ pub(super) async fn spawn_review_thread(
     .with_web_search_config(/*web_search_config*/ None)
     .with_allow_login_shell(config.permissions.allow_login_shell)
     .with_has_environment(parent_turn_context.environment.is_some())
-    .with_spawn_agent_usage_hint(config.multi_agent_v2.usage_hint_enabled)
-    .with_spawn_agent_usage_hint_text(config.multi_agent_v2.usage_hint_text.clone())
-    .with_hide_spawn_agent_metadata(config.multi_agent_v2.hide_spawn_agent_metadata)
+    .with_spawn_agent_usage_hint(tools_config.spawn_agent_usage_hint)
+    .with_spawn_agent_usage_hint_text(tools_config.spawn_agent_usage_hint_text.clone())
+    .with_hide_spawn_agent_metadata(tools_config.hide_spawn_agent_metadata)
     .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
         &config.agent_roles,
     ));

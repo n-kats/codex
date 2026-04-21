@@ -4,7 +4,6 @@ use crate::agent::registry::AgentRegistry;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::resolve_role_config;
 use crate::agent::status::is_final;
-use crate::codex::emit_subagent_session_started;
 use crate::codex_thread::ThreadConfigSnapshot;
 use crate::find_archived_thread_path_by_id_str;
 use crate::find_thread_path_by_id_str;
@@ -14,11 +13,12 @@ use crate::session_prefix::format_subagent_notification_message;
 use crate::shell_snapshot::ShellSnapshot;
 use crate::thread_manager::ThreadManagerState;
 use crate::thread_rollout_truncation::truncate_rollout_to_last_n_fork_turns;
+use codex_analytics::SubAgentThreadStartedInput;
+use codex_analytics::now_unix_seconds;
 use codex_features::Feature;
+use codex_login::default_client::originator;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::InitialHistory;
@@ -36,6 +36,9 @@ use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Weak;
+
+use crate::error::CodexErr;
+use crate::error::Result as CodexResult;
 use tokio::sync::watch;
 use tracing::warn;
 
@@ -253,40 +256,24 @@ impl AgentControl {
         )) = notification_source.as_ref()
             && new_thread.thread.enabled(Feature::GeneralAnalytics)
         {
-            let client_metadata = match state.get_thread(*parent_thread_id).await {
-                Ok(parent_thread) => {
-                    parent_thread
-                        .codex
-                        .session
-                        .app_server_client_metadata()
-                        .await
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        parent_thread_id = %parent_thread_id,
-                        "skipping subagent thread analytics: failed to load parent thread metadata"
-                    );
-                    crate::codex::AppServerClientMetadata {
-                        client_name: None,
-                        client_version: None,
-                    }
-                }
-            };
             let thread_config = new_thread.thread.codex.thread_config_snapshot().await;
-            emit_subagent_session_started(
-                &new_thread
-                    .thread
-                    .codex
-                    .session
-                    .services
-                    .analytics_events_client,
-                client_metadata,
-                new_thread.thread_id,
-                /*parent_thread_id*/ None,
-                thread_config,
-                subagent_source.clone(),
-            );
+            let analytics_events_client = &new_thread
+                .thread
+                .codex
+                .session
+                .services
+                .analytics_events_client;
+            analytics_events_client.track_subagent_thread_started(SubAgentThreadStartedInput {
+                thread_id: new_thread.thread_id.to_string(),
+                parent_thread_id: Some(parent_thread_id.to_string()),
+                product_client_id: originator().value,
+                client_name: String::new(),
+                client_version: String::new(),
+                model: thread_config.model,
+                ephemeral: thread_config.ephemeral,
+                subagent_source: subagent_source.clone(),
+                created_at: now_unix_seconds(),
+            });
         }
 
         // Notify a new thread has been created. This notification will be processed by clients
@@ -362,7 +349,7 @@ impl AgentControl {
                 .session
                 .ensure_rollout_materialized()
                 .await;
-            parent_thread.codex.session.flush_rollout().await?;
+            parent_thread.codex.session.flush_rollout().await;
         }
 
         let rollout_path = parent_thread
@@ -663,7 +650,7 @@ impl AgentControl {
         let state = self.upgrade()?;
         let result = if let Ok(thread) = state.get_thread(agent_id).await {
             thread.codex.session.ensure_rollout_materialized().await;
-            thread.codex.session.flush_rollout().await?;
+            thread.codex.session.flush_rollout().await;
             if matches!(thread.agent_status().await, AgentStatus::Shutdown) {
                 Ok(String::new())
             } else {

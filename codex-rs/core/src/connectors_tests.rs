@@ -20,7 +20,7 @@ use codex_connectors::metadata::connector_mention_slug;
 use codex_connectors::metadata::sanitize_name;
 use codex_features::Feature;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
-use codex_mcp::ToolInfo;
+use codex_mcp::ToolInfo as PublicToolInfo;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use rmcp::model::JsonObject;
@@ -109,13 +109,13 @@ fn codex_app_tool(
     connector_id: &str,
     connector_name: Option<&str>,
     plugin_display_names: &[&str],
-) -> ToolInfo {
+) -> PublicToolInfo {
     let tool_namespace = connector_name
         .map(sanitize_name)
         .map(|connector_name| format!("mcp__{CODEX_APPS_MCP_SERVER_NAME}__{connector_name}"))
         .unwrap_or_else(|| CODEX_APPS_MCP_SERVER_NAME.to_string());
 
-    ToolInfo {
+    PublicToolInfo {
         server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
         callable_name: tool_name.to_string(),
         callable_namespace: tool_namespace,
@@ -125,6 +125,19 @@ fn codex_app_tool(
         connector_name: connector_name.map(ToOwned::to_owned),
         connector_description: None,
         plugin_display_names: plugin_names(plugin_display_names),
+    }
+}
+
+fn to_local_tool_info(tool: PublicToolInfo) -> crate::mcp_connection_manager::ToolInfo {
+    crate::mcp_connection_manager::ToolInfo {
+        server_name: tool.server_name,
+        tool_name: tool.callable_name,
+        tool_namespace: tool.callable_namespace,
+        tool: tool.tool,
+        connector_id: tool.connector_id,
+        connector_name: tool.connector_name,
+        plugin_display_names: tool.plugin_display_names,
+        connector_description: tool.connector_description,
     }
 }
 
@@ -194,7 +207,7 @@ fn accessible_connectors_from_mcp_tools_carries_plugin_display_names() {
         ),
         (
             "mcp__sample__echo".to_string(),
-            ToolInfo {
+            PublicToolInfo {
                 server_name: "sample".to_string(),
                 callable_name: "echo".to_string(),
                 callable_namespace: "sample".to_string(),
@@ -260,6 +273,10 @@ async fn refresh_accessible_connectors_cache_from_mcp_tools_writes_latest_instal
             ),
         ),
     ]);
+    let tools = tools
+        .into_iter()
+        .map(|(name, tool)| (name, to_local_tool_info(tool)))
+        .collect();
 
     let cached = with_accessible_connectors_cache_cleared(|| {
         refresh_accessible_connectors_cache_from_mcp_tools(&config, /*auth*/ None, &tools);
@@ -319,7 +336,7 @@ fn merge_connectors_unions_and_dedupes_plugin_display_names() {
 fn accessible_connectors_from_mcp_tools_preserves_description() {
     let mcp_tools = HashMap::from([(
         "mcp__codex_apps__calendar_create_event".to_string(),
-        ToolInfo {
+        PublicToolInfo {
             server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
             callable_name: "calendar_create_event".to_string(),
             callable_namespace: "mcp__codex_apps__calendar".to_string(),

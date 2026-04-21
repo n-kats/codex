@@ -7,7 +7,6 @@ use super::build_current_thread_section;
 use super::build_recent_work_section;
 use super::build_workspace_section_with_user_root;
 use super::format_section;
-use super::format_startup_context_blob;
 use chrono::TimeZone;
 use chrono::Utc;
 use codex_git_utils::GitSha;
@@ -18,25 +17,28 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::GitInfo;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
-use codex_thread_store::StoredThread;
+use codex_state::ThreadMetadata;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use pretty_assertions::assert_eq;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
 
-fn stored_thread(cwd: &str, title: &str, first_user_message: &str) -> StoredThread {
-    StoredThread {
-        thread_id: ThreadId::new(),
-        rollout_path: Some(PathBuf::from("/tmp/rollout.jsonl")),
-        forked_from_id: None,
-        preview: first_user_message.to_string(),
-        name: (!title.is_empty()).then(|| title.to_string()),
-        model_provider: "test-provider".to_string(),
-        model: Some("gpt-5".to_string()),
-        reasoning_effort: None,
+fn format_startup_context_blob(body: &str) -> String {
+    let mut wrapped = String::new();
+    writeln!(&mut wrapped, "<startup_context>").expect("write start tag");
+    wrapped.push_str(body);
+    wrapped.push_str("\n</startup_context>");
+    wrapped
+}
+
+fn stored_thread(cwd: &str, title: &str, first_user_message: &str) -> ThreadMetadata {
+    ThreadMetadata {
+        id: ThreadId::new(),
+        rollout_path: PathBuf::from("/tmp/rollout.jsonl"),
         created_at: Utc
             .timestamp_opt(1_709_251_100, 0)
             .single()
@@ -45,23 +47,24 @@ fn stored_thread(cwd: &str, title: &str, first_user_message: &str) -> StoredThre
             .timestamp_opt(1_709_251_200, 0)
             .single()
             .expect("valid timestamp"),
-        archived_at: None,
-        cwd: PathBuf::from(cwd),
-        cli_version: "test".to_string(),
-        source: SessionSource::Cli,
+        source: SessionSource::Cli.to_string(),
         agent_nickname: None,
         agent_role: None,
         agent_path: None,
-        git_info: Some(GitInfo {
-            commit_hash: Some(GitSha::new("abcdef")),
-            branch: Some("main".to_string()),
-            repository_url: None,
-        }),
-        approval_mode: AskForApproval::Never,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
-        token_usage: None,
+        model_provider: "test-provider".to_string(),
+        model: Some("gpt-5".to_string()),
+        reasoning_effort: None,
+        cwd: PathBuf::from(cwd),
+        cli_version: "test".to_string(),
+        title: title.to_string(),
+        sandbox_policy: SandboxPolicy::new_read_only_policy().to_string(),
+        approval_mode: AskForApproval::Never.to_string(),
+        tokens_used: 0,
         first_user_message: Some(first_user_message.to_string()),
-        history: None,
+        archived_at: None,
+        git_sha: Some(GitSha::new("abcdef").0),
+        git_branch: Some("main".to_string()),
+        git_origin_url: None,
     }
 }
 
@@ -236,7 +239,7 @@ fn fixed_section_budgets_apply_per_section_without_total_blob_truncation() {
 async fn workspace_section_requires_meaningful_structure() {
     let cwd = TempDir::new().expect("tempdir");
     assert_eq!(
-        build_workspace_section_with_user_root(&cwd.path().abs(), /*user_root*/ None).await,
+        build_workspace_section_with_user_root(&cwd.path().abs(), /*user_root*/ None),
         None
     );
 }
@@ -249,7 +252,6 @@ async fn workspace_section_includes_tree_when_entries_exist() {
 
     let section =
         build_workspace_section_with_user_root(&cwd.path().abs(), /*user_root*/ None)
-            .await
             .expect("workspace section");
     assert!(section.contains("Working directory tree:"));
     assert!(section.contains("- docs/"));
@@ -271,7 +273,6 @@ async fn workspace_section_includes_user_root_tree_when_distinct() {
     fs::write(user_root.join(".zshrc"), "export TEST=1").expect("write home file");
 
     let section = build_workspace_section_with_user_root(&cwd.abs(), Some(user_root))
-        .await
         .expect("workspace section");
     assert!(section.contains("User root tree:"));
     assert!(section.contains("- code/"));
@@ -315,7 +316,6 @@ async fn recent_work_section_groups_threads_by_cwd() {
     let repo = repo.abs();
 
     let section = build_recent_work_section(&current_cwd.abs(), &recent_threads)
-        .await
         .expect("recent work section");
     assert!(section.contains(&format!("### Git repo: {}", repo.display())));
     assert!(section.contains("Recent sessions: 2"));

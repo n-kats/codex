@@ -125,9 +125,9 @@ fn png_bytes(width: u32, height: u32, rgba: [u8; 4]) -> anyhow::Result<Vec<u8>> 
 async fn create_workspace_directory(test: &TestCodex, rel_path: &str) -> anyhow::Result<PathBuf> {
     let abs_path = AbsolutePathBuf::from_absolute_path(test.config.cwd.join(rel_path))?;
     test.fs()
-        .create_directory(&abs_path, CreateDirectoryOptions { recursive: true })
+        .create_directory(&abs_path, CreateDirectoryOptions { recursive: true }, None)
         .await?;
-    Ok(abs_path.into_path_buf())
+    Ok(abs_path.to_path_buf())
 }
 
 async fn write_workspace_file(
@@ -139,11 +139,11 @@ async fn write_workspace_file(
     if let Some(parent) = abs_path.parent() {
         let parent = AbsolutePathBuf::from_absolute_path(parent)?;
         test.fs()
-            .create_directory(&parent, CreateDirectoryOptions { recursive: true })
+            .create_directory(&parent, CreateDirectoryOptions { recursive: true }, None)
             .await?;
     }
-    test.fs().write_file(&abs_path, contents).await?;
-    Ok(abs_path.into_path_buf())
+    test.fs().write_file(&abs_path, contents, None).await?;
+    Ok(abs_path.to_path_buf())
 }
 
 async fn write_workspace_png(
@@ -337,7 +337,10 @@ async fn view_image_tool_attaches_local_image() -> anyhow::Result<()> {
         _ => unreachable!("stored event must be ViewImageToolCall"),
     };
     assert_eq!(tool_event.call_id, call_id);
-    assert_eq!(tool_event.path, abs_path.to_path_buf());
+    assert_eq!(
+        tool_event.path,
+        AbsolutePathBuf::from_absolute_path(&abs_path)?
+    );
 
     let req = mock.single_request();
     let body = req.body_json();
@@ -1411,6 +1414,7 @@ async fn view_image_tool_returns_unsupported_message_for_text_only_model() -> an
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
         experimental_supported_tools: Vec::new(),
+        additional_speed_tiers: Vec::new(),
     };
     mount_models_once(
         &server,

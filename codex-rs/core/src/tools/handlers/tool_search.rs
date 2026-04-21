@@ -42,6 +42,7 @@ impl ToolSearchHandler {
     }
 }
 
+#[async_trait::async_trait]
 impl ToolHandler for ToolSearchHandler {
     type Output = ToolSearchOutput;
 

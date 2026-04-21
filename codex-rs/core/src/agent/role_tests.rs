@@ -6,6 +6,7 @@ use crate::plugins::PluginsManager;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use std::fs;
 use std::path::PathBuf;
@@ -635,13 +636,13 @@ enabled = false
 
     let plugins_manager = Arc::new(PluginsManager::new(home.path().to_path_buf()));
     let skills_manager = crate::skills::SkillsManager::new(
-        home.path().to_path_buf(),
+        AbsolutePathBuf::from_absolute_path(home.path()).expect("home should be absolute"),
         /*bundled_skills_enabled*/ true,
     );
-    let plugin_outcome = plugins_manager.plugins_for_config(&config);
+    let plugin_outcome = plugins_manager.plugins_for_config(&config).await;
     let effective_skill_roots = plugin_outcome.effective_skill_roots();
     let skills_input = crate::skills::skills_load_input_from_config(&config, effective_skill_roots);
-    let outcome = skills_manager.skills_for_config(&skills_input);
+    let outcome = skills_manager.skills_for_config(&skills_input, None).await;
     let skill = outcome
         .skills
         .iter()

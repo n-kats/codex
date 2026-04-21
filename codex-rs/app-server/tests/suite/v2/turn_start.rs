@@ -1630,7 +1630,6 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
                 text: "first turn".to_string(),
                 text_elements: Vec::new(),
             }],
-            responsesapi_client_metadata: None,
             cwd: Some(first_cwd.clone()),
             approval_policy: Some(codex_app_server_protocol::AskForApproval::Never),
             approvals_reviewer: None,
@@ -1648,6 +1647,7 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
             personality: None,
             output_schema: None,
             collaboration_mode: None,
+            responsesapi_client_metadata: None,
         })
         .await?;
     timeout(
@@ -1670,7 +1670,6 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
                 text: "second turn".to_string(),
                 text_elements: Vec::new(),
             }],
-            responsesapi_client_metadata: None,
             cwd: Some(second_cwd.clone()),
             approval_policy: Some(codex_app_server_protocol::AskForApproval::Never),
             approvals_reviewer: None,
@@ -1682,6 +1681,7 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
             personality: None,
             output_schema: None,
             collaboration_mode: None,
+            responsesapi_client_metadata: None,
         })
         .await?;
     timeout(

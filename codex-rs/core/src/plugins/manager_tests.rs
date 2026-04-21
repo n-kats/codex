@@ -331,8 +331,7 @@ async fn plugin_telemetry_metadata_uses_default_mcp_config_path() {
     let metadata = plugin_telemetry_metadata_from_root(
         &PluginId::parse("sample@test").expect("plugin id should parse"),
         &plugin_root.abs(),
-    )
-    .await;
+    );
 
     assert_eq!(
         metadata.capability_summary,
@@ -994,6 +993,77 @@ async fn install_plugin_updates_config_with_relative_path_and_plugin_key() {
     let config = fs::read_to_string(tmp.path().join("config.toml")).unwrap();
     assert!(config.contains(r#"[plugins."sample-plugin@debug"]"#));
     assert!(config.contains("enabled = true"));
+}
+
+#[tokio::test]
+async fn install_plugin_exposes_bundled_mcp_servers_in_mcp_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_root = tmp.path().join("repo");
+    fs::create_dir_all(repo_root.join(".git")).unwrap();
+    fs::create_dir_all(repo_root.join(".agents/plugins")).unwrap();
+    fs::write(tmp.path().join(CONFIG_TOML_FILE), "[features]\nplugins = true\n").unwrap();
+    write_plugin(&repo_root, "sample-plugin", "sample-plugin");
+    fs::write(
+        repo_root.join("sample-plugin/.mcp.json"),
+        r#"{
+  "mcpServers": {
+    "sample-mcp": {
+      "command": "echo"
+    }
+  }
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        repo_root.join("sample-plugin/.app.json"),
+        r#"{
+  "apps": {
+    "example": {
+      "id": "connector_example"
+    }
+  }
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        repo_root.join(".agents/plugins/marketplace.json"),
+        r#"{
+  "name": "debug",
+  "plugins": [
+    {
+      "name": "sample-plugin",
+      "source": {
+        "source": "local",
+        "path": "./sample-plugin"
+      }
+    }
+  ]
+}"#,
+    )
+    .unwrap();
+
+    let manager = PluginsManager::new(tmp.path().to_path_buf());
+    manager
+        .install_plugin(PluginInstallRequest {
+            plugin_name: "sample-plugin".to_string(),
+            marketplace_path: AbsolutePathBuf::try_from(
+                repo_root.join(".agents/plugins/marketplace.json"),
+            )
+            .unwrap(),
+        })
+        .await
+        .unwrap();
+
+    let config = load_config(tmp.path(), &repo_root).await;
+    let mcp_config = config.to_mcp_config(&manager).await;
+
+    assert!(mcp_config.configured_mcp_servers.contains_key("sample-mcp"));
+    assert!(mcp_config
+        .plugin_capability_summaries
+        .iter()
+        .any(|summary| summary.config_name == "sample@test"
+            && summary.mcp_server_names == vec!["sample-mcp".to_string()]
+            && summary.app_connector_ids == vec![AppConnectorId("connector_example".to_string())]));
 }
 
 #[tokio::test]

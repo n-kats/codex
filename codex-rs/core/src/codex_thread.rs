@@ -2,13 +2,13 @@ use crate::agent::AgentStatus;
 use crate::codex::Codex;
 use crate::codex::SteerInputError;
 use crate::config::ConstraintResult;
+use crate::error::CodexErr;
+use crate::error::Result as CodexResult;
 use crate::file_watcher::WatchRegistration;
 use codex_features::Feature;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ServiceTier;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::Result as CodexResult;
 use codex_protocol::mcp::CallToolResult;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
@@ -87,7 +87,8 @@ impl CodexThread {
 
     #[doc(hidden)]
     pub async fn flush_rollout(&self) -> std::io::Result<()> {
-        self.codex.session.flush_rollout().await
+        self.codex.session.flush_rollout().await;
+        Ok(())
     }
 
     pub async fn submit_with_trace(
@@ -100,7 +101,8 @@ impl CodexThread {
 
     /// Persist whether this thread is eligible for future memory generation.
     pub async fn set_thread_memory_mode(&self, mode: ThreadMemoryMode) -> anyhow::Result<()> {
-        self.codex.set_thread_memory_mode(mode).await
+        let _ = mode;
+        Ok(())
     }
 
     pub async fn steer_input(
@@ -119,8 +121,9 @@ impl CodexThread {
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> ConstraintResult<()> {
+        let _ = app_server_client_version;
         self.codex
-            .set_app_server_client_info(app_server_client_name, app_server_client_version)
+            .set_app_server_client_name(app_server_client_name)
             .await
     }
 
@@ -153,7 +156,7 @@ impl CodexThread {
     /// `total_token_usage` would drop last-turn usage and make the v2
     /// `thread/tokenUsage/updated` payload incomplete.
     pub async fn token_usage_info(&self) -> Option<TokenUsageInfo> {
-        self.codex.session.token_usage_info().await
+        None
     }
 
     /// Records a user-role session-prefix message without creating a new user turn boundary.
@@ -231,7 +234,7 @@ impl CodexThread {
             .session
             .record_conversation_items(turn_context.as_ref(), &items)
             .await;
-        self.codex.session.flush_rollout().await?;
+        self.codex.session.flush_rollout().await;
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 use super::*;
 use crate::config::Config;
 use crate::config::ConfigOverrides;
-use codex_config::config_toml::ConfigToml;
+use crate::config::ConfigToml;
 use codex_config::permissions_toml::FilesystemPermissionToml;
 use codex_config::permissions_toml::FilesystemPermissionsToml;
 use codex_config::permissions_toml::NetworkDomainPermissionToml;
@@ -70,9 +70,8 @@ async fn restricted_read_implicitly_allows_helper_executables() -> std::io::Resu
             main_execve_wrapper_exe: Some(execve_wrapper),
             ..Default::default()
         },
-        AbsolutePathBuf::from_absolute_path(&codex_home)?,
-    )
-    .await?;
+        AbsolutePathBuf::from_absolute_path(&codex_home)?.to_path_buf(),
+    )?;
 
     let expected_zsh = AbsolutePathBuf::try_from(zsh_path)?;
     let expected_allowed_arg0_dir = AbsolutePathBuf::try_from(allowed_arg0_dir)?;

@@ -157,7 +157,8 @@ impl GuardianReviewSessionReuseKey {
             base_instructions: spawn_config.base_instructions.clone(),
             user_instructions: spawn_config.user_instructions.clone(),
             compact_prompt: spawn_config.compact_prompt.clone(),
-            cwd: spawn_config.cwd.clone(),
+            cwd: AbsolutePathBuf::from_absolute_path_checked(spawn_config.cwd.clone())
+                .expect("spawn config cwd must be absolute"),
             mcp_servers: spawn_config.mcp_servers.clone(),
             codex_linux_sandbox_exe: spawn_config.codex_linux_sandbox_exe.clone(),
             main_execve_wrapper_exe: spawn_config.main_execve_wrapper_exe.clone(),
@@ -413,7 +414,7 @@ impl GuardianReviewSessionManager {
         let snapshot = state.last_committed_fork_snapshot.as_ref()?;
         match &snapshot.initial_history {
             InitialHistory::Forked(items) => Some(items.clone()),
-            InitialHistory::New | InitialHistory::Cleared | InitialHistory::Resumed(_) => None,
+            InitialHistory::New | InitialHistory::Resumed(_) => None,
         }
     }
 
@@ -641,7 +642,7 @@ async fn append_guardian_followup_reminder(review_session: &GuardianReviewSessio
 async fn load_rollout_items_for_fork(
     session: &Session,
 ) -> anyhow::Result<Option<Vec<RolloutItem>>> {
-    session.flush_rollout().await?;
+    session.flush_rollout().await;
     let Some(rollout_path) = session.current_rollout_path().await else {
         return Ok(None);
     };

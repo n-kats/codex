@@ -26,12 +26,13 @@ use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::default_exec_approval_requirement;
 use codex_otel::ToolDecisionSource;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::SandboxErr;
-use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::NetworkPolicyRuleAction;
 use codex_protocol::protocol::ReviewDecision;
+
+use crate::error::CodexErr;
+use crate::error::SandboxErr;
+use crate::exec::ExecToolCallOutput;
 
 pub(crate) struct ToolOrchestrator {
     sandbox: SandboxManager,
@@ -137,7 +138,6 @@ impl ToolOrchestrator {
                     session: &tool_ctx.session,
                     turn: &tool_ctx.turn,
                     call_id: &tool_ctx.call_id,
-                    guardian_review_id: guardian_review_id.clone(),
                     retry_reason: reason,
                     network_approval_context: None,
                 };
@@ -291,7 +291,6 @@ impl ToolOrchestrator {
                         session: &tool_ctx.session,
                         turn: &tool_ctx.turn,
                         call_id: &tool_ctx.call_id,
-                        guardian_review_id: guardian_review_id.clone(),
                         retry_reason: Some(retry_reason),
                         network_approval_context: network_approval_context.clone(),
                     };

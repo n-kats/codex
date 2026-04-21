@@ -235,8 +235,11 @@ fn build_test_processor(
 ) {
     let (outgoing_tx, outgoing_rx) = mpsc::channel(16);
     let outgoing = Arc::new(OutgoingMessageSender::new(outgoing_tx));
-    let auth_manager =
-        AuthManager::shared_from_config(config.as_ref(), /*enable_codex_api_key_env*/ false);
+    let auth_manager = Arc::new(AuthManager::new(
+        config.codex_home.clone(),
+        /*enable_codex_api_key_env*/ false,
+        config.cli_auth_credentials_store_mode,
+    ));
     let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
         outgoing,
         arg0_paths: Arg0DispatchPaths::default(),
@@ -606,7 +609,6 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
                         text: "hello".to_string(),
                         text_elements: Vec::new(),
                     }],
-                    responsesapi_client_metadata: None,
                     cwd: None,
                     approval_policy: None,
                     sandbox_policy: None,
@@ -615,6 +617,7 @@ async fn turn_start_jsonrpc_span_parents_core_turn_spans() -> Result<()> {
                     service_tier: None,
                     effort: None,
                     summary: None,
+                    responsesapi_client_metadata: None,
                     personality: None,
                     output_schema: None,
                     collaboration_mode: None,

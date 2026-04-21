@@ -182,9 +182,36 @@ impl ToolRouter {
                 ..
             } => {
                 let tool_name = ToolName::new(namespace, name);
-                if let Some(tool_info) = session.resolve_mcp_tool_info(&tool_name).await {
+                let tool_info = session
+                    .services
+                    .mcp_connection_manager
+                    .read()
+                    .await
+                    .list_all_tools()
+                    .await
+                    .into_values()
+                    .find(|tool_info| {
+                        let canonical_tool_name = if tool_info.tool_namespace.is_empty() {
+                            ToolName::plain(tool_info.tool_name.clone())
+                        } else {
+                            ToolName::namespaced(
+                                tool_info.tool_namespace.clone(),
+                                tool_info.tool_name.clone(),
+                            )
+                        };
+                        canonical_tool_name == tool_name
+                    });
+                if let Some(tool_info) = tool_info {
+                    let tool_name = if tool_info.tool_namespace.is_empty() {
+                        ToolName::plain(tool_info.tool_name.clone())
+                    } else {
+                        ToolName::namespaced(
+                            tool_info.tool_namespace.clone(),
+                            tool_info.tool_name.clone(),
+                        )
+                    };
                     Ok(Some(ToolCall {
-                        tool_name: tool_info.canonical_tool_name(),
+                        tool_name,
                         call_id,
                         payload: ToolPayload::Mcp {
                             server: tool_info.server_name,
@@ -294,7 +321,8 @@ impl ToolRouter {
             turn,
             tracker,
             call_id,
-            tool_name,
+            tool_name: tool_name.name,
+            tool_namespace: tool_name.namespace,
             payload,
         };
 

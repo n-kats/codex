@@ -228,8 +228,11 @@ impl ChatWidget {
         self.set_footer_hint_override(Some(Self::realtime_footer_hint_items()));
         self.submit_op(
             AppCommand::realtime_conversation_start(ConversationStartParams {
-                prompt: REALTIME_CONVERSATION_PROMPT.to_string(),
+                output_modality: codex_protocol::protocol::RealtimeOutputModality::Audio,
+                prompt: Some(Some(REALTIME_CONVERSATION_PROMPT.to_string())),
                 session_id: None,
+                transport: Some(codex_protocol::protocol::ConversationStartTransport::Websocket),
+                voice: None,
             })
             .into(),
         );
@@ -308,6 +311,10 @@ impl ChatWidget {
             RealtimeEvent::ConversationItemAdded(_item) => {}
             RealtimeEvent::ConversationItemDone { .. } => {}
             RealtimeEvent::HandoffRequested(_) => {}
+            RealtimeEvent::InputTranscriptDone(_) => {}
+            RealtimeEvent::OutputTranscriptDone(_) => {}
+            RealtimeEvent::ResponseCreated(_) => {}
+            RealtimeEvent::ResponseDone(_) => {}
             RealtimeEvent::Error(message) => {
                 self.fail_realtime_conversation(format!("Realtime voice error: {message}"));
             }

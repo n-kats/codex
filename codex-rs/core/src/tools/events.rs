@@ -1,11 +1,11 @@
 use crate::codex::Session;
 use crate::codex::TurnContext;
+use crate::error::CodexErr;
+use crate::error::SandboxErr;
+use crate::exec::ExecToolCallOutput;
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::sandboxing::ToolError;
-use codex_protocol::error::CodexErr;
-use codex_protocol::error::SandboxErr;
-use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandBeginEvent;
@@ -78,7 +78,7 @@ pub(crate) async fn emit_exec_command_begin(
                 process_id: process_id.map(str::to_owned),
                 turn_id: ctx.turn.sub_id.clone(),
                 command: command.to_vec(),
-                cwd: cwd.clone(),
+                cwd: cwd.to_path_buf(),
                 parsed_cmd: parsed_cmd.to_vec(),
                 source,
                 interaction_input,
@@ -475,7 +475,7 @@ async fn emit_exec_end(
                 process_id: exec_input.process_id.map(str::to_owned),
                 turn_id: ctx.turn.sub_id.clone(),
                 command: exec_input.command.to_vec(),
-                cwd: exec_input.cwd.clone(),
+                cwd: exec_input.cwd.to_path_buf(),
                 parsed_cmd: exec_input.parsed_cmd.to_vec(),
                 source: exec_input.source,
                 interaction_input: exec_input.interaction_input.map(str::to_owned),

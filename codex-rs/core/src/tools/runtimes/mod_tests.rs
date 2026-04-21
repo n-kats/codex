@@ -18,8 +18,8 @@ fn shell_with_snapshot(
     snapshot_cwd: AbsolutePathBuf,
 ) -> Shell {
     let (_tx, shell_snapshot) = watch::channel(Some(Arc::new(ShellSnapshot {
-        path: snapshot_path,
-        cwd: snapshot_cwd,
+        path: snapshot_path.to_path_buf(),
+        cwd: snapshot_cwd.to_path_buf(),
     })));
     Shell {
         shell_type,

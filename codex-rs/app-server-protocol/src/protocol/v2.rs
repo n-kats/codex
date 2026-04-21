@@ -11,6 +11,7 @@ use codex_protocol::approvals::ExecPolicyAmendment as CoreExecPolicyAmendment;
 use codex_protocol::approvals::GuardianAssessmentAction as CoreGuardianAssessmentAction;
 use codex_protocol::approvals::GuardianAssessmentDecisionSource as CoreGuardianAssessmentDecisionSource;
 use codex_protocol::approvals::GuardianCommandSource as CoreGuardianCommandSource;
+use codex_protocol::approvals::GuardianUserAuthorization as CoreGuardianUserAuthorization;
 use codex_protocol::approvals::NetworkApprovalContext as CoreNetworkApprovalContext;
 use codex_protocol::approvals::NetworkApprovalProtocol as CoreNetworkApprovalProtocol;
 use codex_protocol::approvals::NetworkPolicyAmendment as CoreNetworkPolicyAmendment;
@@ -56,7 +57,6 @@ use codex_protocol::protocol::ExecCommandSource as CoreExecCommandSource;
 use codex_protocol::protocol::ExecCommandStatus as CoreExecCommandStatus;
 use codex_protocol::protocol::GranularApprovalConfig as CoreGranularApprovalConfig;
 use codex_protocol::protocol::GuardianRiskLevel as CoreGuardianRiskLevel;
-use codex_protocol::protocol::GuardianUserAuthorization as CoreGuardianUserAuthorization;
 use codex_protocol::protocol::HookEventName as CoreHookEventName;
 use codex_protocol::protocol::HookExecutionMode as CoreHookExecutionMode;
 use codex_protocol::protocol::HookHandlerType as CoreHookHandlerType;
@@ -69,6 +69,8 @@ use codex_protocol::protocol::HookSource as CoreHookSource;
 use codex_protocol::protocol::ModelRerouteReason as CoreModelRerouteReason;
 use codex_protocol::protocol::NetworkAccess as CoreNetworkAccess;
 use codex_protocol::protocol::NonSteerableTurnKind as CoreNonSteerableTurnKind;
+use codex_protocol::protocol::ConversationStartParams as CoreConversationStartParams;
+use codex_protocol::protocol::ConversationStartTransport as CoreConversationStartTransport;
 use codex_protocol::protocol::PatchApplyStatus as CorePatchApplyStatus;
 use codex_protocol::protocol::RateLimitSnapshot as CoreRateLimitSnapshot;
 use codex_protocol::protocol::RateLimitWindow as CoreRateLimitWindow;
@@ -86,6 +88,7 @@ use codex_protocol::protocol::SkillMetadata as CoreSkillMetadata;
 use codex_protocol::protocol::SkillScope as CoreSkillScope;
 use codex_protocol::protocol::SkillToolDependency as CoreSkillToolDependency;
 use codex_protocol::protocol::SubAgentSource as CoreSubAgentSource;
+use codex_protocol::protocol::ThreadMemoryMode as CoreThreadMemoryMode;
 use codex_protocol::protocol::TokenUsage as CoreTokenUsage;
 use codex_protocol::protocol::TokenUsageInfo as CoreTokenUsageInfo;
 use codex_protocol::request_permissions::PermissionGrantScope as CorePermissionGrantScope;
@@ -3116,10 +3119,10 @@ impl ThreadMemoryMode {
         }
     }
 
-    pub fn to_core(self) -> codex_protocol::protocol::ThreadMemoryMode {
+    pub fn to_core(self) -> CoreThreadMemoryMode {
         match self {
-            Self::Enabled => codex_protocol::protocol::ThreadMemoryMode::Enabled,
-            Self::Disabled => codex_protocol::protocol::ThreadMemoryMode::Disabled,
+            Self::Enabled => CoreThreadMemoryMode::Enabled,
+            Self::Disabled => CoreThreadMemoryMode::Disabled,
         }
     }
 }
@@ -3720,7 +3723,7 @@ impl From<CoreSkillMetadata> for SkillMetadata {
             short_description: value.short_description,
             interface: value.interface.map(SkillInterface::from),
             dependencies: value.dependencies.map(SkillDependencies::from),
-            path: value.path,
+            path: AbsolutePathBuf::from_absolute_path(value.path).expect("absolute skill path"),
             scope: value.scope.into(),
             enabled: true,
         }
@@ -3734,8 +3737,12 @@ impl From<CoreSkillInterface> for SkillInterface {
             short_description: value.short_description,
             brand_color: value.brand_color,
             default_prompt: value.default_prompt,
-            icon_small: value.icon_small,
-            icon_large: value.icon_large,
+            icon_small: value
+                .icon_small
+                .map(|path| AbsolutePathBuf::from_absolute_path(path).expect("absolute icon path")),
+            icon_large: value
+                .icon_large
+                .map(|path| AbsolutePathBuf::from_absolute_path(path).expect("absolute icon path")),
         }
     }
 }
@@ -4056,6 +4063,61 @@ pub enum ThreadRealtimeStartTransport {
         /// realtime events data channel.
         sdp: String,
     },
+}
+
+impl From<ThreadRealtimeStartTransport> for CoreConversationStartTransport {
+    fn from(value: ThreadRealtimeStartTransport) -> Self {
+        match value {
+            ThreadRealtimeStartTransport::Websocket => CoreConversationStartTransport::Websocket,
+            ThreadRealtimeStartTransport::Webrtc { sdp } => {
+                CoreConversationStartTransport::Webrtc { sdp }
+            }
+        }
+    }
+}
+
+impl From<ThreadRealtimeStartParams> for CoreConversationStartParams {
+    fn from(value: ThreadRealtimeStartParams) -> Self {
+        CoreConversationStartParams {
+            output_modality: value.output_modality,
+            prompt: value.prompt,
+            session_id: value.session_id,
+            transport: value.transport.map(Into::into),
+            voice: value.voice,
+        }
+    }
+}
+
+#[cfg(test)]
+mod realtime_tests {
+    use super::*;
+
+    #[test]
+    fn thread_realtime_start_params_into_preserves_transport_and_prompt() {
+        let params = ThreadRealtimeStartParams {
+            thread_id: "thread-1".to_string(),
+            output_modality: RealtimeOutputModality::Audio,
+            prompt: Some(Some("hello".to_string())),
+            session_id: Some("session-1".to_string()),
+            transport: Some(ThreadRealtimeStartTransport::Webrtc {
+                sdp: "offer-sdp".to_string(),
+            }),
+            voice: Some(RealtimeVoice::Alloy),
+        };
+
+        let core = params.into();
+
+        assert_eq!(core.output_modality, RealtimeOutputModality::Audio);
+        assert_eq!(core.prompt, Some(Some("hello".to_string())));
+        assert_eq!(core.session_id, Some("session-1".to_string()));
+        assert_eq!(
+            core.transport,
+            Some(CoreConversationStartTransport::Webrtc {
+                sdp: "offer-sdp".to_string()
+            })
+        );
+        assert_eq!(core.voice, Some(RealtimeVoice::Alloy));
+    }
 }
 
 /// EXPERIMENTAL - response for starting thread realtime.
@@ -8780,7 +8842,6 @@ mod tests {
         let without_override = TurnStartParams {
             thread_id: "thread_123".to_string(),
             input: vec![],
-            responsesapi_client_metadata: None,
             cwd: None,
             approval_policy: None,
             approvals_reviewer: None,
@@ -8792,6 +8853,7 @@ mod tests {
             output_schema: None,
             collaboration_mode: None,
             personality: None,
+            responsesapi_client_metadata: None,
         };
         let serialized_without_override =
             serde_json::to_value(&without_override).expect("params should serialize");

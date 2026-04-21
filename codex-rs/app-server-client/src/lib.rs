@@ -65,28 +65,28 @@ pub use crate::remote::RemoteAppServerConnectArgs;
 /// while legacy startup/config paths are migrated to RPCs.
 pub mod legacy_core {
     pub use codex_core::Cursor;
-    pub use codex_core::DEFAULT_AGENTS_MD_FILENAME;
+    pub const DEFAULT_AGENTS_MD_FILENAME: &str = "AGENTS.md";
     pub use codex_core::INTERACTIVE_SESSION_SOURCES;
-    pub use codex_core::LOCAL_AGENTS_MD_FILENAME;
-    pub use codex_core::McpManager;
-    pub use codex_core::PLUGIN_TEXT_MENTION_SIGIL;
+    pub const LOCAL_AGENTS_MD_FILENAME: &str = "AGENTS.override.md";
     pub use codex_core::RolloutRecorder;
-    pub use codex_core::TOOL_MENTION_SIGIL;
     pub use codex_core::ThreadItem;
     pub use codex_core::ThreadSortKey;
     pub use codex_core::ThreadsPage;
-    pub use codex_core::append_message_history_entry;
     pub use codex_core::check_execpolicy_for_warnings;
     pub use codex_core::find_thread_meta_by_name_str;
     pub use codex_core::find_thread_name_by_id;
     pub use codex_core::find_thread_names_by_ids;
     pub use codex_core::format_exec_policy_error_with_source;
-    pub use codex_core::grant_read_root_non_elevated;
-    pub use codex_core::lookup_message_history_entry;
-    pub use codex_core::message_history_metadata;
+    pub use codex_core::mcp::McpManager;
+    pub use codex_core::mention_syntax::PLUGIN_TEXT_MENTION_SIGIL;
+    pub use codex_core::mention_syntax::TOOL_MENTION_SIGIL;
+    pub use codex_core::message_history::append_entry as append_message_history_entry;
+    pub use codex_core::message_history::history_metadata as message_history_metadata;
+    pub use codex_core::message_history::lookup as lookup_message_history_entry;
     pub use codex_core::path_utils;
     pub use codex_core::read_session_meta_line;
-    pub use codex_core::web_search_detail;
+    pub use codex_core::web_search::web_search_detail;
+    pub use codex_core::windows_sandbox_read_grants::grant_read_root_non_elevated;
 
     pub mod config {
         pub use codex_core::config::*;

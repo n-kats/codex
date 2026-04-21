@@ -85,10 +85,8 @@ impl OnboardingScreen {
             config,
         } = args;
         let cwd = config.cwd.to_path_buf();
-        let forced_chatgpt_workspace_id = config.forced_chatgpt_workspace_id.clone();
-        let forced_login_method = config.forced_login_method;
         let codex_home = config.codex_home.clone();
-        let cli_auth_credentials_store_mode = config.cli_auth_credentials_store_mode;
+        let forced_login_method = config.forced_login_method;
         let mut steps: Vec<Step> = Vec::new();
         steps.push(Step::Welcome(WelcomeWidget::new(
             !matches!(login_status, LoginStatus::NotAuthenticated),
@@ -106,13 +104,11 @@ impl OnboardingScreen {
                     highlighted_mode,
                     error: Arc::new(RwLock::new(None)),
                     sign_in_state: Arc::new(RwLock::new(SignInState::PickMode)),
-                    codex_home: codex_home.clone(),
-                    cli_auth_credentials_store_mode,
                     login_status,
                     app_server_request_handle,
-                    forced_chatgpt_workspace_id,
                     forced_login_method,
                     animations_enabled: config.animations,
+                    animations_suppressed: std::cell::Cell::new(false),
                 }));
             } else {
                 tracing::warn!("skipping onboarding login step without app-server request handle");

@@ -1,5 +1,6 @@
 use crate::config::types::ShellEnvironmentPolicyToml;
 use crate::spawn::RunAsUser;
+use schemars;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;

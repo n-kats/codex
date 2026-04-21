@@ -188,6 +188,7 @@ fn transform_additional_permissions_preserves_denied_entries() {
                         read: None,
                         write: Some(vec![allowed_path.clone()]),
                     }),
+                    macos: None,
                     ..Default::default()
                 }),
             },

@@ -188,6 +188,11 @@ pub(super) async fn user_input_or_turn_inner(
         // new_turn_with_sub_id already emits the error event.
         return;
     };
+    if let Some(responsesapi_client_metadata) = responsesapi_client_metadata.clone() {
+        current_context
+            .turn_metadata_state
+            .set_responsesapi_client_metadata(responsesapi_client_metadata);
+    }
     sess.maybe_emit_unknown_model_warning_for_turn(current_context.as_ref())
         .await;
     let accepted_items = match sess

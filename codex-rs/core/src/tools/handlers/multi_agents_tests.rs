@@ -22,9 +22,10 @@ use crate::protocol::TurnCompleteEvent;
 use crate::state::TaskKind;
 use crate::tasks::SessionTask;
 use crate::tasks::SessionTaskContext;
+use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolOutput;
-use crate::tools::handlers::multi_agents_v2::AssignTaskHandler as AssignTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
+use crate::tools::handlers::multi_agents_v2::FollowupTaskHandler as AssignTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHandlerV2;
 use crate::tools::handlers::multi_agents_v2::SendMessageHandler as SendMessageHandlerV2;
 use crate::tools::handlers::multi_agents_v2::SpawnAgentHandler as SpawnAgentHandlerV2;
@@ -757,7 +758,7 @@ async fn multi_agent_v2_assign_task_rejects_root_target_from_child() {
         agent_role: None,
     });
 
-    let err = AssignTaskHandlerV2
+    let Err(err) = AssignTaskHandlerV2
         .handle(invocation(
             Arc::new(session),
             Arc::new(turn),
@@ -769,7 +770,9 @@ async fn multi_agent_v2_assign_task_rejects_root_target_from_child() {
             })),
         ))
         .await
-        .expect_err("assign_task should reject the root target");
+    else {
+        panic!("assign_task should reject the root target");
+    };
 
     assert_eq!(
         err,
@@ -837,6 +840,8 @@ async fn multi_agent_v2_list_agents_returns_completed_status_and_last_task_messa
             EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: child_turn.sub_id.clone(),
                 last_agent_message: Some("done".to_string()),
+                completed_at: None,
+                duration_ms: None,
             }),
         )
         .await;
@@ -1212,7 +1217,7 @@ async fn multi_agent_v2_assign_task_interrupts_busy_child_without_losing_message
         )
         .await;
 
-    AssignTaskHandlerV2
+    let result: Result<FunctionToolOutput, FunctionCallError> = AssignTaskHandlerV2
         .handle(invocation(
             session,
             turn,
@@ -1223,8 +1228,8 @@ async fn multi_agent_v2_assign_task_interrupts_busy_child_without_losing_message
                 "interrupt": true
             })),
         ))
-        .await
-        .expect("interrupting v2 assign_task should succeed");
+        .await;
+    result.expect("interrupting v2 assign_task should succeed");
 
     let ops = manager.captured_ops();
     let ops_for_agent: Vec<&Op> = ops
@@ -1337,11 +1342,13 @@ async fn multi_agent_v2_assign_task_completion_does_not_notify_parent() {
             EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: first_turn.sub_id.clone(),
                 last_agent_message: Some("first done".to_string()),
+                completed_at: None,
+                duration_ms: None,
             }),
         )
         .await;
 
-    AssignTaskHandlerV2
+    let result: Result<FunctionToolOutput, FunctionCallError> = AssignTaskHandlerV2
         .handle(invocation(
             session,
             turn,
@@ -1351,8 +1358,8 @@ async fn multi_agent_v2_assign_task_completion_does_not_notify_parent() {
                 "message": "continue",
             })),
         ))
-        .await
-        .expect("assign_task should succeed");
+        .await;
+    result.expect("assign_task should succeed");
 
     let second_turn = thread.codex.session.new_default_turn().await;
     thread
@@ -1363,6 +1370,8 @@ async fn multi_agent_v2_assign_task_completion_does_not_notify_parent() {
             EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: second_turn.sub_id.clone(),
                 last_agent_message: Some("second done".to_string()),
+                completed_at: None,
+                duration_ms: None,
             }),
         )
         .await;
@@ -1493,6 +1502,8 @@ async fn multi_agent_v2_interrupted_turn_does_not_notify_parent() {
             EventMsg::TurnAborted(TurnAbortedEvent {
                 turn_id: Some(aborted_turn.sub_id.clone()),
                 reason: TurnAbortReason::Interrupted,
+                completed_at: None,
+                duration_ms: None,
             }),
         )
         .await;
@@ -1925,6 +1936,7 @@ async fn send_input_accepts_structured_items() {
             },
         ],
         final_output_json_schema: None,
+        responsesapi_client_metadata: None,
     };
     let captured = manager
         .captured_ops()

@@ -380,8 +380,8 @@ fn skills_toggle_hint_line() -> Line<'static> {
 mod tests {
     use super::*;
     use crate::app_event::AppEvent;
-    use crate::test_support::PathBufExt;
-    use crate::test_support::test_path_buf;
+    use codex_utils_absolute_path::test_support::PathBufExt;
+    use codex_utils_absolute_path::test_support::test_path_buf;
     use insta::assert_snapshot;
     use ratatui::layout::Rect;
     use tokio::sync::mpsc::unbounded_channel;

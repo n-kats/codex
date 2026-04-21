@@ -50,6 +50,12 @@ no_inject = true
 - `no_inject` 変更後に `config.schema.json` の更新が必要になる。
 - 既存のテストが `Config` の struct literal を持つ場合、新フィールド追加でコンパイルエラーになりうる。
 
+## 現在の実装メモ
+
+- `core/src/tasks/user_shell.rs` の `persist_user_shell_output()` が `turn_context.config.user_shell_no_inject` を最初に見て、`true` の場合はモデル注入とローカル履歴保存を止める。
+- `ExecCommandBegin` / `ExecCommandEnd` は通常どおり流し、`no_inject` は保存だけを切り替える。
+- そのため、`!` の表示は維持しつつ、履歴混入だけを抑える方針を保っている。
+
 ## 関連ファイル一覧
 
 - `codex-rs/core/src/config/custom.rs`

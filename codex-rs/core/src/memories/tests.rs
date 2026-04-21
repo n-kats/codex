@@ -1,7 +1,7 @@
 use super::storage::rebuild_raw_memories_file_from_memories;
 use super::storage::sync_rollout_summaries_from_memories;
 use crate::config::types::DEFAULT_MEMORIES_MAX_RAW_MEMORIES_FOR_CONSOLIDATION;
-use crate::memories::clear_memory_root_contents;
+use crate::memories::clear_memory_roots_contents;
 use crate::memories::ensure_layout;
 use crate::memories::memory_root;
 use crate::memories::raw_memories_file;
@@ -10,6 +10,7 @@ use chrono::TimeZone;
 use chrono::Utc;
 use codex_protocol::ThreadId;
 use codex_state::Stage1Output;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::path::PathBuf;
@@ -18,7 +19,8 @@ use tempfile::tempdir;
 #[test]
 fn memory_root_uses_shared_global_path() {
     let dir = tempdir().expect("tempdir");
-    let codex_home = dir.path().join("codex");
+    let codex_home = AbsolutePathBuf::from_absolute_path(&dir.path().join("codex"))
+        .expect("absolute codex home");
     assert_eq!(memory_root(&codex_home), codex_home.join("memories"));
 }
 
@@ -79,9 +81,8 @@ async fn clear_memory_root_contents_preserves_root_directory() {
         .await
         .expect("write rollout summary");
 
-    clear_memory_root_contents(&root)
-        .await
-        .expect("clear memory root contents");
+    let result: std::io::Result<()> = clear_memory_roots_contents(&root).await;
+    result.expect("clear memory root contents");
 
     assert!(
         tokio::fs::try_exists(&root)
@@ -118,9 +119,8 @@ async fn clear_memory_root_contents_rejects_symlinked_root() {
     let root = dir.path().join("memory");
     std::os::unix::fs::symlink(&target, &root).expect("create memory root symlink");
 
-    let err = clear_memory_root_contents(&root)
-        .await
-        .expect_err("symlinked memory root should be rejected");
+    let result: std::io::Result<()> = clear_memory_roots_contents(&root).await;
+    let err = result.expect_err("symlinked memory root should be rejected");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     assert!(
         tokio::fs::try_exists(&target_file)
@@ -434,6 +434,7 @@ mod phase2 {
     use codex_state::Phase2JobClaimOutcome;
     use codex_state::Stage1Output;
     use codex_state::ThreadMetadataBuilder;
+    use codex_utils_absolute_path::AbsolutePathBuf;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Duration;
@@ -466,7 +467,7 @@ mod phase2 {
     impl DispatchHarness {
         async fn new() -> Self {
             let codex_home = tempfile::tempdir().expect("create temp codex home");
-            let mut config = test_config();
+            let mut config = test_config().await;
             config.codex_home = codex_home.path().to_path_buf();
             config.memories_root_dir = config.codex_home.join("memories");
             config.cwd = config.codex_home.clone();
@@ -673,7 +674,11 @@ mod phase2 {
             .expect("get consolidation thread");
         let config_snapshot = subagent.config_snapshot().await;
         pretty_assertions::assert_eq!(config_snapshot.approval_policy, AskForApproval::Never);
-        pretty_assertions::assert_eq!(config_snapshot.cwd, harness.config.memories_root_dir);
+        pretty_assertions::assert_eq!(
+            config_snapshot.cwd,
+            AbsolutePathBuf::from_absolute_path(&harness.config.memories_root_dir)
+                .expect("absolute memories root")
+        );
         match config_snapshot.sandbox_policy {
             SandboxPolicy::WorkspaceWrite { writable_roots, .. } => {
                 assert!(
@@ -881,7 +886,7 @@ mod phase2 {
     #[tokio::test]
     async fn dispatch_marks_job_for_retry_when_spawn_agent_fails() {
         let codex_home = tempfile::tempdir().expect("create temp codex home");
-        let mut config = test_config();
+        let mut config = test_config().await;
         config.codex_home = codex_home.path().to_path_buf();
         config.memories_root_dir = config.codex_home.join("memories");
         config.cwd = config.codex_home.clone();

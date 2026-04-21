@@ -48,9 +48,9 @@ async fn spawn_command_under_sandbox(
     spawn_command_under_linux_sandbox(
         codex_linux_sandbox_exe,
         command,
-        command_cwd,
+        AbsolutePathBuf::from_absolute_path(&command_cwd).expect("absolute command cwd"),
         sandbox_policy,
-        sandbox_cwd,
+        &AbsolutePathBuf::from_absolute_path(sandbox_cwd).expect("absolute sandbox cwd"),
         false,
         stdio_policy,
         None,

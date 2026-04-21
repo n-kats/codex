@@ -5,6 +5,7 @@ use crate::agent::agent_status_from_event;
 use crate::config::AgentRoleConfig;
 use crate::config::Config;
 use crate::config::ConfigBuilder;
+use crate::config_loader::LoaderOverrides;
 use crate::contextual_user_message::SUBAGENT_NOTIFICATION_OPEN_TAG;
 use assert_matches::assert_matches;
 use codex_features::Feature;
@@ -37,9 +38,10 @@ async fn test_config_with_cli_overrides(
     cli_overrides: Vec<(String, TomlValue)>,
 ) -> (TempDir, Config) {
     let home = TempDir::new().expect("create temp dir");
-    let config = ConfigBuilder::without_managed_config_for_tests()
+    let config = ConfigBuilder::default()
         .codex_home(home.path().to_path_buf())
         .cli_overrides(cli_overrides)
+        .loader_overrides(LoaderOverrides::without_managed_config_for_tests())
         .build()
         .await
         .expect("load default test config");
@@ -198,12 +200,7 @@ async fn persist_thread_for_tree_resume(thread: &Arc<CodexThread>, message: &str
         .inject_user_message_without_turn(message.to_string())
         .await;
     thread.codex.session.ensure_rollout_materialized().await;
-    thread
-        .codex
-        .session
-        .flush_rollout()
-        .await
-        .expect("test thread rollout should flush");
+    thread.codex.session.flush_rollout().await;
 }
 
 async fn wait_for_live_thread_spawn_children(
@@ -633,12 +630,7 @@ async fn spawn_agent_can_fork_parent_thread_history_with_sanitized_items() {
         .session
         .ensure_rollout_materialized()
         .await;
-    parent_thread
-        .codex
-        .session
-        .flush_rollout()
-        .await
-        .expect("parent rollout should flush");
+    parent_thread.codex.session.flush_rollout().await;
 
     let child_thread_id = harness
         .control
@@ -835,12 +827,7 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
         .session
         .ensure_rollout_materialized()
         .await;
-    parent_thread
-        .codex
-        .session
-        .flush_rollout()
-        .await
-        .expect("parent rollout should flush");
+    parent_thread.codex.session.flush_rollout().await;
 
     let child_thread_id = harness
         .control
@@ -1783,8 +1770,8 @@ async fn list_agent_subtree_thread_ids_includes_anonymous_and_closed_descendants
         .expect("no-path grandchild shutdown should succeed");
 
     let mut worker_subtree_thread_ids = harness
-        .manager
-        .list_agent_subtree_thread_ids(worker_thread_id)
+        .control
+        .list_live_agent_subtree_thread_ids(worker_thread_id)
         .await
         .expect("worker subtree thread ids should load");
     worker_subtree_thread_ids.sort_by_key(ToString::to_string);
@@ -1801,8 +1788,8 @@ async fn list_agent_subtree_thread_ids_includes_anonymous_and_closed_descendants
     );
 
     let mut no_path_child_subtree_thread_ids = harness
-        .manager
-        .list_agent_subtree_thread_ids(no_path_child_thread_id)
+        .control
+        .list_live_agent_subtree_thread_ids(no_path_child_thread_id)
         .await
         .expect("no-path subtree thread ids should load");
     no_path_child_subtree_thread_ids.sort_by_key(ToString::to_string);

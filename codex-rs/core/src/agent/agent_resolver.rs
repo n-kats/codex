@@ -1,5 +1,6 @@
 use crate::codex::Session;
 use crate::codex::TurnContext;
+use crate::error::CodexErr;
 use crate::function_tool::FunctionCallError;
 use codex_protocol::ThreadId;
 use std::sync::Arc;
@@ -21,9 +22,7 @@ pub(crate) async fn resolve_agent_target(
         .resolve_agent_reference(session.conversation_id, &turn.session_source, target)
         .await
         .map_err(|err| match err {
-            codex_protocol::error::CodexErr::UnsupportedOperation(message) => {
-                FunctionCallError::RespondToModel(message)
-            }
+            CodexErr::UnsupportedOperation(message) => FunctionCallError::RespondToModel(message),
             other => FunctionCallError::RespondToModel(other.to_string()),
         })
 }

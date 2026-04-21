@@ -139,6 +139,7 @@ fn app_server_exec_approval_request_preserves_permissions_context() {
                 read: Some(vec![read_path]),
                 write: Some(vec![write_path]),
             }),
+            macos: None,
         })
     );
 }

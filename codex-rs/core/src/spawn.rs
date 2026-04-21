@@ -1,6 +1,6 @@
 use codex_network_proxy::NetworkProxy;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_protocol::permissions::NetworkSandboxPolicy;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;

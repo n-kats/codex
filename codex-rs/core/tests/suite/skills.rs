@@ -72,10 +72,16 @@ async fn user_turn_includes_skill_instructions() -> Result<()> {
 
     let server = start_mock_server().await;
     let skill_body = "skill body";
-    let mut builder = test_codex().with_workspace_setup(move |cwd, fs| async move {
-        write_repo_skill(cwd, fs, "demo", "demo skill", skill_body).await
-    });
+    let mut builder = test_codex();
     let test = builder.build_remote_aware(&server).await?;
+    write_repo_skill(
+        AbsolutePathBuf::from_absolute_path(&test.config.cwd)?,
+        test.fs(),
+        "demo",
+        "demo skill",
+        skill_body,
+    )
+    .await?;
 
     let skill_path = test
         .config
@@ -148,15 +154,18 @@ async fn list_skills_includes_repo_and_home_skills_remote_aware() -> Result<()> 
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex()
-        .with_pre_build_hook(|home| {
-            write_home_skill(home, "home-demo", "home-demo", "from home")
-                .expect("write home skill");
-        })
-        .with_workspace_setup(|cwd, fs| async move {
-            write_repo_skill(cwd, fs, "repo-demo", "from repo", "# Body").await
-        });
+    let mut builder = test_codex().with_pre_build_hook(|home| {
+        write_home_skill(home, "home-demo", "home-demo", "from home").expect("write home skill");
+    });
     let test = builder.build_remote_aware(&server).await?;
+    write_repo_skill(
+        AbsolutePathBuf::from_absolute_path(&test.config.cwd)?,
+        test.fs(),
+        "repo-demo",
+        "from repo",
+        "# Body",
+    )
+    .await?;
 
     test.codex
         .submit(Op::ListSkills {
@@ -227,7 +236,7 @@ async fn list_skills_skips_cwd_roots_when_environment_disabled() -> Result<()> {
         "---\nname: repo-disabled\ndescription: from repo\n---\n\n# Body\n",
     )?;
     let mut config = load_default_config_for_test(&codex_home).await;
-    config.cwd = AbsolutePathBuf::from_absolute_path_checked(cwd.path())?;
+    config.cwd = cwd.path().to_path_buf();
 
     let thread_manager = ThreadManager::new(
         &config,
@@ -235,7 +244,6 @@ async fn list_skills_skips_cwd_roots_when_environment_disabled() -> Result<()> {
         SessionSource::Exec,
         CollaborationModesConfig::default(),
         Arc::new(EnvironmentManager::new(Some("none".to_string()))),
-        /*analytics_events_client*/ None,
     );
     let new_thread = thread_manager.start_thread(config.clone()).await?;
     let cwd = config.cwd.to_path_buf();

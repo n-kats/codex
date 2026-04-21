@@ -11,6 +11,7 @@ use chrono::Local;
 use codex_model_provider_info::WireApi;
 use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
+use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::NetworkAccess;
@@ -268,7 +269,7 @@ impl StatusHistoryCell {
                 "reasoning summaries",
                 config
                     .model_reasoning_summary
-                    .map(|summary| summary.to_string())
+                    .map(|summary: ReasoningSummary| summary.to_string())
                     .unwrap_or_else(|| "auto".to_string()),
             ));
         }
@@ -276,7 +277,7 @@ impl StatusHistoryCell {
         let approval = config_entries
             .iter()
             .find(|(k, _)| *k == "approval")
-            .map(|(_, v)| v.clone())
+            .map(|(_, v): &(&str, String)| v.clone())
             .unwrap_or_else(|| "<unknown>".to_string());
         let sandbox = match config.permissions.sandbox_policy.get() {
             SandboxPolicy::DangerFullAccess => "danger-full-access".to_string(),
@@ -311,7 +312,7 @@ impl StatusHistoryCell {
         let session_id = session_id.as_ref().map(std::string::ToString::to_string);
         let forked_from = forked_from.map(|id| id.to_string());
         let default_usage = TokenUsage::default();
-        let (context_usage, context_window) = match token_info {
+        let (context_usage, context_window): (&TokenUsage, Option<i64>) = match token_info {
             Some(info) => (&info.last_token_usage, info.model_context_window),
             None => (&default_usage, config.model_context_window),
         };

@@ -31,6 +31,7 @@ use serde_json::Value;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::event_mapping::parse_turn_item;
+use codex_utils_absolute_path::AbsolutePathBuf;
 
 pub(crate) struct HookRuntimeOutcome {
     pub should_stop: bool,
@@ -56,6 +57,11 @@ pub(crate) enum PendingInputRecord {
 struct ContextInjectingHookOutcome {
     hook_events: Vec<HookCompletedEvent>,
     outcome: HookRuntimeOutcome,
+}
+
+fn turn_context_cwd(turn_context: &TurnContext) -> AbsolutePathBuf {
+    AbsolutePathBuf::from_absolute_path_checked(turn_context.cwd.as_path())
+        .expect("turn_context.cwd must be absolute")
 }
 
 impl From<SessionStartOutcome> for ContextInjectingHookOutcome {
@@ -104,7 +110,7 @@ pub(crate) async fn run_pending_session_start_hooks(
 
     let request = codex_hooks::SessionStartRequest {
         session_id: sess.conversation_id,
-        cwd: turn_context.cwd.clone(),
+        cwd: turn_context_cwd(turn_context),
         transcript_path: sess.hook_transcript_path().await,
         model: turn_context.model_info.slug.clone(),
         permission_mode: hook_permission_mode(turn_context),
@@ -132,7 +138,7 @@ pub(crate) async fn run_pre_tool_use_hooks(
     let request = PreToolUseRequest {
         session_id: sess.conversation_id,
         turn_id: turn_context.sub_id.clone(),
-        cwd: turn_context.cwd.clone(),
+        cwd: turn_context_cwd(turn_context),
         transcript_path: sess.hook_transcript_path().await,
         model: turn_context.model_info.slug.clone(),
         permission_mode: hook_permission_mode(turn_context),
@@ -163,7 +169,7 @@ pub(crate) async fn run_post_tool_use_hooks(
     let request = PostToolUseRequest {
         session_id: sess.conversation_id,
         turn_id: turn_context.sub_id.clone(),
-        cwd: turn_context.cwd.clone(),
+        cwd: turn_context_cwd(turn_context),
         transcript_path: sess.hook_transcript_path().await,
         model: turn_context.model_info.slug.clone(),
         permission_mode: hook_permission_mode(turn_context),
@@ -188,7 +194,7 @@ pub(crate) async fn run_user_prompt_submit_hooks(
     let request = UserPromptSubmitRequest {
         session_id: sess.conversation_id,
         turn_id: turn_context.sub_id.clone(),
-        cwd: turn_context.cwd.clone(),
+        cwd: turn_context_cwd(turn_context),
         transcript_path: sess.hook_transcript_path().await,
         model: turn_context.model_info.slug.clone(),
         permission_mode: hook_permission_mode(turn_context),

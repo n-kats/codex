@@ -1579,8 +1579,10 @@ async fn maybe_persist_mcp_tool_approval(
             remember_mcp_tool_approval(sess, key).await;
             return;
         };
-        persist_codex_app_tool_approval(&turn_context.config.codex_home, &connector_id, &tool_name)
-            .await
+        let codex_home =
+            AbsolutePathBuf::from_absolute_path_checked(turn_context.config.codex_home.clone())
+                .expect("codex home must be absolute");
+        persist_codex_app_tool_approval(&codex_home, &connector_id, &tool_name).await
     } else {
         persist_custom_mcp_tool_approval(&turn_context.config, &key.server, &tool_name).await
     };
@@ -1634,7 +1636,8 @@ async fn persist_custom_mcp_tool_approval(
         if !servers.contains_key(server) {
             anyhow::bail!("MCP server `{server}` is not configured in config.toml");
         }
-        config.codex_home.clone()
+        AbsolutePathBuf::from_absolute_path_checked(config.codex_home.clone())
+            .expect("codex home must be absolute")
     };
 
     ConfigEditsBuilder::new(&config_folder)

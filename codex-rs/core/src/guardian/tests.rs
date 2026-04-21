@@ -3,6 +3,7 @@ use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::config::Config;
 use crate::config::ConfigOverrides;
+use crate::config::ConfigToml;
 use crate::config::Constrained;
 use crate::config::ManagedFeatures;
 use crate::config::NetworkProxySpec;
@@ -15,7 +16,6 @@ use crate::config_loader::NetworkDomainPermissionsToml;
 use crate::config_loader::RequirementSource;
 use crate::config_loader::Sourced;
 use crate::test_support;
-use codex_config::config_toml::ConfigToml;
 use codex_exec_server::LOCAL_FS;
 use codex_network_proxy::NetworkProxyConfig;
 use codex_protocol::ThreadId;
@@ -1741,16 +1741,14 @@ async fn guardian_review_session_config_uses_requirements_guardian_policy_config
     )
     .expect("config layer stack");
     let parent_config = Config::load_config_with_layer_stack(
-        LOCAL_FS.as_ref(),
         ConfigToml::default(),
         ConfigOverrides {
             cwd: Some(workspace.path().to_path_buf()),
             ..Default::default()
         },
-        codex_home.abs(),
+        codex_home.abs().to_path_buf(),
         config_layer_stack,
     )
-    .await
     .expect("load config");
 
     let guardian_config = build_guardian_review_session_config_for_test(
@@ -1778,16 +1776,14 @@ async fn guardian_review_session_config_uses_default_guardian_policy_without_req
         ConfigLayerStack::new(Vec::new(), Default::default(), Default::default())
             .expect("config layer stack");
     let parent_config = Config::load_config_with_layer_stack(
-        LOCAL_FS.as_ref(),
         ConfigToml::default(),
         ConfigOverrides {
             cwd: Some(workspace.path().to_path_buf()),
             ..Default::default()
         },
-        codex_home.abs(),
+        codex_home.abs().to_path_buf(),
         config_layer_stack,
     )
-    .await
     .expect("load config");
 
     let guardian_config = build_guardian_review_session_config_for_test(

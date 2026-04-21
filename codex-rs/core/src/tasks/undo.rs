@@ -24,6 +24,7 @@ impl UndoTask {
     }
 }
 
+#[async_trait::async_trait]
 impl SessionTask for UndoTask {
     fn kind(&self) -> TaskKind {
         TaskKind::Regular

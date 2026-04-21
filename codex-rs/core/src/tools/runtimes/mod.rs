@@ -79,6 +79,7 @@ pub(crate) fn maybe_wrap_shell_lc_with_snapshot(
     session_shell: &Shell,
     cwd: &Path,
     explicit_env_overrides: &HashMap<String, String>,
+    _additional_env_overrides: &HashMap<String, String>,
 ) -> Vec<String> {
     if cfg!(windows) {
         return command.to_vec();

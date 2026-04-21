@@ -28,6 +28,7 @@ use crate::tasks::interrupted_turn_history_marker;
 use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::TurnStatus;
 use codex_exec_server::EnvironmentManager;
+use codex_exec_server::ExecutorFileSystem;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationModeMask;
 #[cfg(test)]
@@ -41,6 +42,7 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::W3cTraceContext;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use std::collections::HashMap;
@@ -232,7 +234,8 @@ impl ThreadManager {
         ));
         let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
         let skills_manager = Arc::new(crate::skills::SkillsManager::new_with_restriction_product(
-            codex_home.clone(),
+            AbsolutePathBuf::from_absolute_path_checked(codex_home.clone())
+                .expect("codex home must be absolute"),
             config.bundled_skills_enabled(),
             restriction_product,
         ));
@@ -303,7 +306,8 @@ impl ThreadManager {
         ));
         let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
         let skills_manager = Arc::new(crate::skills::SkillsManager::new_with_restriction_product(
-            codex_home.clone(),
+            AbsolutePathBuf::from_absolute_path_checked(codex_home.clone())
+                .expect("codex home must be absolute"),
             /*bundled_skills_enabled*/ true,
             restriction_product,
         ));
@@ -353,6 +357,16 @@ impl ThreadManager {
 
     pub fn get_models_manager(&self) -> Arc<ModelsManager> {
         self.state.models_manager.clone()
+    }
+
+    pub async fn current_environment_filesystem(&self) -> Option<Arc<dyn ExecutorFileSystem>> {
+        self.state
+            .environment_manager
+            .current()
+            .await
+            .ok()
+            .flatten()
+            .map(|environment| environment.get_filesystem())
     }
 
     pub async fn list_models(
@@ -421,6 +435,7 @@ impl ThreadManager {
     ) -> CodexResult<NewThread> {
         Box::pin(self.start_thread_with_tools_and_service_name(
             config,
+            InitialHistory::New,
             dynamic_tools,
             persist_extended_history,
             /*metrics_service_name*/ None,
@@ -432,6 +447,7 @@ impl ThreadManager {
     pub async fn start_thread_with_tools_and_service_name(
         &self,
         config: Config,
+        initial_history: InitialHistory,
         dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
         persist_extended_history: bool,
         metrics_service_name: Option<String>,
@@ -439,7 +455,7 @@ impl ThreadManager {
     ) -> CodexResult<NewThread> {
         Box::pin(self.state.spawn_thread(
             config,
-            InitialHistory::New,
+            initial_history,
             Arc::clone(&self.state.auth_manager),
             self.agent_control(),
             dynamic_tools,
@@ -842,11 +858,20 @@ impl ThreadManagerState {
         parent_trace: Option<W3cTraceContext>,
         user_shell_override: Option<crate::shell::Shell>,
     ) -> CodexResult<NewThread> {
-        let watch_registration = self.skills_watcher.register_config(
-            &config,
-            self.skills_manager.as_ref(),
-            self.plugins_manager.as_ref(),
-        );
+        let watch_registration = self
+            .skills_watcher
+            .register_config(
+                &config,
+                self.skills_manager.as_ref(),
+                self.plugins_manager.as_ref(),
+                self.environment_manager
+                    .current()
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|environment| environment.get_filesystem()),
+            )
+            .await;
         let CodexSpawnOk {
             codex, thread_id, ..
         } = Codex::spawn(CodexSpawnArgs {
@@ -1011,6 +1036,8 @@ fn append_interrupted_boundary(history: InitialHistory, turn_id: Option<String>)
     let aborted_event = RolloutItem::EventMsg(EventMsg::TurnAborted(TurnAbortedEvent {
         turn_id,
         reason: TurnAbortReason::Interrupted,
+        completed_at: Some(chrono::Utc::now().timestamp()),
+        duration_ms: Some(0),
     }));
 
     match history {

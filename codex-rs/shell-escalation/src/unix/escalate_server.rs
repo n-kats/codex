@@ -937,6 +937,7 @@ mod tests {
                         network: Some(NetworkPermissions {
                             enabled: Some(true),
                         }),
+                        macos: None,
                         ..Default::default()
                     }),
                 )),
@@ -981,6 +982,7 @@ mod tests {
                     network: Some(NetworkPermissions {
                         enabled: Some(true),
                     }),
+                    macos: None,
                     ..Default::default()
                 })
             )),

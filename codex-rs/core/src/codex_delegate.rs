@@ -40,6 +40,7 @@ use crate::codex::TurnContext;
 use crate::config::Config;
 use crate::error::CodexErr;
 use crate::guardian::GuardianApprovalRequest;
+use crate::guardian::new_guardian_review_id;
 use crate::guardian::review_approval_request_with_cancel;
 use crate::guardian::routes_approval_to_guardian;
 use crate::mcp_tool_call::MCP_TOOL_APPROVAL_ACCEPT;
@@ -174,6 +175,7 @@ pub(crate) async fn run_codex_thread_one_shot(
     io.submit(Op::UserInput {
         items: input,
         final_output_json_schema,
+        responsesapi_client_metadata: None,
     })
     .await?;
 
@@ -475,7 +477,7 @@ async fn handle_exec_approval(
                 call_id,
                 approval_id,
                 command,
-                cwd,
+                cwd.to_path_buf(),
                 reason,
                 network_approval_context,
                 proposed_execpolicy_amendment,
@@ -517,7 +519,6 @@ async fn handle_patch_approval(
     } = event;
     let approval_id = call_id.clone();
     let guardian_decision = if routes_approval_to_guardian(parent_ctx) {
-        let change_count = changes.len();
         let maybe_files = changes
             .keys()
             .map(|path| AbsolutePathBuf::try_from(parent_ctx.cwd.join(path)).ok())
@@ -556,9 +557,11 @@ async fn handle_patch_approval(
                 Arc::clone(parent_ctx),
                 GuardianApprovalRequest::ApplyPatch {
                     id: approval_id.clone(),
-                    cwd: parent_ctx.cwd.to_path_buf(),
+                    cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+                        parent_ctx.cwd.clone(),
+                    )
+                    .expect("guardian apply_patch cwd must be absolute"),
                     files,
-                    change_count,
                     patch,
                 },
                 reason.clone(),
@@ -704,7 +707,7 @@ async fn maybe_auto_review_mcp_request_user_input(
         ReviewDecision::Approved
         | ReviewDecision::ApprovedExecpolicyAmendment { .. }
         | ReviewDecision::NetworkPolicyAmendment { .. } => MCP_TOOL_APPROVAL_ACCEPT.to_string(),
-        ReviewDecision::Denied | ReviewDecision::Abort => {
+        ReviewDecision::Denied | ReviewDecision::TimedOut | ReviewDecision::Abort => {
             MCP_TOOL_APPROVAL_DECLINE_SYNTHETIC.to_string()
         }
     };
@@ -737,6 +740,7 @@ fn spawn_guardian_review(
         let decision = runtime.block_on(review_approval_request_with_cancel(
             &session,
             &turn,
+            new_guardian_review_id(),
             request,
             retry_reason,
             cancel_token,

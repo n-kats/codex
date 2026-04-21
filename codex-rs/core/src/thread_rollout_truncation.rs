@@ -13,7 +13,10 @@ use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::RolloutItem;
 
 pub(crate) fn initial_history_has_prior_user_turns(conversation_history: &InitialHistory) -> bool {
-    conversation_history.scan_rollout_items(rollout_item_is_user_turn_boundary)
+    conversation_history
+        .get_rollout_items()
+        .iter()
+        .any(rollout_item_is_user_turn_boundary)
 }
 
 fn rollout_item_is_user_turn_boundary(item: &RolloutItem) -> bool {

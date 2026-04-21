@@ -38,7 +38,7 @@ pub(crate) async fn emit_metric_for_tool_read(invocation: &ToolInvocation, succe
     }
 
     let success = if success { "true" } else { "false" };
-    let tool_name = invocation.tool_name.display();
+    let tool_name = invocation.tool_name.clone();
     for kind in kinds {
         invocation.turn.session_telemetry.counter(
             MEMORIES_USAGE_METRIC,
@@ -79,8 +79,8 @@ fn shell_command_for_invocation(invocation: &ToolInvocation) -> Option<(Vec<Stri
     };
 
     match (
-        invocation.tool_name.namespace.as_deref(),
-        invocation.tool_name.name.as_str(),
+        invocation.tool_namespace.as_deref(),
+        invocation.tool_name.as_str(),
     ) {
         (None, "shell") => serde_json::from_str::<ShellToolCallParams>(arguments)
             .ok()

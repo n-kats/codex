@@ -47,6 +47,9 @@ impl LoaderOverrides {
     pub fn with_managed_config_path_for_tests(managed_config_path: PathBuf) -> Self {
         Self {
             managed_config_path: Some(managed_config_path),
+            user_config_path: None,
+            disable_user_config: false,
+            disable_project_config: false,
             #[cfg(target_os = "macos")]
             managed_preferences_base64: Some(String::new()),
             macos_managed_config_requirements_base64: Some(String::new()),

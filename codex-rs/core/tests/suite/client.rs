@@ -1103,7 +1103,6 @@ async fn prefers_apikey_when_config_prefers_apikey_even_with_chatgpt_tokens() {
         Arc::new(codex_exec_server::EnvironmentManager::new(
             /*exec_server_url*/ None,
         )),
-        /*analytics_events_client*/ None,
     );
     let NewThread { thread: codex, .. } = thread_manager
         .start_thread(config)
@@ -1340,10 +1339,9 @@ async fn omits_apps_guidance_when_configured_off() {
         .with_config(move |config| {
             config
                 .features
-                .enable(Feature::Apps)
+                .disable(Feature::Apps)
                 .expect("test config should allow feature update");
             config.chatgpt_base_url = apps_base_url;
-            config.include_apps_instructions = false;
         });
     let codex = builder
         .build(&server)
@@ -1368,7 +1366,7 @@ async fn omits_apps_guidance_when_configured_off() {
     let request = resp_mock.single_request();
     assert!(
         !message_input_text_contains(&request, "developer", "<apps_instructions>"),
-        "did not expect apps instructions when include_apps_instructions = false, got {:?}",
+        "did not expect apps instructions when apps feature is disabled, got {:?}",
         request.body_json()["input"]
     );
 }

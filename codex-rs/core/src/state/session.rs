@@ -6,6 +6,7 @@ use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use crate::agent_identity::RegisteredAgentTask;
 use crate::codex::PreviousTurnSettings;
 use crate::codex::SessionConfiguration;
 use crate::context_manager::ContextManager;
@@ -32,6 +33,7 @@ pub(crate) struct SessionState {
     /// Startup prewarmed session prepared during session initialization.
     pub(crate) startup_prewarm: Option<SessionStartupPrewarmHandle>,
     pub(crate) active_connector_selection: HashSet<String>,
+    agent_task: Option<RegisteredAgentTask>,
     granted_permissions: Option<PermissionProfile>,
     pending_session_start_source: Option<SessionStartSource>,
 }
@@ -50,6 +52,7 @@ impl SessionState {
             previous_turn_settings: None,
             startup_prewarm: None,
             active_connector_selection: HashSet::new(),
+            agent_task: None,
             granted_permissions: None,
             pending_session_start_source: None,
         }
@@ -106,6 +109,18 @@ impl SessionState {
 
     pub(crate) fn reference_context_item(&self) -> Option<TurnContextItem> {
         self.history.reference_context_item()
+    }
+
+    pub(crate) fn agent_task(&self) -> Option<RegisteredAgentTask> {
+        self.agent_task.clone()
+    }
+
+    pub(crate) fn set_agent_task(&mut self, agent_task: RegisteredAgentTask) {
+        self.agent_task = Some(agent_task);
+    }
+
+    pub(crate) fn clear_agent_task(&mut self) {
+        self.agent_task = None;
     }
 
     // Token/rate limit helpers

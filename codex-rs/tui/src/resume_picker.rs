@@ -340,7 +340,7 @@ fn spawn_rollout_page_loader(
                 Some(PageCursor::AppServer(_)) => None,
                 None => None,
             };
-            let page = RolloutRecorder::list_threads(
+            let page = match RolloutRecorder::list_threads(
                 &config,
                 PAGE_SIZE,
                 cursor,
@@ -351,7 +351,10 @@ fn spawn_rollout_page_loader(
                 /*search_term*/ None,
             )
             .await
-            .map(picker_page_from_rollout_page);
+            {
+                Ok(page) => Ok(picker_page_from_rollout_page(page)),
+                Err(err) => Err(err),
+            };
             let _ = tx.send(BackgroundEvent::PageLoaded {
                 request_token: request.request_token,
                 search_token: request.search_token,
@@ -833,9 +836,10 @@ impl PickerState {
             return;
         }
 
-        let names = find_thread_names_by_ids(&self.codex_home, &missing_ids)
-            .await
-            .unwrap_or_default();
+        let names: std::collections::HashMap<ThreadId, String> =
+            find_thread_names_by_ids(&self.codex_home, &missing_ids)
+                .await
+                .unwrap_or_default();
         for thread_id in missing_ids {
             let thread_name = names.get(&thread_id).cloned();
             self.thread_name_cache.insert(thread_id, thread_name);
@@ -1088,7 +1092,7 @@ fn head_to_row(item: &ThreadItem) -> Row {
         .first_user_message
         .as_deref()
         .map(str::trim)
-        .filter(|s| !s.is_empty())
+        .filter(|s: &&str| !s.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| String::from("(no message yet)"));
 

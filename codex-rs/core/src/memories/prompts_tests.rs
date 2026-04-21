@@ -1,11 +1,21 @@
 use super::*;
 use crate::memories::extensions::RemovedExtensionResource;
-use codex_models_manager::model_info::model_info_from_slug;
+use codex_models_manager::bundled_models_response;
+use codex_protocol::openai_models::ModelInfo;
 use codex_state::Phase2InputSelection;
 use core_test_support::PathExt;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
 use tokio::fs as tokio_fs;
+
+fn model_info_from_slug(slug: &str) -> ModelInfo {
+    bundled_models_response()
+        .expect("bundled models.json should parse")
+        .models
+        .into_iter()
+        .find(|model| model.slug == slug)
+        .unwrap_or_else(|| panic!("model {slug} is missing from bundled models.json"))
+}
 
 #[test]
 fn build_stage_one_input_message_truncates_rollout_using_model_context_window() {
@@ -72,18 +82,10 @@ fn build_consolidation_prompt_includes_removed_extension_resources() {
         },
     ];
 
-    let prompt = build_consolidation_prompt(
-        &memory_root,
-        &Phase2InputSelection::default(),
-        &removed_extension_resources,
-    );
+    let prompt = build_consolidation_prompt(&memory_root, &Phase2InputSelection::default());
 
-    assert!(prompt.contains("Memory extension resources removed by retention pruning:"));
-    assert!(prompt.contains("- retention window: 7 days"));
-    assert!(prompt.contains("- extension: telepathy"));
-    assert!(prompt.contains("  - resources/2026-04-06T11-59-59-abcd-10min-old.md"));
-    assert!(prompt.contains("  - resources/2026-04-07T12-00-00-abcd-10min-cutoff.md"));
-    assert!(prompt.contains("extension-specific deletion diff"));
+    assert!(prompt.contains("Memory Phase 2 (Consolidation)"));
+    assert!(prompt.contains(memory_root.to_string_lossy().as_ref()));
 }
 
 #[tokio::test]

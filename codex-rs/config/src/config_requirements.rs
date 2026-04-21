@@ -504,6 +504,7 @@ pub struct ConfigRequirementsToml {
     pub enforce_residency: Option<ResidencyRequirement>,
     #[serde(rename = "experimental_network")]
     pub network: Option<NetworkRequirementsToml>,
+    pub guardian_developer_instructions: Option<String>,
     pub guardian_policy_config: Option<String>,
 }
 
@@ -541,6 +542,7 @@ pub struct ConfigRequirementsWithSources {
     pub rules: Option<Sourced<RequirementsExecPolicyToml>>,
     pub enforce_residency: Option<Sourced<ResidencyRequirement>>,
     pub network: Option<Sourced<NetworkRequirementsToml>>,
+    pub guardian_developer_instructions: Option<Sourced<String>>,
     pub guardian_policy_config: Option<Sourced<String>>,
 }
 
@@ -573,10 +575,18 @@ impl ConfigRequirementsWithSources {
             rules: _,
             enforce_residency: _,
             network: _,
+            guardian_developer_instructions: _,
             guardian_policy_config: _,
         } = &other;
 
         let mut other = other;
+        if other
+            .guardian_developer_instructions
+            .as_deref()
+            .is_some_and(|value| value.trim().is_empty())
+        {
+            other.guardian_developer_instructions = None;
+        }
         if other
             .guardian_policy_config
             .as_deref()
@@ -598,6 +608,7 @@ impl ConfigRequirementsWithSources {
                 rules,
                 enforce_residency,
                 network,
+                guardian_developer_instructions,
                 guardian_policy_config,
             }
         );
@@ -623,6 +634,7 @@ impl ConfigRequirementsWithSources {
             rules,
             enforce_residency,
             network,
+            guardian_developer_instructions,
             guardian_policy_config,
         } = self;
         ConfigRequirementsToml {
@@ -636,6 +648,8 @@ impl ConfigRequirementsWithSources {
             rules: rules.map(|sourced| sourced.value),
             enforce_residency: enforce_residency.map(|sourced| sourced.value),
             network: network.map(|sourced| sourced.value),
+            guardian_developer_instructions: guardian_developer_instructions
+                .map(|sourced| sourced.value),
             guardian_policy_config: guardian_policy_config.map(|sourced| sourced.value),
         }
     }
@@ -693,6 +707,10 @@ impl ConfigRequirementsToml {
             && self.enforce_residency.is_none()
             && self.network.is_none()
             && self
+                .guardian_developer_instructions
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+            && self
                 .guardian_policy_config
                 .as_deref()
                 .is_none_or(|value| value.trim().is_empty())
@@ -714,6 +732,7 @@ impl TryFrom<ConfigRequirementsWithSources> for ConfigRequirements {
             rules,
             enforce_residency,
             network,
+            guardian_developer_instructions: _guardian_developer_instructions,
             guardian_policy_config: _guardian_policy_config,
         } = toml;
 
@@ -967,6 +986,7 @@ mod tests {
             rules,
             enforce_residency,
             network,
+            guardian_developer_instructions,
             guardian_policy_config,
         } = toml;
         ConfigRequirementsWithSources {
@@ -986,6 +1006,8 @@ mod tests {
             enforce_residency: enforce_residency
                 .map(|value| Sourced::new(value, RequirementSource::Unknown)),
             network: network.map(|value| Sourced::new(value, RequirementSource::Unknown)),
+            guardian_developer_instructions: guardian_developer_instructions
+                .map(|value| Sourced::new(value, RequirementSource::Unknown)),
             guardian_policy_config: guardian_policy_config
                 .map(|value| Sourced::new(value, RequirementSource::Unknown)),
         }
@@ -1012,6 +1034,7 @@ mod tests {
         };
         let enforce_residency = ResidencyRequirement::Us;
         let enforce_source = source.clone();
+        let guardian_developer_instructions = "Use the guardian instructions.".to_string();
         let guardian_policy_config = "Use the company-managed guardian policy.".to_string();
 
         // Intentionally constructed without `..Default::default()` so adding a new field to
@@ -1027,6 +1050,7 @@ mod tests {
             rules: None,
             enforce_residency: Some(enforce_residency),
             network: None,
+            guardian_developer_instructions: Some(guardian_developer_instructions.clone()),
             guardian_policy_config: Some(guardian_policy_config.clone()),
         };
 
@@ -1057,6 +1081,10 @@ mod tests {
                 rules: None,
                 enforce_residency: Some(Sourced::new(enforce_residency, enforce_source)),
                 network: None,
+                guardian_developer_instructions: Some(Sourced::new(
+                    guardian_developer_instructions,
+                    source.clone(),
+                )),
                 guardian_policy_config: Some(Sourced::new(guardian_policy_config, source)),
             }
         );
@@ -1093,6 +1121,7 @@ mod tests {
                 rules: None,
                 enforce_residency: None,
                 network: None,
+                guardian_developer_instructions: None,
                 guardian_policy_config: None,
             }
         );
@@ -1137,6 +1166,7 @@ mod tests {
                 rules: None,
                 enforce_residency: None,
                 network: None,
+                guardian_developer_instructions: None,
                 guardian_policy_config: None,
             }
         );

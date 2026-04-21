@@ -278,7 +278,6 @@ impl MessageProcessor {
                     .enabled(Feature::DefaultModeRequestUserInput),
             },
             environment_manager,
-            Some(analytics_events_client.clone()),
         ));
         thread_manager
             .plugins_manager()
@@ -633,7 +632,11 @@ impl MessageProcessor {
             }
             let originator = name.clone();
             let user_agent_suffix = format!("{name}; {version}");
-            let codex_home = self.config.codex_home.clone();
+            let codex_home =
+                codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+                    self.config.codex_home.clone(),
+                )
+                .expect("config codex_home must be absolute");
             if session
                 .initialize(InitializedConnectionSessionState {
                     experimental_api_enabled,

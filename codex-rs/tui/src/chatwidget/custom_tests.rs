@@ -232,6 +232,7 @@ async fn custom__slash_model__modelとeffort以外の設定を触らない() {
     chat.thread_id = Some(codex_protocol::ThreadId::new());
 
     let preset = ModelPreset {
+        additional_speed_tiers: Vec::new(),
         id: "codex-auto-fast-custom".to_string(),
         model: "codex-auto-fast-custom".to_string(),
         display_name: "codex-auto-fast-custom".to_string(),

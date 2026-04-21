@@ -92,11 +92,11 @@ use codex_protocol::openai_models::ReasoningEffortPreset;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ConversationAudioParams;
 use codex_protocol::protocol::ConversationStartParams;
-use codex_protocol::protocol::ConversationStartTransport;
 use codex_protocol::protocol::ConversationTextParams;
 use codex_protocol::protocol::CreditsSnapshot;
 use codex_protocol::protocol::RateLimitSnapshot;
 use codex_protocol::protocol::RateLimitWindow;
+use codex_protocol::protocol::RealtimeOutputModality;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::ReviewTarget as CoreReviewTarget;
 use codex_protocol::protocol::SandboxPolicy;
@@ -169,7 +169,7 @@ impl ThreadSessionState {
             approval_policy: self.approval_policy,
             approvals_reviewer: self.approvals_reviewer,
             sandbox_policy: self.sandbox_policy.clone(),
-            cwd: self.cwd.clone(),
+            cwd: self.cwd.clone().to_path_buf(),
             reasoning_effort: self.reasoning_effort,
             history_log_id: self.history_log_id,
             history_entry_count: usize::try_from(self.history_entry_count).unwrap_or(usize::MAX),
@@ -473,7 +473,6 @@ impl AppServerSession {
                 params: TurnStartParams {
                     thread_id: thread_id.to_string(),
                     input: items.into_iter().map(Into::into).collect(),
-                    responsesapi_client_metadata: None,
                     cwd: Some(cwd),
                     approval_policy: Some(approval_policy.into()),
                     approvals_reviewer: Some(approvals_reviewer.into()),
@@ -485,6 +484,7 @@ impl AppServerSession {
                     personality,
                     output_schema,
                     collaboration_mode,
+                    responsesapi_client_metadata: None,
                 },
             })
             .await
@@ -528,8 +528,8 @@ impl AppServerSession {
                 params: TurnSteerParams {
                     thread_id: thread_id.to_string(),
                     input: items.into_iter().map(Into::into).collect(),
-                    responsesapi_client_metadata: None,
                     expected_turn_id: turn_id,
+                    responsesapi_client_metadata: None,
                 },
             })
             .await
@@ -781,15 +781,8 @@ impl AppServerSession {
                     output_modality: params.output_modality,
                     prompt: params.prompt,
                     session_id: params.session_id,
+                    transport: params.transport,
                     voice: params.voice,
-                    transport: params.transport.map(|transport| match transport {
-                        ConversationStartTransport::Websocket => {
-                            ThreadRealtimeStartTransport::Websocket
-                        }
-                        ConversationStartTransport::Webrtc { sdp } => {
-                            ThreadRealtimeStartTransport::Webrtc { sdp }
-                        }
-                    }),
                 },
             })
             .await
@@ -1543,7 +1536,8 @@ mod tests {
             approval_policy: AskForApproval::Never,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             sandbox_policy: SandboxPolicy::new_read_only_policy(),
-            cwd: PathBuf::from("/tmp/project"),
+            cwd: AbsolutePathBuf::from_absolute_path("/tmp/project").expect("absolute cwd"),
+            instruction_source_paths: Vec::new(),
             reasoning_effort: Some(codex_protocol::openai_models::ReasoningEffort::High),
             history_log_id: 42,
             history_entry_count: 7,
@@ -1565,7 +1559,7 @@ mod tests {
         assert_eq!(event.approval_policy, session.approval_policy);
         assert_eq!(event.approvals_reviewer, session.approvals_reviewer);
         assert_eq!(event.sandbox_policy, session.sandbox_policy);
-        assert_eq!(event.cwd, session.cwd);
+        assert_eq!(event.cwd, session.cwd.clone().to_path_buf());
         assert_eq!(event.reasoning_effort, session.reasoning_effort);
         assert_eq!(event.history_log_id, session.history_log_id);
         assert_eq!(

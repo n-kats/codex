@@ -15,6 +15,7 @@ pub struct RequestUserInputHandler {
     pub default_mode_request_user_input: bool,
 }
 
+#[async_trait::async_trait]
 impl ToolHandler for RequestUserInputHandler {
     type Output = FunctionToolOutput;
 

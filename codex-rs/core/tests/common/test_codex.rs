@@ -1,6 +1,8 @@
+use std::future::Future;
 use std::mem::swap;
 use std::path::Path;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -22,6 +24,7 @@ use codex_core::shell::Shell;
 use codex_core::shell::get_shell_by_model_provided_path;
 use codex_exec_server::CreateDirectoryOptions;
 use codex_exec_server::ExecutorFileSystem;
+use codex_exec_server::RemoveOptions;
 use codex_features::Feature;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ModelsResponse;
@@ -54,6 +57,9 @@ use wiremock::matchers::path_regex;
 
 type ConfigMutator = dyn FnOnce(&mut Config) + Send;
 type PreBuildHook = dyn FnOnce(&Path) + Send + 'static;
+type WorkspaceSetupHook = dyn FnOnce(PathBuf, Arc<dyn ExecutorFileSystem>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>
+    + Send
+    + 'static;
 const TEST_MODEL_WITH_EXPERIMENTAL_TOOLS: &str = "test-gpt-5.1-codex";
 const REMOTE_EXEC_SERVER_START_TIMEOUT: Duration = Duration::from_secs(5);
 const REMOTE_EXEC_SERVER_POLL_INTERVAL: Duration = Duration::from_millis(25);
@@ -136,6 +142,7 @@ pub async fn test_env() -> Result<TestEnv> {
                 .create_directory(
                     &absolute_path(&cwd)?,
                     CreateDirectoryOptions { recursive: true },
+                    None,
                 )
                 .await?;
             remote_process.process.register_cleanup_path(&cwd);
@@ -325,6 +332,7 @@ pub struct TestCodexBuilder {
     config_mutators: Vec<Box<ConfigMutator>>,
     auth: CodexAuth,
     pre_build_hooks: Vec<Box<PreBuildHook>>,
+    workspace_setup_hooks: Vec<Box<WorkspaceSetupHook>>,
     home: Option<Arc<TempDir>>,
     user_shell_override: Option<Shell>,
 }
@@ -355,6 +363,16 @@ impl TestCodexBuilder {
         F: FnOnce(&Path) + Send + 'static,
     {
         self.pre_build_hooks.push(Box::new(hook));
+        self
+    }
+
+    pub fn with_workspace_setup<F, Fut>(mut self, setup: F) -> Self
+    where
+        F: FnOnce(PathBuf, Arc<dyn ExecutorFileSystem>) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.workspace_setup_hooks
+            .push(Box::new(move |cwd, fs| Box::pin(setup(cwd, fs))));
         self
     }
 
@@ -477,6 +495,14 @@ impl TestCodexBuilder {
         resume_from: Option<PathBuf>,
         test_env: TestEnv,
     ) -> anyhow::Result<TestCodex> {
+        let workspace_setup_hooks = std::mem::take(&mut self.workspace_setup_hooks);
+        for hook in workspace_setup_hooks {
+            hook(
+                cwd.path().to_path_buf(),
+                Arc::clone(&test_env.environment().get_filesystem()),
+            )
+            .await?;
+        }
         let auth = self.auth.clone();
         let environment_manager = Arc::new(codex_exec_server::EnvironmentManager::new(
             test_env.exec_server_url().map(str::to_owned),
@@ -747,6 +773,12 @@ impl TestCodexHarness {
         Self::with_builder(test_codex()).await
     }
 
+    pub async fn with_remote_aware_builder(mut builder: TestCodexBuilder) -> Result<Self> {
+        let server = start_mock_server().await;
+        let test = builder.build_remote_aware(&server).await?;
+        Ok(Self { server, test })
+    }
+
     pub async fn with_config(mutator: impl FnOnce(&mut Config) + Send + 'static) -> Result<Self> {
         Self::with_builder(test_codex().with_config(mutator)).await
     }
@@ -771,6 +803,87 @@ impl TestCodexHarness {
 
     pub fn path(&self, rel: impl AsRef<Path>) -> PathBuf {
         self.test.workspace_path(rel)
+    }
+
+    pub async fn read_file_text(&self, rel: impl AsRef<Path>) -> Result<String> {
+        let path = self.path(rel);
+        let abs = AbsolutePathBuf::from_absolute_path_checked(path)
+            .expect("workspace path should be absolute");
+        self.test
+            .fs()
+            .read_file_text(&abs, /*sandbox*/ None)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn write_file(
+        &self,
+        rel: impl AsRef<Path>,
+        contents: impl AsRef<[u8]>,
+    ) -> Result<()> {
+        let path = self.path(rel);
+        let abs = AbsolutePathBuf::from_absolute_path_checked(path)
+            .expect("workspace path should be absolute");
+        self.test
+            .fs()
+            .write_file(&abs, contents.as_ref().to_vec(), /*sandbox*/ None)
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn create_dir_all(&self, rel: impl AsRef<Path>) -> Result<()> {
+        let path = self.path(rel);
+        let abs = AbsolutePathBuf::from_absolute_path_checked(path)
+            .expect("workspace path should be absolute");
+        self.test
+            .fs()
+            .create_directory(
+                &abs,
+                CreateDirectoryOptions { recursive: true },
+                /*sandbox*/ None,
+            )
+            .await
+            .map_err(Into::into)
+    }
+
+    pub async fn path_exists(&self, rel: impl AsRef<Path>) -> Result<bool> {
+        let path = self.path(rel);
+        let abs = AbsolutePathBuf::from_absolute_path_checked(path)
+            .expect("workspace path should be absolute");
+        Ok(self
+            .test
+            .fs()
+            .get_metadata(&abs, /*sandbox*/ None)
+            .await
+            .is_ok())
+    }
+
+    pub async fn abs_path_exists(&self, path: &Path) -> Result<bool> {
+        let abs = AbsolutePathBuf::from_absolute_path_checked(path.to_path_buf())
+            .expect("path should be absolute");
+        Ok(self
+            .test
+            .fs()
+            .get_metadata(&abs, /*sandbox*/ None)
+            .await
+            .is_ok())
+    }
+
+    pub async fn remove_abs_path(&self, path: &Path) -> Result<()> {
+        let abs = AbsolutePathBuf::from_absolute_path_checked(path.to_path_buf())
+            .expect("path should be absolute");
+        self.test
+            .fs()
+            .remove(
+                &abs,
+                RemoveOptions {
+                    recursive: true,
+                    force: true,
+                },
+                /*sandbox*/ None,
+            )
+            .await
+            .map_err(Into::into)
     }
 
     pub async fn submit(&self, prompt: &str) -> Result<()> {
@@ -887,6 +1000,7 @@ pub fn test_codex() -> TestCodexBuilder {
         config_mutators: vec![],
         auth: CodexAuth::from_api_key("dummy"),
         pre_build_hooks: vec![],
+        workspace_setup_hooks: vec![],
         home: None,
         user_shell_override: None,
     }

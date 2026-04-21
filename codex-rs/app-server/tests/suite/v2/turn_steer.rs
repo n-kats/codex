@@ -66,8 +66,8 @@ async fn turn_steer_requires_active_turn() -> Result<()> {
                 text: "steer".to_string(),
                 text_elements: Vec::new(),
             }],
-            responsesapi_client_metadata: None,
             expected_turn_id: "turn-does-not-exist".to_string(),
+            responsesapi_client_metadata: None,
         })
         .await?;
     let steer_err: JSONRPCError = timeout(
@@ -175,8 +175,8 @@ async fn turn_steer_rejects_oversized_text_input() -> Result<()> {
                 text: oversized_input.clone(),
                 text_elements: Vec::new(),
             }],
-            responsesapi_client_metadata: None,
             expected_turn_id: turn.id.clone(),
+            responsesapi_client_metadata: None,
         })
         .await?;
     let steer_err: JSONRPCError = timeout(
@@ -283,8 +283,8 @@ async fn turn_steer_returns_active_turn_id() -> Result<()> {
                 text: "steer".to_string(),
                 text_elements: Vec::new(),
             }],
-            responsesapi_client_metadata: None,
             expected_turn_id: turn.id.clone(),
+            responsesapi_client_metadata: None,
         })
         .await?;
     let steer_resp: JSONRPCResponse = timeout(

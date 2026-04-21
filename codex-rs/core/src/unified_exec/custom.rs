@@ -310,6 +310,7 @@ impl UnifiedExecProcessManager {
                         command,
                         cwd: env.cwd.clone(),
                         env: env.env.clone(),
+                        exec_server_env_config: None,
                         network: env.network.clone(),
                         expiration: env.expiration.clone(),
                         capture_policy: env.capture_policy,
@@ -321,6 +322,7 @@ impl UnifiedExecProcessManager {
                         sandbox_policy: env.sandbox_policy.clone(),
                         file_system_sandbox_policy: env.file_system_sandbox_policy.clone(),
                         network_sandbox_policy: env.network_sandbox_policy,
+                        windows_sandbox_filesystem_overrides: None,
                         justification: env.justification.clone(),
                         arg0: None,
                     });
@@ -380,7 +382,10 @@ mod tests {
     fn exec_request_with_run_as() -> ExecRequest {
         ExecRequest {
             command: vec!["echo".to_string(), "hello".to_string()],
-            cwd: std::path::PathBuf::from("/tmp"),
+            cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+                &std::path::PathBuf::from("/tmp"),
+            )
+            .expect("absolute path"),
             env: HashMap::from([("A".to_string(), "B".to_string())]),
             network: None,
             expiration: ExecExpiration::DefaultTimeout,
@@ -397,6 +402,8 @@ mod tests {
             sandbox_policy: SandboxPolicy::DangerFullAccess,
             file_system_sandbox_policy: FileSystemSandboxPolicy::unrestricted(),
             network_sandbox_policy: NetworkSandboxPolicy::Enabled,
+            exec_server_env_config: None,
+            windows_sandbox_filesystem_overrides: None,
             justification: None,
             arg0: None,
         }

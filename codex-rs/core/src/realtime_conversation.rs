@@ -1,5 +1,6 @@
 use crate::client::ModelClient;
 use crate::codex::Session;
+use crate::config::RealtimeWsMode;
 use crate::realtime_context::build_realtime_startup_context;
 use crate::realtime_prompt::prepare_realtime_backend_prompt;
 use anyhow::Context;
@@ -21,7 +22,6 @@ use codex_api::RealtimeWebsocketEvents;
 use codex_api::RealtimeWebsocketWriter;
 use codex_api::map_api_error;
 use codex_app_server_protocol::AuthMode;
-use codex_config::config_toml::RealtimeWsMode;
 use codex_config::config_toml::RealtimeWsVersion;
 use codex_login::CodexAuth;
 use codex_login::default_client::default_headers;
@@ -610,6 +610,7 @@ async fn prepare_realtime_start(
     let config = sess.get_config().await;
     let transport = params
         .transport
+        .clone()
         .unwrap_or(ConversationStartTransport::Websocket);
     let mut api_provider = provider.to_api_provider(Some(AuthMode::ApiKey))?;
     if let Some(realtime_ws_base_url) = &config.experimental_realtime_ws_base_url {
@@ -694,9 +695,7 @@ pub(crate) async fn build_realtime_session_config(
         RealtimeWsMode::Conversational => RealtimeSessionMode::Conversational,
         RealtimeWsMode::Transcription => RealtimeSessionMode::Transcription,
     };
-    let voice = voice
-        .or(config.realtime.voice)
-        .unwrap_or_else(|| default_realtime_voice(config.realtime.version));
+    let voice = voice.unwrap_or_else(|| default_realtime_voice(config.realtime.version));
     validate_realtime_voice(config.realtime.version, voice)?;
     Ok(RealtimeSessionConfig {
         instructions: prompt,
@@ -796,6 +795,7 @@ async fn handle_start_inner(
         events_rx,
         sdp,
     } = start_output;
+
     if let Some(sdp) = sdp {
         sess.send_event_raw(Event {
             id: sub_id.to_string(),
@@ -835,13 +835,6 @@ async fn handle_start_inner(
                 }
                 _ => None,
             };
-            if let Some(text) = maybe_routed_text {
-                debug!(text = %text, "[realtime-text] realtime conversation text output");
-                let sess_for_routed_text = Arc::clone(&sess_clone);
-                sess_for_routed_text
-                    .route_realtime_text_input(wrap_realtime_delegation_input(&text))
-                    .await;
-            }
             if !fanout_realtime_active.load(Ordering::Relaxed) {
                 break;
             }
@@ -852,6 +845,18 @@ async fn handle_start_inner(
                     },
                 )))
                 .await;
+            if let Some(text) = maybe_routed_text {
+                debug!(text = %text, "[realtime-text] realtime conversation text output");
+                let sess_for_routed_text = Arc::clone(&sess_clone);
+                // Route the delegated turn without blocking realtime fanout. The same websocket
+                // batch can contain follow-up audio that should be forwarded immediately.
+                tokio::spawn(async move {
+                    tokio::task::yield_now().await;
+                    sess_for_routed_text
+                        .route_realtime_text_input(wrap_realtime_delegation_input(&text))
+                        .await;
+                });
+            }
         }
         if fanout_realtime_active.swap(false, Ordering::Relaxed) {
             match end {

@@ -16,6 +16,7 @@ pub(crate) const SPAWN_AGENT_DEVELOPER_INSTRUCTIONS: &str = r#"<spawned_agent_co
 You are a newly spawned agent in a team of agents collaborating to complete a task. You can spawn sub-agents to handle subtasks, and those sub-agents can spawn their own sub-agents. You are responsible for returning the response to your assigned task in the final channel. When you give your response, the contents of your response in the final channel will be immediately delivered back to your parent agent. The prior conversation history was forked from your parent agent. Treat the next user message as your assigned task, and use the forked history only as background context.
 </spawned_agent_context>"#;
 
+#[async_trait::async_trait]
 impl ToolHandler for Handler {
     type Output = SpawnAgentResult;
 
@@ -214,7 +215,7 @@ impl ToolHandler for Handler {
             )
         })?;
 
-        let hide_agent_metadata = turn.config.multi_agent_v2.hide_spawn_agent_metadata;
+        let hide_agent_metadata = turn.tools_config.hide_spawn_agent_metadata;
         if hide_agent_metadata {
             Ok(SpawnAgentResult::HiddenMetadata { task_name })
         } else {

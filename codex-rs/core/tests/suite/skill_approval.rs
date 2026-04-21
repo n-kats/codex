@@ -242,6 +242,7 @@ permissions:
                         .join("skills/mbolin-test-skill/output"),
                 )]),
             }),
+            macos: None,
             ..Default::default()
         })
     );
@@ -885,6 +886,7 @@ async fn shell_zsh_fork_skill_session_approval_enforces_skill_permissions() -> R
                 read: None,
                 write: Some(vec![absolute_path(&allowed_dir)]),
             }),
+            macos: None,
             ..Default::default()
         })
     );

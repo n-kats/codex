@@ -29,6 +29,7 @@ use crate::compact_remote::run_inline_remote_auto_compact_task;
 use crate::config::ManagedFeatures;
 use crate::connectors;
 use crate::exec_policy::ExecPolicyManager;
+use crate::installation_id::resolve_installation_id;
 #[cfg(test)]
 use crate::models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use crate::models_manager::manager::ModelsManager;
@@ -56,10 +57,15 @@ use async_channel::Receiver;
 use async_channel::Sender;
 use chrono::Local;
 use chrono::Utc;
+use codex_analytics::CompactionPhase;
+use codex_analytics::CompactionReason;
+use codex_app_server_protocol::AuthMode;
 use codex_app_server_protocol::McpServerElicitationRequest;
 use codex_app_server_protocol::McpServerElicitationRequestParams;
+use codex_config::types::OAuthCredentialsStoreMode;
 use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentManager;
+use codex_exec_server::FileSystemSandboxContext;
 use codex_features::FEATURES;
 use codex_features::Feature;
 use codex_features::unstable_features_warning_event;
@@ -69,6 +75,9 @@ use codex_hooks::HookPayload;
 use codex_hooks::HookResult;
 use codex_hooks::Hooks;
 use codex_hooks::HooksConfig;
+use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
+use codex_mcp::compute_auth_statuses;
+use codex_mcp::with_codex_apps_mcp;
 use codex_network_proxy::NetworkProxy;
 use codex_network_proxy::NetworkProxyAuditMetadata;
 use codex_network_proxy::normalize_host;
@@ -120,7 +129,6 @@ use codex_protocol::request_permissions::RequestPermissionsResponse;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputResponse;
 use codex_rmcp_client::ElicitationResponse;
-use codex_rmcp_client::OAuthCredentialsStoreMode;
 use codex_terminal_detection::user_agent;
 use codex_utils_stream_parser::AssistantTextChunk;
 use codex_utils_stream_parser::AssistantTextStreamParser;
@@ -182,6 +190,8 @@ use crate::error::Result as CodexResult;
 #[cfg(test)]
 use crate::exec::StreamOutput;
 use codex_config::CONFIG_TOML_FILE;
+use codex_tools::ToolsConfig;
+use codex_tools::ToolsConfigParams;
 
 #[cfg(test)]
 #[path = "codex/custom_tests.rs"]
@@ -252,14 +262,11 @@ use crate::hook_runtime::record_pending_input;
 use crate::hook_runtime::run_pending_session_start_hooks;
 use crate::hook_runtime::run_user_prompt_submit_hooks;
 use crate::instructions::UserInstructions;
-use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::McpManager;
-use crate::mcp::auth::compute_auth_statuses;
-use crate::mcp::maybe_prompt_and_install_mcp_dependencies;
-use crate::mcp::with_codex_apps_mcp;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::mcp_connection_manager::codex_apps_tools_cache_key;
 use crate::mcp_connection_manager::filter_non_codex_apps_mcp_tools_only;
+use crate::mcp_skill_dependencies::maybe_prompt_and_install_mcp_dependencies;
 use crate::memories;
 use crate::mentions::build_connector_slug_counts;
 use crate::mentions::collect_explicit_app_ids;
@@ -348,8 +355,6 @@ use crate::tools::network_approval::build_network_policy_decider;
 use crate::tools::parallel::ToolCallRuntime;
 use crate::tools::router::ToolRouterParams;
 use crate::tools::sandboxing::ApprovalStore;
-use crate::tools::spec::ToolsConfig;
-use crate::tools::spec::ToolsConfigParams;
 use crate::tools::spec::tool_user_shell_type;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::turn_timing::TurnTimingState;
@@ -360,8 +365,8 @@ use crate::util::backoff;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
 use codex_async_utils::OrCancelExt;
 use codex_otel::SessionTelemetry;
+use codex_otel::THREAD_STARTED_METRIC;
 use codex_otel::TelemetryAuthMode;
-use codex_otel::metrics::names::THREAD_STARTED_METRIC;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
@@ -432,6 +437,13 @@ const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
 const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyber-safety";
 const DIRECT_APP_TOOL_EXPOSURE_THRESHOLD: usize = 100;
 
+fn image_generation_tool_auth_allowed(auth_manager: Option<&AuthManager>) -> bool {
+    matches!(
+        auth_manager.and_then(AuthManager::auth_mode),
+        Some(AuthMode::Chatgpt)
+    )
+}
+
 impl Codex {
     /// Spawn a new [`Codex`] and initialize the session.
     pub(crate) async fn spawn(args: CodexSpawnArgs) -> CodexResult<CodexSpawnOk> {
@@ -482,10 +494,10 @@ impl Codex {
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
 
-        let plugin_outcome = plugins_manager.plugins_for_config(&config);
+        let plugin_outcome = plugins_manager.plugins_for_config(&config).await;
         let effective_skill_roots = plugin_outcome.effective_skill_roots();
         let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
-        let loaded_skills = skills_manager.skills_for_config(&skills_input);
+        let loaded_skills = skills_manager.skills_for_config(&skills_input, None).await;
 
         for err in &loaded_skills.errors {
             error!(
@@ -568,7 +580,9 @@ impl Codex {
         // 1. config.base_instructions override
         // 2. conversation history => session_meta.base_instructions
         // 3. base_instructions for current model
-        let model_info = models_manager.get_model_info(model.as_str(), &config).await;
+        let model_info = models_manager
+            .get_model_info(model.as_str(), &config.to_models_manager_config())
+            .await;
         let base_instructions = config
             .base_instructions
             .clone()
@@ -665,7 +679,10 @@ impl Codex {
         .await
         .map_err(|e| {
             error!("Failed to create session: {e:#}");
-            map_session_init_error(&e, &config.codex_home)
+            CodexErr::Fatal(format!(
+                "Failed to initialize session: {}",
+                map_session_init_error(&e, &config.codex_home)
+            ))
         })?;
         let thread_id = session.conversation_id;
 
@@ -749,8 +766,11 @@ impl Codex {
         &self,
         input: Vec<UserInput>,
         expected_turn_id: Option<&str>,
+        responsesapi_client_metadata: Option<HashMap<String, String>>,
     ) -> Result<String, SteerInputError> {
-        self.session.steer_input(input, expected_turn_id).await
+        self.session
+            .steer_input(input, expected_turn_id, responsesapi_client_metadata)
+            .await
     }
 
     pub(crate) async fn set_app_server_client_name(
@@ -893,13 +913,15 @@ impl TurnContext {
 
     pub(crate) fn apps_enabled(&self) -> bool {
         self.features
-            .apps_enabled_cached(self.auth_manager.as_deref())
+            .apps_enabled_cached(self.auth_manager.as_deref().is_some())
     }
 
     pub(crate) async fn with_model(&self, model: String, models_manager: &ModelsManager) -> Self {
         let mut config = (*self.config).clone();
         config.model = Some(model.clone());
-        let model_info = models_manager.get_model_info(model.as_str(), &config).await;
+        let model_info = models_manager
+            .get_model_info(model.as_str(), &config.to_models_manager_config())
+            .await;
         let truncation_policy = model_info.truncation_policy.into();
         let supported_reasoning_levels = model_info
             .supported_reasoning_levels
@@ -935,6 +957,9 @@ impl TurnContext {
                 .list_models(RefreshStrategy::OnlineIfUncached)
                 .await,
             features: &features,
+            image_generation_tool_auth_allowed: image_generation_tool_auth_allowed(
+                self.auth_manager.as_deref(),
+            ),
             web_search_mode: self.tools_config.web_search_mode,
             session_source: self.session_source.clone(),
             sandbox_policy: self.sandbox_policy.get(),
@@ -998,6 +1023,22 @@ impl TurnContext {
         path.as_ref()
             .map(PathBuf::from)
             .map_or_else(|| self.cwd.clone(), |p| self.cwd.join(p))
+    }
+
+    pub(crate) fn file_system_sandbox_context(
+        &self,
+        additional_permissions: Option<PermissionProfile>,
+    ) -> FileSystemSandboxContext {
+        FileSystemSandboxContext {
+            sandbox_policy: self.sandbox_policy.get().clone(),
+            windows_sandbox_level: self.windows_sandbox_level,
+            windows_sandbox_private_desktop: self
+                .config
+                .permissions
+                .windows_sandbox_private_desktop,
+            use_legacy_landlock: self.features.use_legacy_landlock(),
+            additional_permissions,
+        }
     }
 
     pub(crate) fn compact_prompt(&self) -> &str {
@@ -1135,7 +1176,10 @@ impl SessionConfiguration {
             approval_policy: self.approval_policy.value(),
             approvals_reviewer: self.approvals_reviewer,
             sandbox_policy: self.sandbox_policy.get().clone(),
-            cwd: self.cwd.clone(),
+            cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+                self.cwd.clone(),
+            )
+            .expect("thread cwd must be absolute"),
             ephemeral: self.original_config_do_not_use.ephemeral,
             reasoning_effort: self.collaboration_mode.reasoning_effort(),
             personality: self.personality,
@@ -1386,7 +1430,7 @@ impl Session {
             model_info.slug.as_str(),
         );
         let session_source = session_configuration.session_source.clone();
-        let auth_manager_for_context = auth_manager;
+        let auth_manager_for_context = auth_manager.clone();
         let provider_for_context = provider;
         let session_telemetry_for_context = session_telemetry;
         let per_turn_config = Arc::new(per_turn_config);
@@ -1395,6 +1439,9 @@ impl Session {
             model_info: &model_info,
             available_models: &models_manager.try_list_models().unwrap_or_default(),
             features: &per_turn_config.features,
+            image_generation_tool_auth_allowed: image_generation_tool_auth_allowed(
+                auth_manager.as_deref(),
+            ),
             web_search_mode: Some(per_turn_config.web_search_mode.value()),
             session_source: session_source.clone(),
             sandbox_policy: session_configuration.sandbox_policy.get(),
@@ -1412,10 +1459,14 @@ impl Session {
         ));
 
         let cwd = session_configuration.cwd.clone();
+        let cwd_abs =
+            codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(cwd.clone())
+                .expect("session cwd must be absolute");
         let turn_metadata_state = Arc::new(TurnMetadataState::new(
             conversation_id.to_string(),
+            &session_source,
             sub_id.clone(),
-            cwd.clone(),
+            cwd_abs.clone(),
             session_configuration.sandbox_policy.get(),
             session_configuration.windows_sandbox_level,
         ));
@@ -1585,7 +1636,9 @@ impl Session {
         let mcp_manager_for_mcp = Arc::clone(&mcp_manager);
         let auth_and_mcp_fut = async move {
             let auth = auth_manager_clone.auth().await;
-            let mcp_servers = mcp_manager_for_mcp.effective_servers(&config_for_mcp, auth.as_ref());
+            let mcp_servers = mcp_manager_for_mcp
+                .effective_servers(&config_for_mcp, auth.as_ref())
+                .await;
             let auth_statuses = compute_auth_statuses(
                 mcp_servers.iter(),
                 config_for_mcp.mcp_oauth_credentials_store_mode,
@@ -1674,10 +1727,13 @@ impl Session {
         let originator = crate::default_client::originator().value;
         let terminal_type = user_agent();
         let session_model = session_configuration.collaboration_mode.model().to_string();
-        let auth_env_telemetry = collect_auth_env_telemetry(
-            &session_configuration.provider,
-            auth_manager.codex_api_key_env_enabled(),
-        );
+        let provider: codex_model_provider_info::ModelProviderInfo =
+            session_configuration.provider.clone().into();
+        let codex_home = AbsolutePathBuf::from_absolute_path(config.codex_home.clone())
+            .expect("session codex_home must be absolute");
+        let installation_id = resolve_installation_id(&codex_home).await?;
+        let auth_env_telemetry =
+            collect_auth_env_telemetry(&provider, auth_manager.codex_api_key_env_enabled());
         let mut session_telemetry = SessionTelemetry::new(
             conversation_id,
             session_model.as_str(),
@@ -1875,6 +1931,7 @@ impl Session {
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::new_uninitialized(
                 &config.permissions.approval_policy,
             ))),
+            guardian_rejections: Mutex::new(HashMap::new()),
             mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
             unified_exec_manager: UnifiedExecProcessManager::new(
                 config.background_terminal_max_timeout,
@@ -1907,7 +1964,8 @@ impl Session {
             model_client: ModelClient::new(
                 Some(Arc::clone(&auth_manager)),
                 conversation_id,
-                session_configuration.provider.clone(),
+                installation_id,
+                provider,
                 session_configuration.session_source.clone(),
                 config.model_verbosity,
                 config.features.enabled(Feature::EnableRequestCompression),
@@ -1917,7 +1975,11 @@ impl Session {
             code_mode_service: crate::tools::code_mode::CodeModeService::new(
                 config.js_repl_node_path.clone(),
             ),
-            environment: environment_manager.current().await?,
+            environment: environment_manager
+                .current()
+                .await
+                .expect("environment manager must be initialized")
+                .expect("environment manager must be initialized"),
         };
         let js_repl = Arc::new(JsReplHandle::with_node_path(
             config.js_repl_node_path.clone(),
@@ -1963,7 +2025,11 @@ impl Session {
                 approval_policy: session_configuration.approval_policy.value(),
                 approvals_reviewer: session_configuration.approvals_reviewer,
                 sandbox_policy: session_configuration.sandbox_policy.get().clone(),
-                cwd: session_configuration.cwd.clone(),
+                cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+                    session_configuration.cwd.clone(),
+                )
+                .expect("session cwd must be absolute")
+                .to_path_buf(),
                 reasoning_effort: session_configuration.collaboration_mode.reasoning_effort(),
                 history_log_id,
                 history_entry_count,
@@ -1984,7 +2050,11 @@ impl Session {
         let sandbox_state = SandboxState {
             sandbox_policy: session_configuration.sandbox_policy.get().clone(),
             codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
-            sandbox_cwd: session_configuration.cwd.clone(),
+            sandbox_cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+                session_configuration.cwd.clone(),
+            )
+            .expect("session cwd must be absolute")
+            .to_path_buf(),
             use_legacy_landlock: config.features.use_legacy_landlock(),
         };
         let mut required_mcp_servers: Vec<String> = mcp_servers
@@ -1995,7 +2065,7 @@ impl Session {
         required_mcp_servers.sort();
         let enabled_mcp_server_count = mcp_servers.values().filter(|server| server.enabled).count();
         let required_mcp_server_count = required_mcp_servers.len();
-        let tool_plugin_provenance = mcp_manager.tool_plugin_provenance(config.as_ref());
+        let tool_plugin_provenance = mcp_manager.tool_plugin_provenance(config.as_ref()).await;
         {
             let mut cancel_guard = sess.services.mcp_startup_cancellation_token.lock().await;
             cancel_guard.cancel();
@@ -2129,6 +2199,7 @@ impl Session {
                     text_elements: Vec::new(),
                 }],
                 final_output_json_schema: None,
+                responsesapi_client_metadata: None,
             },
         )
         .await;
@@ -2503,19 +2574,21 @@ impl Session {
             .models_manager
             .get_model_info(
                 session_configuration.collaboration_mode.model(),
-                &per_turn_config,
+                &per_turn_config.to_models_manager_config(),
             )
             .await;
         let plugin_outcome = self
             .services
             .plugins_manager
-            .plugins_for_config(&per_turn_config);
+            .plugins_for_config(&per_turn_config)
+            .await;
         let skills_input =
             skills_load_input_from_config(&per_turn_config, plugin_outcome.effective_skill_roots());
         let skills_outcome = Arc::new(
             self.services
                 .skills_manager
-                .skills_for_config(&skills_input),
+                .skills_for_config(&skills_input, None)
+                .await,
         );
         let mut turn_context: TurnContext = Self::make_turn_context(
             self.conversation_id,
@@ -2962,6 +3035,8 @@ impl Session {
         additional_permissions: Option<PermissionProfile>,
         available_decisions: Option<Vec<ReviewDecision>>,
     ) -> ReviewDecision {
+        let cwd = AbsolutePathBuf::from_absolute_path_checked(cwd)
+            .expect("command approval cwd must be absolute");
         //  command-level approvals use `call_id`.
         // `approval_id` is only present for subcommand callbacks (execve intercept)
         let effective_approval_id = approval_id.clone().unwrap_or_else(|| call_id.clone());
@@ -3570,8 +3645,13 @@ impl Session {
         // Add developer instructions for memories.
         if turn_context.features.enabled(Feature::MemoryTool)
             && turn_context.config.memories.use_memories
-            && let Some(memory_prompt) =
-                build_memory_tool_developer_instructions(&turn_context.config.codex_home).await
+            && let Some(memory_prompt) = build_memory_tool_developer_instructions(
+                &AbsolutePathBuf::from_absolute_path_checked(
+                    turn_context.config.codex_home.clone(),
+                )
+                .expect("codex home must be absolute"),
+            )
+            .await
         {
             developer_sections.push(memory_prompt);
         }
@@ -3611,7 +3691,7 @@ impl Session {
             let mcp_connection_manager = self.services.mcp_connection_manager.read().await;
             let accessible_and_enabled_connectors =
                 connectors::list_accessible_and_enabled_connectors_from_manager(
-                    &mcp_connection_manager,
+                    &*mcp_connection_manager,
                     &turn_context.config,
                 )
                 .await;
@@ -3629,7 +3709,8 @@ impl Session {
         let loaded_plugins = self
             .services
             .plugins_manager
-            .plugins_for_config(&turn_context.config);
+            .plugins_for_config(&turn_context.config)
+            .await;
         if let Some(plugin_section) = render_plugins_section(loaded_plugins.capability_summaries())
         {
             developer_sections.push(plugin_section);
@@ -3952,6 +4033,7 @@ impl Session {
         &self,
         input: Vec<UserInput>,
         expected_turn_id: Option<&str>,
+        responsesapi_client_metadata: Option<HashMap<String, String>>,
     ) -> Result<String, SteerInputError> {
         if input.is_empty() {
             return Err(SteerInputError::EmptyInput);
@@ -3965,6 +4047,14 @@ impl Session {
         let Some((active_turn_id, _)) = active_turn.tasks.first() else {
             return Err(SteerInputError::NoActiveTurn(input));
         };
+
+        if let Some(responsesapi_client_metadata) = responsesapi_client_metadata {
+            for task in active_turn.tasks.values() {
+                task.turn_context
+                    .turn_metadata_state
+                    .set_responsesapi_client_metadata(responsesapi_client_metadata.clone());
+            }
+        }
 
         if let Some(expected_turn_id) = expected_turn_id
             && expected_turn_id != active_turn_id
@@ -4209,21 +4299,24 @@ impl Session {
     ) {
         let auth = self.services.auth_manager.auth().await;
         let config = self.get_config().await;
+        let mcp_config = config
+            .to_mcp_config(self.services.plugins_manager.as_ref())
+            .await;
         let tool_plugin_provenance = self
             .services
             .mcp_manager
-            .tool_plugin_provenance(config.as_ref());
-        let mcp_servers = with_codex_apps_mcp(
-            mcp_servers,
-            self.features.apps_enabled_for_auth(auth.as_ref()),
-            auth.as_ref(),
-            config.as_ref(),
-        );
+            .tool_plugin_provenance(config.as_ref())
+            .await;
+        let mcp_servers = with_codex_apps_mcp(mcp_servers, auth.as_ref(), &mcp_config);
         let auth_statuses = compute_auth_statuses(mcp_servers.iter(), store_mode).await;
         let sandbox_state = SandboxState {
             sandbox_policy: turn_context.sandbox_policy.get().clone(),
             codex_linux_sandbox_exe: turn_context.codex_linux_sandbox_exe.clone(),
-            sandbox_cwd: turn_context.cwd.clone(),
+            sandbox_cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+                turn_context.cwd.clone(),
+            )
+            .expect("turn cwd must be absolute")
+            .to_path_buf(),
             use_legacy_landlock: turn_context.features.use_legacy_landlock(),
         };
         {
@@ -4575,8 +4668,6 @@ mod handlers {
     use crate::codex::spawn_review_thread;
     use crate::config::Config;
 
-    use crate::mcp::auth::compute_auth_statuses;
-    use crate::mcp::collect_mcp_snapshot_from_manager;
     use crate::review_prompts::resolve_review_request;
     use crate::rollout::RolloutRecorder;
     use crate::rollout::session_index;
@@ -4585,6 +4676,7 @@ mod handlers {
     use crate::tasks::UserShellCommandMode;
     use crate::tasks::UserShellCommandTask;
     use crate::tasks::execute_user_shell_command;
+    use codex_mcp::compute_auth_statuses;
     use codex_protocol::protocol::CodexErrorInfo;
     use codex_protocol::protocol::ErrorEvent;
     use codex_protocol::protocol::Event;
@@ -4714,7 +4806,7 @@ mod handlers {
     }
 
     pub async fn user_input_or_turn(sess: &Arc<Session>, sub_id: String, op: Op) {
-        let (items, updates) = match op {
+        let (items, updates, responsesapi_client_metadata) = match op {
             Op::UserTurn {
                 cwd,
                 approval_policy,
@@ -4755,17 +4847,20 @@ mod handlers {
                         personality,
                         app_server_client_name: None,
                     },
+                    None,
                 )
             }
             Op::UserInput {
                 items,
                 final_output_json_schema,
+                responsesapi_client_metadata,
             } => (
                 items,
                 SessionSettingsUpdate {
                     final_output_json_schema: Some(final_output_json_schema),
                     ..Default::default()
                 },
+                responsesapi_client_metadata,
             ),
             _ => unreachable!(),
         };
@@ -4774,10 +4869,19 @@ mod handlers {
             // new_turn_with_sub_id already emits the error event.
             return;
         };
+        if let Some(responsesapi_client_metadata) = responsesapi_client_metadata.clone() {
+            current_context
+                .turn_metadata_state
+                .set_responsesapi_client_metadata(responsesapi_client_metadata);
+        }
         sess.maybe_emit_unknown_model_warning_for_turn(current_context.as_ref())
             .await;
         match sess
-            .steer_input(items.clone(), /*expected_turn_id*/ None)
+            .steer_input(
+                items.clone(),
+                /*expected_turn_id*/ None,
+                responsesapi_client_metadata,
+            )
             .await
         {
             Ok(_) => current_context.session_telemetry.user_prompt(&items),
@@ -5027,18 +5131,12 @@ mod handlers {
     }
 
     pub async fn list_mcp_tools(sess: &Session, config: &Arc<Config>, sub_id: String) {
-        let mcp_connection_manager = sess.services.mcp_connection_manager.read().await;
         let auth = sess.services.auth_manager.auth().await;
-        let mcp_servers = sess
-            .services
-            .mcp_manager
-            .effective_servers(config, auth.as_ref());
-        let snapshot = collect_mcp_snapshot_from_manager(
-            &mcp_connection_manager,
-            compute_auth_statuses(mcp_servers.iter(), config.mcp_oauth_credentials_store_mode)
-                .await,
-        )
-        .await;
+        let mcp_config = config
+            .to_mcp_config(sess.services.plugins_manager.as_ref())
+            .await;
+        let snapshot =
+            codex_mcp::collect_mcp_snapshot(&mcp_config, auth.as_ref(), sub_id.clone()).await;
         let event = Event {
             id: sub_id,
             msg: EventMsg::McpListToolsResponse(snapshot),
@@ -5064,16 +5162,26 @@ mod handlers {
         let mut skills = Vec::new();
         for cwd in cwds {
             let skills_input = crate::skills::SkillsLoadInput::new(
-                cwd.clone(),
+                codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(&cwd)
+                    .expect("skills cwd must be absolute"),
                 Vec::new(),
                 config.config_layer_stack.clone(),
                 config.bundled_skills_enabled(),
             );
             let outcome = skills_manager
-                .skills_for_cwd(&skills_input, force_reload)
+                .skills_for_cwd(
+                    &skills_input,
+                    force_reload,
+                    Some(codex_exec_server::LOCAL_FS.clone()),
+                )
                 .await;
             let errors = super::errors_to_info(&outcome.errors);
-            let skills_metadata = super::skills_to_info(&outcome.skills, &outcome.disabled_paths);
+            let disabled_paths = outcome
+                .disabled_paths
+                .iter()
+                .map(|path| path.to_path_buf())
+                .collect::<std::collections::HashSet<_>>();
+            let skills_metadata = super::skills_to_info(&outcome.skills, &disabled_paths);
             skills.push(SkillsListEntry {
                 cwd,
                 skills: skills_metadata,
@@ -5120,8 +5228,13 @@ mod handlers {
             errors.push("state db unavailable; memory rows were not cleared".to_string());
         }
 
-        let memory_root = crate::memories::memory_root(&config.codex_home);
-        if let Err(err) = crate::memories::clear_memory_root_contents(&memory_root).await {
+        let memory_root = crate::memories::memory_root(
+            &codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+                &config.codex_home,
+            )
+            .expect("codex_home must be absolute"),
+        );
+        if let Err(err) = crate::memories::clear_memory_roots_contents(&config.codex_home).await {
             errors.push(format!(
                 "failed clearing memory directory {}: {err}",
                 memory_root.display()
@@ -5398,7 +5511,13 @@ mod handlers {
         sess.maybe_emit_unknown_model_warning_for_turn(turn_context.as_ref())
             .await;
         sess.refresh_mcp_servers_if_requested(&turn_context).await;
-        match resolve_review_request(review_request, turn_context.cwd.as_path()) {
+        match resolve_review_request(
+            review_request,
+            &codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+                &turn_context.cwd,
+            )
+            .expect("turn cwd must be absolute"),
+        ) {
             Ok(resolved) => {
                 spawn_review_thread(
                     Arc::clone(sess),
@@ -5438,7 +5557,7 @@ async fn spawn_review_thread(
     let review_model_info = sess
         .services
         .models_manager
-        .get_model_info(&model, &config)
+        .get_model_info(&model, &config.to_models_manager_config())
         .await;
     // For reviews, disable web_search and view_image regardless of global settings.
     let mut review_features = sess.features.clone();
@@ -5453,6 +5572,9 @@ async fn spawn_review_thread(
             .list_models(RefreshStrategy::OnlineIfUncached)
             .await,
         features: &review_features,
+        image_generation_tool_auth_allowed: image_generation_tool_auth_allowed(
+            parent_turn_context.auth_manager.as_deref(),
+        ),
         web_search_mode: Some(review_web_search_mode),
         session_source: parent_turn_context.session_source.clone(),
         sandbox_policy: parent_turn_context.sandbox_policy.get(),
@@ -5505,8 +5627,12 @@ async fn spawn_review_thread(
     let review_turn_id = sub_id.to_string();
     let turn_metadata_state = Arc::new(TurnMetadataState::new(
         sess.conversation_id.to_string(),
+        &session_source,
         review_turn_id.clone(),
-        parent_turn_context.cwd.clone(),
+        codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+            &parent_turn_context.cwd,
+        )
+        .expect("review cwd must be absolute"),
         parent_turn_context.sandbox_policy.get(),
         parent_turn_context.windows_sandbox_level,
     ));
@@ -5592,8 +5718,8 @@ fn skills_to_info(
                 .map(|interface| ProtocolSkillInterface {
                     display_name: interface.display_name,
                     short_description: interface.short_description,
-                    icon_small: interface.icon_small,
-                    icon_large: interface.icon_large,
+                    icon_small: interface.icon_small.map(|path| path.to_path_buf()),
+                    icon_large: interface.icon_large.map(|path| path.to_path_buf()),
                     brand_color: interface.brand_color,
                     default_prompt: interface.default_prompt,
                 }),
@@ -5613,9 +5739,9 @@ fn skills_to_info(
                         .collect(),
                 }
             }),
-            path: skill.path_to_skills_md.clone(),
+            path: skill.path_to_skills_md.clone().to_path_buf(),
             scope: skill.scope,
-            enabled: !disabled_paths.contains(&skill.path_to_skills_md),
+            enabled: !disabled_paths.contains(skill.path_to_skills_md.as_path()),
         })
         .collect()
 }
@@ -5624,7 +5750,7 @@ fn errors_to_info(errors: &[SkillError]) -> Vec<SkillErrorInfo> {
     errors
         .iter()
         .map(|err| SkillErrorInfo {
-            path: err.path.clone(),
+            path: err.path.clone().to_path_buf(),
             message: err.message.clone(),
         })
         .collect()
@@ -5677,7 +5803,8 @@ pub(crate) async fn run_turn(
     let loaded_plugins = sess
         .services
         .plugins_manager
-        .plugins_for_config(&turn_context.config);
+        .plugins_for_config(&turn_context.config)
+        .await;
     // Structured plugin:// mentions are resolved from the current session's
     // enabled plugins, then converted into turn-scoped guidance below.
     let mentioned_plugins =
@@ -5702,10 +5829,11 @@ pub(crate) async fn run_turn(
     } else {
         HashMap::new()
     };
+    let public_mcp_tools = public_mcp_tools_from_local(&mcp_tools);
     let available_connectors = if turn_context.apps_enabled() {
         let connectors = connectors::merge_plugin_apps_with_accessible(
-            loaded_plugins.effective_apps(),
-            connectors::accessible_connectors_from_mcp_tools(&mcp_tools),
+            app_infos_from_connector_ids(loaded_plugins.effective_apps()),
+            connectors::accessible_connectors_from_mcp_tools(&public_mcp_tools),
         );
         connectors::with_app_enabled_state(connectors, &turn_context.config)
     } else {
@@ -5754,6 +5882,7 @@ pub(crate) async fn run_turn(
         warnings: skill_warnings,
     } = build_skill_injections(
         &mentioned_skills,
+        skills_outcome,
         Some(&session_telemetry),
         &sess.services.analytics_events_client,
         tracking.clone(),
@@ -5766,7 +5895,7 @@ pub(crate) async fn run_turn(
     }
 
     let plugin_items =
-        build_plugin_injections(&mentioned_plugins, &mcp_tools, &available_connectors);
+        build_plugin_injections(&mentioned_plugins, &public_mcp_tools, &available_connectors);
     let mentioned_plugin_metadata = mentioned_plugins
         .iter()
         .filter_map(crate::plugins::PluginCapabilitySummary::telemetry_metadata)
@@ -5973,6 +6102,8 @@ pub(crate) async fn run_turn(
                         &sess,
                         &turn_context,
                         InitialContextInjection::BeforeLastUserMessage,
+                        CompactionReason::ContextLimit,
+                        CompactionPhase::MidTurn,
                     )
                     .await
                     .is_err()
@@ -5995,7 +6126,11 @@ pub(crate) async fn run_turn(
                     let stop_request = codex_hooks::StopRequest {
                         session_id: sess.conversation_id,
                         turn_id: turn_context.sub_id.clone(),
-                        cwd: turn_context.cwd.clone(),
+                        cwd:
+                            codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+                                turn_context.cwd.as_path(),
+                            )
+                            .expect("turn_context cwd must be absolute"),
                         transcript_path: sess.hook_transcript_path().await,
                         model: turn_context.model_info.slug.clone(),
                         permission_mode: stop_hook_permission_mode,
@@ -6045,7 +6180,10 @@ pub(crate) async fn run_turn(
                         .hooks()
                         .dispatch(HookPayload {
                             session_id: sess.conversation_id,
-                            cwd: turn_context.cwd.clone(),
+                            cwd: codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path_checked(
+                                turn_context.cwd.as_path(),
+                            )
+                            .expect("turn_context cwd must be absolute"),
                             client: turn_context.app_server_client_name.clone(),
                             triggered_at: chrono::Utc::now(),
                             hook_event: HookEvent::AfterAgent {
@@ -6154,7 +6292,14 @@ async fn run_pre_sampling_compact(
         .unwrap_or(i64::MAX);
     // Compact if the total usage tokens are greater than the auto compact limit
     if total_usage_tokens >= auto_compact_limit {
-        run_auto_compact(sess, turn_context, InitialContextInjection::DoNotInject).await?;
+        run_auto_compact(
+            sess,
+            turn_context,
+            InitialContextInjection::DoNotInject,
+            CompactionReason::ContextLimit,
+            CompactionPhase::PreTurn,
+        )
+        .await?;
     }
     Ok(())
 }
@@ -6197,6 +6342,8 @@ async fn maybe_run_previous_model_inline_compact(
             sess,
             &previous_model_turn_context,
             InitialContextInjection::DoNotInject,
+            CompactionReason::ModelDownshift,
+            CompactionPhase::PreTurn,
         )
         .await?;
         return Ok(true);
@@ -6208,12 +6355,16 @@ async fn run_auto_compact(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
     initial_context_injection: InitialContextInjection,
+    reason: CompactionReason,
+    phase: CompactionPhase,
 ) -> CodexResult<()> {
     if should_use_remote_compact_task(&turn_context.provider) {
         run_inline_remote_auto_compact_task(
             Arc::clone(sess),
             Arc::clone(turn_context),
             initial_context_injection,
+            reason,
+            phase,
         )
         .await?;
     } else {
@@ -6373,7 +6524,19 @@ fn filter_codex_apps_mcp_tools(
             let Some(connector_id) = codex_apps_connector_id(tool) else {
                 return false;
             };
-            allowed.contains(connector_id) && connectors::codex_app_tool_is_enabled(config, tool)
+            let public_tool = codex_mcp::ToolInfo {
+                server_name: tool.server_name.clone(),
+                callable_name: tool.tool_name.clone(),
+                callable_namespace: tool.tool_namespace.clone(),
+                server_instructions: None,
+                tool: tool.tool.clone(),
+                connector_id: tool.connector_id.clone(),
+                connector_name: tool.connector_name.clone(),
+                plugin_display_names: tool.plugin_display_names.clone(),
+                connector_description: tool.connector_description.clone(),
+            };
+            allowed.contains(connector_id)
+                && connectors::codex_app_tool_is_enabled(config, &public_tool)
         })
         .map(|(name, tool)| (name.clone(), tool.clone()))
         .collect()
@@ -6381,6 +6544,56 @@ fn filter_codex_apps_mcp_tools(
 
 fn codex_apps_connector_id(tool: &crate::mcp_connection_manager::ToolInfo) -> Option<&str> {
     tool.connector_id.as_deref()
+}
+
+fn app_infos_from_connector_ids(
+    connector_ids: Vec<crate::plugins::AppConnectorId>,
+) -> Vec<connectors::AppInfo> {
+    connector_ids
+        .into_iter()
+        .map(|connector_id| {
+            let id = connector_id.0;
+            connectors::AppInfo {
+                id: id.clone(),
+                name: id,
+                description: None,
+                logo_url: None,
+                logo_url_dark: None,
+                distribution_channel: None,
+                branding: None,
+                app_metadata: None,
+                labels: None,
+                install_url: None,
+                is_accessible: false,
+                is_enabled: true,
+                plugin_display_names: Vec::new(),
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn public_mcp_tools_from_local(
+    mcp_tools: &HashMap<String, crate::mcp_connection_manager::ToolInfo>,
+) -> HashMap<String, codex_mcp::ToolInfo> {
+    mcp_tools
+        .iter()
+        .map(|(name, tool)| {
+            (
+                name.clone(),
+                codex_mcp::ToolInfo {
+                    server_name: tool.server_name.clone(),
+                    callable_name: tool.tool_name.clone(),
+                    callable_namespace: tool.tool_namespace.clone(),
+                    server_instructions: None,
+                    tool: tool.tool.clone(),
+                    connector_id: tool.connector_id.clone(),
+                    connector_name: tool.connector_name.clone(),
+                    plugin_display_names: tool.plugin_display_names.clone(),
+                    connector_description: tool.connector_description.clone(),
+                },
+            )
+        })
+        .collect()
 }
 
 pub(crate) fn build_prompt(
@@ -6576,21 +6789,23 @@ pub(crate) async fn built_tools(
     let loaded_plugins = sess
         .services
         .plugins_manager
-        .plugins_for_config(&turn_context.config);
+        .plugins_for_config(&turn_context.config)
+        .await;
 
     let mut effective_explicitly_enabled_connectors = explicitly_enabled_connectors.clone();
     effective_explicitly_enabled_connectors.extend(sess.get_connector_selection().await);
 
     let apps_enabled = turn_context.apps_enabled();
+    let public_mcp_tools = public_mcp_tools_from_local(&mcp_tools);
     let accessible_connectors =
-        apps_enabled.then(|| connectors::accessible_connectors_from_mcp_tools(&mcp_tools));
+        apps_enabled.then(|| connectors::accessible_connectors_from_mcp_tools(&public_mcp_tools));
     let accessible_connectors_with_enabled_state =
         accessible_connectors.as_ref().map(|connectors| {
             connectors::with_app_enabled_state(connectors.clone(), &turn_context.config)
         });
     let connectors = if apps_enabled {
         let connectors = connectors::merge_plugin_apps_with_accessible(
-            loaded_plugins.effective_apps(),
+            app_infos_from_connector_ids(loaded_plugins.effective_apps()),
             accessible_connectors.clone().unwrap_or_default(),
         );
         Some(connectors::with_app_enabled_state(
@@ -6673,16 +6888,27 @@ pub(crate) async fn built_tools(
         app_tools
     };
 
+    let deferred_mcp_tools = app_tools.map(|tools| public_mcp_tools_from_local(&tools));
+    let parallel_mcp_server_names = turn_context
+        .config
+        .mcp_servers
+        .get()
+        .iter()
+        .filter_map(|(server_name, server_config)| {
+            server_config
+                .supports_parallel_tool_calls
+                .then_some(server_name.clone())
+        })
+        .collect::<HashSet<_>>();
+    let public_mcp_tools = has_mcp_servers.then(|| public_mcp_tools_from_local(&mcp_tools));
+
     Ok(Arc::new(ToolRouter::from_config(
         &turn_context.tools_config,
         ToolRouterParams {
-            mcp_tools: has_mcp_servers.then(|| {
-                mcp_tools
-                    .into_iter()
-                    .map(|(name, tool)| (name, tool.tool))
-                    .collect()
-            }),
-            app_tools,
+            mcp_tools: public_mcp_tools,
+            deferred_mcp_tools,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names,
             discoverable_tools,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
         },
@@ -6876,6 +7102,7 @@ fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         EventMsg::Error(_)
         | EventMsg::Warning(_)
         | EventMsg::RealtimeConversationStarted(_)
+        | EventMsg::RealtimeConversationSdp(_)
         | EventMsg::RealtimeConversationRealtime(_)
         | EventMsg::RealtimeConversationClosed(_)
         | EventMsg::ModelReroute(_)
@@ -7495,6 +7722,7 @@ async fn try_run_sampling_request(
                     error_or_panic("OutputTextDelta without active item".to_string());
                 }
             }
+            ResponseEvent::ToolCallInputDelta { .. } => {}
             ResponseEvent::ReasoningSummaryDelta {
                 delta,
                 summary_index,

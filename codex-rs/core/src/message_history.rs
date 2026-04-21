@@ -61,7 +61,8 @@ pub struct HistoryEntry {
 }
 
 fn history_filepath(config: &Config) -> AbsolutePathBuf {
-    config.codex_home.join(HISTORY_FILENAME)
+    AbsolutePathBuf::from_absolute_path_checked(config.codex_home.join(HISTORY_FILENAME))
+        .expect("history filepath must be absolute")
 }
 
 /// Append a `text` entry associated with `conversation_id` to the history file.

@@ -18,6 +18,7 @@ use codex_protocol::protocol::ExecCommandSource;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::assert_regex_match;
 use core_test_support::process::process_is_alive;
 use core_test_support::process::wait_for_pid_file;
@@ -197,7 +198,9 @@ async fn create_workspace_directory(
     test: &TestCodex,
     rel_path: impl AsRef<std::path::Path>,
 ) -> Result<std::path::PathBuf> {
-    let abs_path = test.config.cwd.join(rel_path.as_ref());
+    let abs_path =
+        AbsolutePathBuf::from_absolute_path_checked(test.config.cwd.join(rel_path.as_ref()))
+            .expect("workspace path should be absolute");
     test.fs()
         .create_directory(
             &abs_path,
@@ -205,7 +208,7 @@ async fn create_workspace_directory(
             /*sandbox*/ None,
         )
         .await?;
-    Ok(abs_path.into_path_buf())
+    Ok(abs_path.to_path_buf())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

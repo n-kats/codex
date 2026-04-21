@@ -51,6 +51,7 @@ impl CodeModeExecuteHandler {
     }
 }
 
+#[async_trait::async_trait]
 impl ToolHandler for CodeModeExecuteHandler {
     type Output = FunctionToolOutput;
 
@@ -73,9 +74,7 @@ impl ToolHandler for CodeModeExecuteHandler {
         } = invocation;
 
         match payload {
-            ToolPayload::Custom { input }
-                if tool_name.namespace.is_none() && tool_name.name.as_str() == PUBLIC_TOOL_NAME =>
-            {
+            ToolPayload::Custom { input } if tool_name.as_str() == PUBLIC_TOOL_NAME => {
                 self.execute(session, turn, call_id, input).await
             }
             _ => Err(FunctionCallError::RespondToModel(format!(

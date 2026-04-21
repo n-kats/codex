@@ -30,6 +30,7 @@ use crate::hook_runtime::record_pending_input;
 use crate::state::ActiveTurn;
 use crate::state::RunningTask;
 use crate::state::TaskKind;
+use async_trait::async_trait;
 use codex_analytics::TurnTokenUsageFact;
 use codex_login::AuthManager;
 use codex_models_manager::manager::ModelsManager;
@@ -128,6 +129,7 @@ impl SessionTaskContext {
 /// intentionally small: implementers identify themselves via
 /// [`SessionTask::kind`], perform their work in [`SessionTask::run`], and may
 /// release resources in [`SessionTask::abort`].
+#[async_trait]
 pub(crate) trait SessionTask: Send + Sync + 'static {
     /// Describes the type of work the task performs so the session can
     /// surface it in telemetry and UI.
@@ -144,27 +146,21 @@ pub(crate) trait SessionTask: Send + Sync + 'static {
     /// abort; implementers should watch for it and terminate quickly once it
     /// fires. Returning [`Some`] yields a final message that
     /// [`Session::on_task_finished`] will emit to the client.
-    fn run(
+    async fn run(
         self: Arc<Self>,
         session: Arc<SessionTaskContext>,
         ctx: Arc<TurnContext>,
         input: Vec<UserInput>,
         cancellation_token: CancellationToken,
-    ) -> impl std::future::Future<Output = Option<String>> + Send;
+    ) -> Option<String>;
 
     /// Gives the task a chance to perform cleanup after an abort.
     ///
     /// The default implementation is a no-op; override this if additional
     /// teardown or notifications are required once
     /// [`Session::abort_all_tasks`] cancels the task.
-    fn abort(
-        &self,
-        session: Arc<SessionTaskContext>,
-        ctx: Arc<TurnContext>,
-    ) -> impl std::future::Future<Output = ()> + Send {
-        async move {
-            let _ = (session, ctx);
-        }
+    async fn abort(&self, session: Arc<SessionTaskContext>, ctx: Arc<TurnContext>) {
+        let _ = (session, ctx);
     }
 }
 
@@ -304,18 +300,7 @@ impl Session {
                     )
                     .await;
                 let sess = session_ctx.clone_session();
-                if let Err(err) = sess.flush_rollout().await {
-                    warn!("failed to flush rollout before completing turn: {err}");
-                    sess.send_event(
-                        ctx_for_finish.as_ref(),
-                        EventMsg::Warning(WarningEvent {
-                            message: format!(
-                                "Failed to save the conversation transcript; Codex will continue retrying. Error: {err}"
-                            ),
-                        }),
-                    )
-                    .await;
-                }
+                sess.flush_rollout().await;
                 if !task_cancellation_token.is_cancelled() {
                     // Emit completion uniformly from spawn site so all tasks share the same lifecycle.
                     sess.on_task_finished(Arc::clone(&ctx_for_finish), last_agent_message)
@@ -545,8 +530,9 @@ impl Session {
 
         if should_clear_active_turn {
             let session = Arc::clone(self);
+            let handle = tokio::runtime::Handle::current();
             let _scheduler = tokio::task::spawn_blocking(move || {
-                tokio::runtime::Handle::current().block_on(async move {
+                handle.block_on(async move {
                     session.maybe_start_turn_for_pending_work().await;
                 });
             });
@@ -611,9 +597,7 @@ impl Session {
                 .await;
             // Ensure the marker is durably visible before emitting TurnAborted: some clients
             // synchronously re-read the rollout on receipt of the abort event.
-            if let Err(err) = self.flush_rollout().await {
-                warn!("failed to flush interrupted-turn marker before emitting TurnAborted: {err}");
-            }
+            self.flush_rollout().await;
         }
 
         let (completed_at, duration_ms) = task

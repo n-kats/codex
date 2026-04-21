@@ -144,7 +144,7 @@ pub(crate) async fn spawn_child_async_with_run_as(
         arg0: arg0.map(String::from),
         program: program.to_string_lossy().to_string(),
         args: args.clone(),
-        cwd: cwd.clone(),
+        cwd: cwd.clone().to_path_buf(),
         network_sandbox_policy,
         env: env.clone(),
     };

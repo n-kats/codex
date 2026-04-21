@@ -141,9 +141,9 @@ impl TurnContext {
         .with_web_search_config(self.tools_config.web_search_config.clone())
         .with_allow_login_shell(self.tools_config.allow_login_shell)
         .with_has_environment(self.tools_config.has_environment)
-        .with_spawn_agent_usage_hint(config.multi_agent_v2.usage_hint_enabled)
-        .with_spawn_agent_usage_hint_text(config.multi_agent_v2.usage_hint_text.clone())
-        .with_hide_spawn_agent_metadata(config.multi_agent_v2.hide_spawn_agent_metadata)
+        .with_spawn_agent_usage_hint(self.tools_config.spawn_agent_usage_hint)
+        .with_spawn_agent_usage_hint_text(self.tools_config.spawn_agent_usage_hint_text.clone())
+        .with_hide_spawn_agent_metadata(self.tools_config.hide_spawn_agent_metadata)
         .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
             &config.agent_roles,
         ));
@@ -375,9 +375,9 @@ impl Session {
         .with_web_search_config(per_turn_config.web_search_config.clone())
         .with_allow_login_shell(per_turn_config.permissions.allow_login_shell)
         .with_has_environment(environment.is_some())
-        .with_spawn_agent_usage_hint(per_turn_config.multi_agent_v2.usage_hint_enabled)
-        .with_spawn_agent_usage_hint_text(per_turn_config.multi_agent_v2.usage_hint_text.clone())
-        .with_hide_spawn_agent_metadata(per_turn_config.multi_agent_v2.hide_spawn_agent_metadata)
+        .with_spawn_agent_usage_hint(tools_config.spawn_agent_usage_hint)
+        .with_spawn_agent_usage_hint_text(tools_config.spawn_agent_usage_hint_text.clone())
+        .with_hide_spawn_agent_metadata(tools_config.hide_spawn_agent_metadata)
         .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
             &per_turn_config.agent_roles,
         ));

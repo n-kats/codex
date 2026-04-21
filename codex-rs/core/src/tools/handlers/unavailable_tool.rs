@@ -16,6 +16,7 @@ pub(crate) fn unavailable_tool_message(
     )
 }
 
+#[async_trait::async_trait]
 impl ToolHandler for UnavailableToolHandler {
     type Output = FunctionToolOutput;
 
@@ -31,7 +32,7 @@ impl ToolHandler for UnavailableToolHandler {
         match payload {
             ToolPayload::Function { .. } => Ok(FunctionToolOutput::from_text(
                 unavailable_tool_message(
-                    tool_name.display(),
+                    tool_name,
                     "Retry after the tool becomes available or ask the user to re-enable it.",
                 ),
                 Some(false),

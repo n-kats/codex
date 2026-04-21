@@ -31,9 +31,9 @@ use tracing::trace;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::client_common::tools::ToolSpec;
 use crate::codex::Session;
 use crate::codex::TurnContext;
+use crate::codex::public_mcp_tools_from_local;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::exec_env::create_env;
@@ -47,6 +47,7 @@ use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::sandboxing::SandboxablePreference;
 use crate::truncate::TruncationPolicy;
 use crate::truncate::truncate_text;
+use codex_tools::ToolSpec;
 
 pub(crate) const JS_REPL_PRAGMA_PREFIX: &str = "// codex-js-repl:";
 const KERNEL_SOURCE: &str = include_str!("kernel.js");
@@ -1565,13 +1566,10 @@ impl JsReplManager {
         let router = ToolRouter::from_config(
             &exec.turn.tools_config,
             crate::tools::router::ToolRouterParams {
-                mcp_tools: Some(
-                    mcp_tools
-                        .into_iter()
-                        .map(|(name, tool)| (name, tool.tool))
-                        .collect(),
-                ),
-                app_tools: None,
+                mcp_tools: Some(public_mcp_tools_from_local(&mcp_tools)),
+                deferred_mcp_tools: None,
+                unavailable_called_tools: Vec::new(),
+                parallel_mcp_server_names: Default::default(),
                 discoverable_tools: None,
                 dynamic_tools: exec.turn.dynamic_tools.as_slice(),
             },
@@ -1599,8 +1597,7 @@ impl JsReplManager {
 
         let tool_name = req.tool_name.clone();
         let call = crate::tools::router::ToolCall {
-            tool_name: tool_name.clone(),
-            tool_namespace: None,
+            tool_name: tool_name.clone().into(),
             call_id: req.id.clone(),
             payload,
         };
@@ -1718,7 +1715,7 @@ fn emitted_image_content_item(
 ) -> FunctionCallOutputContentItem {
     FunctionCallOutputContentItem::InputImage {
         image_url,
-        detail: normalize_output_image_detail(turn.features.get(), &turn.model_info, detail),
+        detail: normalize_output_image_detail(&turn.model_info, detail),
     }
 }
 

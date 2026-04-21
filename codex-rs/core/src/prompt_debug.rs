@@ -26,8 +26,12 @@ pub async fn build_prompt_input(
 ) -> CodexResult<Vec<ResponseItem>> {
     config.ephemeral = true;
 
-    let auth_manager =
-        AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false);
+    let auth_manager = Arc::new(AuthManager::new(
+        config.codex_home.to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        config.cli_auth_credentials_store_mode,
+    ));
+    auth_manager.set_forced_chatgpt_workspace_id(config.forced_chatgpt_workspace_id.clone());
 
     let thread_manager = ThreadManager::new(
         &config,
@@ -39,7 +43,6 @@ pub async fn build_prompt_input(
                 .enabled(Feature::DefaultModeRequestUserInput),
         },
         Arc::new(EnvironmentManager::from_env()),
-        /*analytics_events_client*/ None,
     );
     let thread = thread_manager.start_thread(config).await?;
 

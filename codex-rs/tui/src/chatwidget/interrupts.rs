@@ -188,7 +188,9 @@ mod tests {
             process_id: None,
             turn_id: "turn".to_string(),
             command: vec!["true".to_string()],
-            cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+            cwd: AbsolutePathBuf::current_dir()
+                .expect("current dir")
+                .to_path_buf(),
             parsed_cmd: Vec::new(),
             source: ExecCommandSource::Agent,
             interaction_input: None,

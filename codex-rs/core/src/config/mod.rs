@@ -40,7 +40,6 @@ use crate::config_loader::McpServerRequirement;
 use crate::config_loader::ResidencyRequirement;
 use crate::config_loader::Sourced;
 use crate::config_loader::load_config_layers_state;
-use crate::git_info::resolve_root_git_project_for_trust;
 use crate::memories::memory_root;
 use crate::model_provider_info::LEGACY_OLLAMA_CHAT_PROVIDER_ID;
 use crate::model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
@@ -63,11 +62,14 @@ use crate::windows_sandbox::resolve_windows_sandbox_mode;
 use crate::windows_sandbox::resolve_windows_sandbox_private_desktop;
 use codex_app_server_protocol::Tools;
 use codex_app_server_protocol::UserSavedConfig;
+use codex_config::types::OAuthCredentialsStoreMode;
 use codex_features::Feature;
 use codex_features::FeatureConfigSource;
 use codex_features::FeatureOverrides;
 use codex_features::Features;
 use codex_features::FeaturesToml;
+use codex_mcp::McpConfig;
+use codex_models_manager::ModelsManagerConfig;
 use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
@@ -85,9 +87,9 @@ use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_rmcp_client::OAuthCredentialsStoreMode;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_absolute_path::AbsolutePathBufGuard;
+use schemars;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Deserializer;
@@ -105,6 +107,7 @@ use crate::config::permissions::compile_permission_profile;
 use crate::config::permissions::get_readable_roots_required_for_codex_runtime;
 use crate::config::permissions::network_proxy_config_from_profile_network;
 use crate::config::profile::ConfigProfile;
+use crate::plugins::PluginsManager;
 use codex_network_proxy::NetworkProxyConfig;
 use toml::Value as TomlValue;
 use toml_edit::DocumentMut;
@@ -124,15 +127,15 @@ pub use codex_config::ConstraintError;
 pub use codex_config::ConstraintResult;
 pub use codex_network_proxy::NetworkProxyAuditMetadata;
 
+pub use codex_config::permissions_toml::FilesystemPermissionToml;
+pub use codex_config::permissions_toml::FilesystemPermissionsToml;
+pub use codex_config::permissions_toml::NetworkToml;
+pub use codex_config::permissions_toml::PermissionProfileToml;
+pub use codex_config::permissions_toml::PermissionsToml;
+pub(crate) use codex_config::permissions_toml::overlay_network_domain_permissions;
 pub use managed_features::ManagedFeatures;
 pub use network_proxy_spec::NetworkProxySpec;
 pub use network_proxy_spec::StartedNetworkProxy;
-pub use permissions::FilesystemPermissionToml;
-pub use permissions::FilesystemPermissionsToml;
-pub use permissions::NetworkToml;
-pub use permissions::PermissionProfileToml;
-pub use permissions::PermissionsToml;
-pub(crate) use permissions::overlay_network_domain_permissions;
 pub(crate) use permissions::resolve_permission_profile;
 pub use service::ConfigService;
 pub use service::ConfigServiceError;
@@ -270,7 +273,7 @@ fn resolve_mcp_oauth_credentials_store_mode(
 }
 
 #[cfg(test)]
-pub(crate) fn test_config() -> Config {
+pub(crate) async fn test_config() -> Config {
     let codex_home = tempfile::tempdir().expect("create temp dir");
     Config::load_from_base_config_with_overrides(
         ConfigToml::default(),
@@ -392,6 +395,12 @@ pub struct Config {
     /// User-provided instructions from AGENTS.md.
     pub user_instructions: Option<String>,
 
+    /// Whether to include the environment context block in prompts.
+    pub include_environment_context: bool,
+
+    /// Whether to include the permissions instructions block in prompts.
+    pub include_permissions_instructions: bool,
+
     /// Base instructions override.
     pub base_instructions: Option<String>,
 
@@ -400,6 +409,9 @@ pub struct Config {
 
     /// Guardian-specific developer instructions override from requirements.toml.
     pub guardian_developer_instructions: Option<String>,
+
+    /// Guardian policy instructions from requirements.toml.
+    pub guardian_policy_config: Option<String>,
 
     /// Compact prompt override.
     pub compact_prompt: Option<String>,
@@ -825,7 +837,7 @@ impl ConfigBuilder {
         Config::load_config_with_layer_stack(
             config_toml,
             harness_overrides,
-            codex_home,
+            codex_home.to_path_buf(),
             config_layer_stack,
         )
     }
@@ -873,10 +885,9 @@ impl Config {
         Self::load_config_with_layer_stack(
             config_toml,
             ConfigOverrides::default(),
-            codex_home,
+            codex_home.to_path_buf(),
             ConfigLayerStack::default(),
         )
-        .await
     }
 
     /// This is a secondary way of creating [Config], which is appropriate when
@@ -1327,6 +1338,12 @@ pub struct ConfigToml {
     #[serde(default)]
     pub developer_instructions: Option<String>,
 
+    /// Whether to include the permissions instructions block in prompts.
+    pub include_permissions_instructions: Option<bool>,
+
+    /// Whether to include the environment context block in prompts.
+    pub include_environment_context: Option<bool>,
+
     /// Optional path to a file containing model instructions that will override
     /// the built-in instructions for the selected model. Users are STRONGLY
     /// DISCOURAGED from using this field, as deviating from the instructions
@@ -1359,7 +1376,7 @@ pub struct ConfigToml {
     /// Definition for MCP servers that Codex can reach out to for tool calls.
     #[serde(default)]
     // Uses the raw MCP input shape (custom deserialization) rather than `McpServerConfig`.
-    #[schemars(schema_with = "crate::config::schema::mcp_servers_schema")]
+    #[schemars(schema_with = "codex_config::schema::mcp_servers_schema")]
     pub mcp_servers: HashMap<String, McpServerConfig>,
 
     /// Preferred backend for storing MCP OAuth credentials.
@@ -1522,7 +1539,7 @@ pub struct ConfigToml {
     /// Centralized feature flags (new). Prefer this over individual toggles.
     #[serde(default)]
     // Injects known feature keys into the schema and forbids unknown keys.
-    #[schemars(schema_with = "crate::config::schema::features_schema")]
+    #[schemars(schema_with = "codex_config::schema::features_schema")]
     pub features: Option<FeaturesToml>,
 
     /// Suppress warnings about unstable (under development) features.
@@ -1883,17 +1900,21 @@ impl ConfigToml {
     /// does not contain a project corresponding to cwd or a git repo for cwd
     pub fn get_active_project(&self, resolved_cwd: &Path) -> Option<ProjectConfig> {
         let projects = self.projects.clone().unwrap_or_default();
+        let Ok(resolved_cwd_abs) = AbsolutePathBuf::from_absolute_path(resolved_cwd) else {
+            return None;
+        };
 
-        if let Some(project_config) = projects.get(&resolved_cwd.to_string_lossy().to_string()) {
+        let resolved_cwd_key = crate::config_loader::project_trust_key(resolved_cwd);
+        if let Some(project_config) = projects.get(&resolved_cwd_key) {
             return Some(project_config.clone());
         }
 
         // If cwd lives inside a git repo/worktree, check whether the root git project
         // (the primary repository working directory) is trusted. This lets
         // worktrees inherit trust from the main project.
-        if let Some(repo_root) = resolve_root_git_project_for_trust(resolved_cwd)
+        if let Some(repo_root) = resolve_root_git_project_for_trust_sync(&resolved_cwd_abs)
             && let Some(project_config_for_root) =
-                projects.get(&repo_root.to_string_lossy().to_string_lossy().to_string())
+                projects.get(&crate::config_loader::project_trust_key(repo_root.as_path()))
         {
             return Some(project_config_for_root.clone());
         }
@@ -1921,6 +1942,64 @@ impl ConfigToml {
             None => Ok(ConfigProfile::default()),
         }
     }
+}
+
+fn resolve_root_git_project_for_trust_sync(cwd: &AbsolutePathBuf) -> Option<AbsolutePathBuf> {
+    let base = match std::fs::metadata(cwd.as_path()) {
+        Ok(metadata) if metadata.is_dir() => cwd.clone(),
+        _ => cwd.parent()?,
+    };
+
+    let (repo_root, dot_git) = find_ancestor_git_entry(&base)?;
+    if std::fs::metadata(dot_git.as_path()).ok()?.is_dir() {
+        return Some(repo_root);
+    }
+
+    let git_dir_s = std::fs::read_to_string(dot_git.as_path()).ok()?;
+    let git_dir_rel = git_dir_s.trim().strip_prefix("gitdir:")?.trim();
+    if git_dir_rel.is_empty() {
+        return None;
+    }
+
+    let git_dir_path = AbsolutePathBuf::resolve_path_against_base(git_dir_rel, repo_root.as_path());
+    let worktrees_dir = git_dir_path.parent()?;
+    if worktrees_dir.as_path().file_name() != Some(std::ffi::OsStr::new("worktrees")) {
+        return None;
+    }
+
+    let common_dir = worktrees_dir.parent()?;
+    common_dir.parent()
+}
+
+fn find_ancestor_git_entry(
+    base_dir: &AbsolutePathBuf,
+) -> Option<(AbsolutePathBuf, AbsolutePathBuf)> {
+    for dir in base_dir.ancestors() {
+        let dot_git = dir.join(".git");
+        if dot_git.exists() {
+            return Some((dir, dot_git));
+        }
+    }
+    None
+}
+
+fn block_on_in_new_thread<'a, F, T>(future: F) -> T
+where
+    F: std::future::Future<Output = T> + Send + 'a,
+    T: Send + 'a,
+{
+    std::thread::scope(|scope| {
+        scope
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("build temporary runtime");
+                runtime.block_on(future)
+            })
+            .join()
+            .expect("temporary runtime thread panicked")
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2173,6 +2252,7 @@ impl Config {
         // Config.
         let ConfigRequirements {
             approval_policy: mut constrained_approval_policy,
+            approvals_reviewer: _,
             sandbox_policy: mut constrained_sandbox_policy,
             web_search_mode: mut constrained_web_search_mode,
             feature_requirements,
@@ -2279,10 +2359,11 @@ impl Config {
         let mut additional_writable_roots: Vec<AbsolutePathBuf> = additional_writable_roots
             .into_iter()
             .map(|path| AbsolutePathBuf::resolve_path_against_base(path, &resolved_cwd))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect();
         let active_project = cfg
             .get_active_project(&resolved_cwd)
             .unwrap_or(ProjectConfig { trust_level: None });
+        let codex_home_abs = AbsolutePathBuf::from_absolute_path(codex_home.clone())?;
         let permission_config_syntax = resolve_permission_config_syntax(
             &config_layer_stack,
             &cfg,
@@ -2311,8 +2392,8 @@ impl Config {
             Some(WindowsSandboxModeToml::Unelevated) => WindowsSandboxLevel::RestrictedToken,
             None => WindowsSandboxLevel::from_features(&features),
         };
-        let memories_root_dir =
-            resolve_memories_home_env(&resolved_cwd).unwrap_or_else(|| memory_root(&codex_home));
+        let memories_root_dir = resolve_memories_home_env(&resolved_cwd)
+            .unwrap_or_else(|| memory_root(&codex_home_abs).to_path_buf());
         std::fs::create_dir_all(&memories_root_dir)?;
         let memories_root = AbsolutePathBuf::from_absolute_path(&memories_root_dir)?;
         if !additional_writable_roots
@@ -2352,6 +2433,7 @@ impl Config {
                 compile_permission_profile(
                     permissions,
                     default_permissions,
+                    &resolved_cwd,
                     &mut startup_warnings,
                 )?;
             let mut sandbox_policy = file_system_sandbox_policy
@@ -2426,8 +2508,12 @@ impl Config {
         let web_search_mode = resolve_web_search_mode(&cfg, &config_profile, &features)
             .unwrap_or(WebSearchMode::Cached);
 
-        let agent_roles =
-            agent_roles::load_agent_roles(&cfg, &config_layer_stack, &mut startup_warnings)?;
+        let agent_roles = block_on_in_new_thread(agent_roles::load_agent_roles(
+            codex_exec_server::LOCAL_FS.as_ref(),
+            &cfg,
+            &config_layer_stack,
+            &mut startup_warnings,
+        ))?;
         let sandbox_mode_was_explicit = sandbox_mode.is_some()
             || config_profile.sandbox_mode.is_some()
             || cfg.sandbox_mode.is_some();
@@ -2706,6 +2792,10 @@ impl Config {
         let guardian_developer_instructions = guardian_developer_instructions_from_requirements(
             config_layer_stack.requirements_toml(),
         );
+        let guardian_policy_config = config_layer_stack
+            .requirements_toml()
+            .guardian_policy_config
+            .clone();
         let personality = personality
             .or(config_profile.personality)
             .or(cfg.personality)
@@ -2869,6 +2959,14 @@ impl Config {
             did_user_set_custom_approval_policy_or_sandbox_mode,
             notify: cfg.notify,
             user_instructions,
+            include_environment_context: config_profile
+                .include_environment_context
+                .or(cfg.include_environment_context)
+                .unwrap_or(true),
+            include_permissions_instructions: config_profile
+                .include_permissions_instructions
+                .or(cfg.include_permissions_instructions)
+                .unwrap_or(true),
             base_instructions,
             personality,
             developer_instructions,
@@ -2925,6 +3023,7 @@ impl Config {
                 .or(show_raw_agent_reasoning)
                 .unwrap_or(false),
             guardian_developer_instructions,
+            guardian_policy_config,
             model_reasoning_effort: config_profile
                 .model_reasoning_effort
                 .or(cfg.model_reasoning_effort),
@@ -2995,12 +3094,12 @@ impl Config {
             tui_notifications: cfg
                 .tui
                 .as_ref()
-                .map(|t| t.notifications.clone())
+                .map(|t| t.notification_settings.notifications.clone())
                 .unwrap_or_default(),
             tui_notification_method: cfg
                 .tui
                 .as_ref()
-                .map(|t| t.notification_method)
+                .map(|t| t.notification_settings.method)
                 .unwrap_or_default(),
             animations: cfg.tui.as_ref().map(|t| t.animations).unwrap_or(true),
             show_tooltips: cfg.tui.as_ref().map(|t| t.show_tooltips).unwrap_or(true),
@@ -3125,6 +3224,45 @@ impl Config {
     pub fn bundled_skills_enabled(&self) -> bool {
         crate::skills::manager::bundled_skills_enabled_from_stack(&self.config_layer_stack)
     }
+
+    pub fn to_models_manager_config(&self) -> ModelsManagerConfig {
+        ModelsManagerConfig {
+            model_context_window: self.model_context_window,
+            model_auto_compact_token_limit: self.model_auto_compact_token_limit,
+            tool_output_token_limit: self.tool_output_token_limit,
+            base_instructions: self.base_instructions.clone(),
+            personality_enabled: self.personality.is_some(),
+            model_supports_reasoning_summaries: self.model_supports_reasoning_summaries,
+            model_catalog: self.model_catalog.clone(),
+        }
+    }
+
+    pub async fn to_mcp_config(&self, plugins_manager: &PluginsManager) -> McpConfig {
+        let plugin_outcome = plugins_manager.plugins_for_config(self).await;
+        let mut configured_mcp_servers = self.mcp_servers.get().clone();
+        // Plugin installs can contribute bundled MCP servers that are not written
+        // into config.toml. Surface them here so follow-up requests see the same
+        // MCP surface the plugin loader discovered.
+        for (name, server) in plugin_outcome.effective_mcp_servers() {
+            configured_mcp_servers.entry(name).or_insert(server);
+        }
+        McpConfig {
+            chatgpt_base_url: self.chatgpt_base_url.clone(),
+            codex_home: self.codex_home.clone(),
+            mcp_oauth_credentials_store_mode: self.mcp_oauth_credentials_store_mode,
+            mcp_oauth_callback_port: self.mcp_oauth_callback_port,
+            mcp_oauth_callback_url: self.mcp_oauth_callback_url.clone(),
+            skill_mcp_dependency_install_enabled: self
+                .features
+                .enabled(Feature::SkillMcpDependencyInstall),
+            approval_policy: self.permissions.approval_policy.clone(),
+            codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
+            use_legacy_landlock: self.features.use_legacy_landlock(),
+            apps_enabled: self.features.enabled(Feature::Apps),
+            configured_mcp_servers,
+            plugin_capability_summaries: plugin_outcome.capability_summaries().to_vec(),
+        }
+    }
 }
 
 pub(crate) fn uses_deprecated_instructions_file(config_layer_stack: &ConfigLayerStack) -> bool {
@@ -3172,7 +3310,7 @@ fn toml_uses_deprecated_instructions_file(value: &TomlValue) -> bool {
 /// - If `CODEX_HOME` is not set, this function does not verify that the
 ///   directory exists.
 pub fn find_codex_home() -> std::io::Result<PathBuf> {
-    codex_utils_home_dir::find_codex_home()
+    codex_utils_home_dir::find_codex_home().map(Into::into)
 }
 
 /// Returns the path to the folder where Codex logs are stored. Does not verify

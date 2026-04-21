@@ -8,6 +8,7 @@ ready‑to‑spawn environment.
 
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
+use crate::exec::SandboxType;
 use crate::exec::StdoutStream;
 use crate::exec::WindowsSandboxFilesystemOverrides;
 use crate::exec::execute_exec_request;
@@ -19,9 +20,8 @@ use crate::spawn::RunAsUser;
 use crate::tools::sandboxing::SandboxablePreference;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_protocol::exec_output::ExecToolCallOutput;
-pub use codex_protocol::models::SandboxPermissions;
 use codex_protocol::models::PermissionProfile;
+pub use codex_protocol::models::SandboxPermissions;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_sandboxing::landlock::allow_network_for_proxy;
@@ -38,6 +38,8 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+
+use crate::exec::ExecToolCallOutput;
 
 #[derive(Debug)]
 pub struct CommandSpec {
@@ -79,6 +81,49 @@ pub struct ExecRequest {
     pub(crate) windows_sandbox_filesystem_overrides: Option<WindowsSandboxFilesystemOverrides>,
     pub justification: Option<String>,
     pub arg0: Option<String>,
+}
+
+impl ExecRequest {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        command: Vec<String>,
+        cwd: AbsolutePathBuf,
+        env: HashMap<String, String>,
+        network: Option<NetworkProxy>,
+        expiration: ExecExpiration,
+        capture_policy: ExecCapturePolicy,
+        sandbox: SandboxType,
+        windows_sandbox_level: WindowsSandboxLevel,
+        windows_sandbox_private_desktop: bool,
+        run_as: Option<RunAsUser>,
+        sandbox_permissions: SandboxPermissions,
+        sandbox_policy: SandboxPolicy,
+        file_system_sandbox_policy: FileSystemSandboxPolicy,
+        network_sandbox_policy: NetworkSandboxPolicy,
+        justification: Option<String>,
+        arg0: Option<String>,
+    ) -> Self {
+        Self {
+            command,
+            cwd,
+            env,
+            exec_server_env_config: None,
+            network,
+            expiration,
+            capture_policy,
+            sandbox,
+            windows_sandbox_level,
+            windows_sandbox_private_desktop,
+            run_as,
+            sandbox_permissions,
+            sandbox_policy,
+            file_system_sandbox_policy,
+            network_sandbox_policy,
+            windows_sandbox_filesystem_overrides: None,
+            justification,
+            arg0,
+        }
+    }
 }
 
 /// Bundled arguments for sandbox transformation.
@@ -259,7 +304,8 @@ impl SandboxManager {
 
         Ok(ExecRequest {
             command,
-            cwd: spec.cwd,
+            cwd: AbsolutePathBuf::from_absolute_path_checked(spec.cwd)
+                .expect("command cwd must be absolute"),
             env,
             exec_server_env_config: None,
             network: network.cloned(),

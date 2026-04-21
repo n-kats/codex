@@ -71,7 +71,6 @@ impl ApplyPatchRuntime {
             id: call_id.to_string(),
             cwd: req.action.cwd.clone(),
             files: req.file_paths.clone(),
-            change_count: req.changes.len(),
             patch: req.action.patch.clone(),
         }
     }
@@ -102,7 +101,7 @@ impl ApplyPatchRuntime {
                 CODEX_CORE_APPLY_PATCH_ARG1.to_string(),
                 req.action.patch.clone(),
             ],
-            cwd: req.action.cwd.clone(),
+            cwd: req.action.cwd.to_path_buf(),
             expiration: req.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
             // Run apply_patch with a minimal environment for determinism and to avoid leaks.
@@ -153,7 +152,14 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
         Box::pin(async move {
             if routes_approval_to_guardian(turn) {
                 let action = ApplyPatchRuntime::build_guardian_review_request(req, ctx.call_id);
-                return review_approval_request(session, turn, action, retry_reason).await;
+                return review_approval_request(
+                    session,
+                    turn,
+                    call_id.clone(),
+                    action,
+                    retry_reason,
+                )
+                .await;
             }
             if req.permissions_preapproved && retry_reason.is_none() {
                 return ReviewDecision::Approved;

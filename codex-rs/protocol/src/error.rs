@@ -1,20 +1,19 @@
-use crate::exec::ExecToolCallOutput;
-use crate::network_policy_decision::NetworkPolicyDecisionPayload;
-use crate::truncate::TruncationPolicy;
-use crate::truncate::truncate_text;
+use crate::ThreadId;
+use crate::auth::KnownPlan;
+use crate::auth::PlanType;
+pub use crate::auth::RefreshTokenFailedError;
+pub use crate::auth::RefreshTokenFailedReason;
+use crate::exec_output::ExecToolCallOutput;
+use crate::network_policy::NetworkPolicyDecisionPayload;
+use crate::protocol::CodexErrorInfo;
+use crate::protocol::ErrorEvent;
+use crate::protocol::RateLimitSnapshot;
 use chrono::DateTime;
 use chrono::Datelike;
 use chrono::Local;
 use chrono::Utc;
 use codex_async_utils::CancelErr;
-pub use codex_login::auth::RefreshTokenFailedError;
-pub use codex_login::auth::RefreshTokenFailedReason;
-use codex_login::token_data::KnownPlan;
-use codex_login::token_data::PlanType;
-use codex_protocol::ThreadId;
-use codex_protocol::protocol::CodexErrorInfo;
-use codex_protocol::protocol::ErrorEvent;
-use codex_protocol::protocol::RateLimitSnapshot;
+use codex_utils_string::truncate_middle_chars;
 use reqwest::StatusCode;
 use serde_json;
 use std::io;
@@ -409,21 +408,40 @@ pub struct UsageLimitReachedError {
     pub(crate) promo_message: Option<String>,
 }
 
+impl UsageLimitReachedError {
+    pub fn new(
+        plan_type: Option<PlanType>,
+        resets_at: Option<DateTime<Utc>>,
+        rate_limits: Option<Box<RateLimitSnapshot>>,
+        promo_message: Option<String>,
+    ) -> Self {
+        Self {
+            plan_type,
+            resets_at,
+            rate_limits,
+            promo_message,
+        }
+    }
+}
+
 impl std::fmt::Display for UsageLimitReachedError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(limit_name) = self
+        let limit_name = self
             .rate_limits
             .as_ref()
             .and_then(|snapshot| snapshot.limit_name.as_deref())
             .map(str::trim)
-            .filter(|name| !name.is_empty())
-            && !limit_name.eq_ignore_ascii_case("codex")
-        {
-            return write!(
-                f,
-                "You've hit your usage limit for {limit_name}. Switch to another model now,{}",
-                retry_suffix_after_or(self.resets_at.as_ref())
-            );
+            .filter(|name: &&str| !name.is_empty());
+        if let Some(limit_name) = limit_name {
+            if limit_name.eq_ignore_ascii_case("codex") {
+                // keep the generic message below
+            } else {
+                return write!(
+                    f,
+                    "You've hit your usage limit for {limit_name}. Switch to another model now,{}",
+                    retry_suffix_after_or(self.resets_at.as_ref())
+                );
+            }
         }
 
         if let Some(promo_message) = &self.promo_message {
@@ -457,6 +475,10 @@ impl std::fmt::Display for UsageLimitReachedError {
                 )
             }
             Some(PlanType::Known(KnownPlan::Pro)) => format!(
+                "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits{}",
+                retry_suffix_after_or(self.resets_at.as_ref())
+            ),
+            Some(PlanType::Known(KnownPlan::ProLite)) => format!(
                 "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits{}",
                 retry_suffix_after_or(self.resets_at.as_ref())
             ),
@@ -645,10 +667,7 @@ pub fn get_error_message_ui(e: &CodexErr) -> String {
         _ => e.to_string(),
     };
 
-    truncate_text(
-        &message,
-        TruncationPolicy::Bytes(ERROR_MESSAGE_UI_MAX_BYTES),
-    )
+    truncate_middle_chars(&message, ERROR_MESSAGE_UI_MAX_BYTES)
 }
 
 #[cfg(test)]

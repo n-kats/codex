@@ -93,7 +93,10 @@ fn test_skill_metadata() -> SkillMetadata {
         interface: None,
         dependencies: None,
         policy: None,
-        path_to_skills_md: PathBuf::from("/tmp/skill/SKILL.md"),
+        path_to_skills_md: AbsolutePathBuf::from_absolute_path(&PathBuf::from(
+            "/tmp/skill/SKILL.md",
+        ))
+        .expect("absolute skill path"),
         scope: SkillScope::User,
     }
 }
@@ -319,6 +322,7 @@ fn shell_request_escalation_execution_is_explicit() {
                 AbsolutePathBuf::from_absolute_path("/tmp/output").unwrap(),
             ]),
         }),
+        macos: None,
         ..Default::default()
     };
     let sandbox_policy = SandboxPolicy::WorkspaceWrite {
@@ -395,6 +399,7 @@ fn skill_escalation_execution_uses_additional_permissions() {
                 AbsolutePathBuf::from_absolute_path("/tmp/output").unwrap(),
             ]),
         }),
+        macos: None,
         ..Default::default()
     };
 

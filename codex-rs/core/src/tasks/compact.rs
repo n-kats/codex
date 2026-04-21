@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone, Copy, Default)]
 pub(crate) struct CompactTask;
 
+#[async_trait::async_trait]
 impl SessionTask for CompactTask {
     fn kind(&self) -> TaskKind {
         TaskKind::Compact

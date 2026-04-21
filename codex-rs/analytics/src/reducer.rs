@@ -109,11 +109,23 @@ impl ThreadMetadataState {
             | SessionSource::Unknown => (None, None),
         };
         Self {
-            thread_source: session_source.thread_source_name(),
+            thread_source: thread_source_name(session_source),
             initialization_mode,
             subagent_source,
             parent_thread_id,
         }
+    }
+}
+
+fn thread_source_name(session_source: &SessionSource) -> Option<&'static str> {
+    match session_source {
+        SessionSource::SubAgent(_) => Some("subagent"),
+        SessionSource::Cli
+        | SessionSource::VSCode
+        | SessionSource::Exec
+        | SessionSource::Mcp
+        | SessionSource::Unknown
+        | SessionSource::Custom(_) => Some("user"),
     }
 }
 

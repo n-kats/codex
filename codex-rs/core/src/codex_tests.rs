@@ -31,6 +31,7 @@ use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use tracing::Span;
 
+use crate::RolloutRecorderParams;
 use crate::protocol::CompactedItem;
 use crate::protocol::CreditsSnapshot;
 use crate::protocol::InitialHistory;
@@ -44,9 +45,8 @@ use crate::protocol::TokenUsageInfo;
 use crate::protocol::TurnCompleteEvent;
 use crate::protocol::TurnStartedEvent;
 use crate::protocol::UserMessageEvent;
+use crate::rollout::RolloutRecorder;
 use crate::rollout::policy::EventPersistenceMode;
-use crate::rollout::recorder::RolloutRecorder;
-use crate::rollout::recorder::RolloutRecorderParams;
 use crate::state::TaskKind;
 use crate::tasks::SessionTask;
 use crate::tasks::SessionTaskContext;
@@ -79,6 +79,7 @@ use codex_protocol::protocol::ConversationAudioParams;
 use codex_protocol::protocol::RealtimeAudioFrame;
 use codex_protocol::protocol::Submission;
 use codex_protocol::protocol::W3cTraceContext;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::context_snapshot;
 use core_test_support::context_snapshot::ContextSnapshotOptions;
 use core_test_support::context_snapshot::ContextSnapshotRenderMode;
@@ -237,6 +238,8 @@ async fn interrupting_regular_turn_waiting_on_startup_prewarm_emits_turn_aborted
         EventMsg::TurnAborted(crate::protocol::TurnAbortedEvent {
             turn_id: Some(turn_id),
             reason: TurnAbortReason::Interrupted,
+            completed_at: None,
+            duration_ms: None,
         }) if turn_id == tc.sub_id
     ));
 }
@@ -246,6 +249,7 @@ fn test_model_client_session() -> crate::client::ModelClientSession {
         None,
         ThreadId::try_from("00000000-0000-4000-8000-000000000001")
             .expect("test thread id should be valid"),
+        "test-installation".to_string(),
         crate::model_provider_info::ModelProviderInfo::create_openai_provider(
             /* base_url */ None,
         ),
@@ -280,7 +284,9 @@ fn test_tool_runtime(session: Arc<Session>, turn_context: Arc<TurnContext>) -> T
         &turn_context.tools_config,
         crate::tools::router::ToolRouterParams {
             mcp_tools: None,
-            app_tools: None,
+            deferred_mcp_tools: None,
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: std::collections::HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
         },
@@ -377,7 +383,7 @@ fn make_mcp_tool(
 ) -> ToolInfo {
     let tool_namespace = if server_name == CODEX_APPS_MCP_SERVER_NAME {
         connector_name
-            .map(crate::connectors::sanitize_name)
+            .map(codex_connectors::metadata::sanitize_name)
             .map(|connector_name| format!("mcp__{server_name}__{connector_name}"))
             .unwrap_or_else(|| server_name.to_string())
     } else {
@@ -524,7 +530,8 @@ async fn get_base_instructions_no_user_content() {
     let prompt_with_apply_patch_instructions =
         include_str!("../prompt_with_apply_patch_instructions.md");
     let models_response: ModelsResponse =
-        serde_json::from_str(include_str!("../models.json")).expect("valid models.json");
+        serde_json::from_str(include_str!("../../models-manager/models.json"))
+            .expect("valid models.json");
     let model_info_for_slug = |slug: &str, config: &Config| {
         let model = models_response
             .models
@@ -532,7 +539,7 @@ async fn get_base_instructions_no_user_content() {
             .find(|candidate| candidate.slug == slug)
             .cloned()
             .unwrap_or_else(|| panic!("model slug {slug} is missing from models.json"));
-        model_info::with_config_overrides(model, config)
+        model_info::with_config_overrides(model, &config.to_models_manager_config())
     };
     let test_cases = vec![
         InstructionsTestCase {
@@ -554,7 +561,7 @@ async fn get_base_instructions_no_user_content() {
     ];
 
     let (session, _turn_context) = make_session_and_context().await;
-    let config = test_config();
+    let config = test_config().await;
 
     for test_case in test_cases {
         let model_info = model_info_for_slug(test_case.slug, &config);
@@ -719,8 +726,8 @@ fn collect_explicit_app_ids_from_skill_items_skips_plain_mentions_with_skill_con
     assert_eq!(connector_ids, HashSet::<String>::new());
 }
 
-#[test]
-fn non_app_mcp_tools_remain_visible_without_search_selection() {
+#[tokio::test]
+async fn non_app_mcp_tools_remain_visible_without_search_selection() {
     let mcp_tools = HashMap::from([
         (
             "mcp__codex_apps__calendar_create_event".to_string(),
@@ -751,7 +758,7 @@ fn non_app_mcp_tools_remain_visible_without_search_selection() {
         &explicitly_enabled_connectors,
         &HashMap::new(),
     );
-    let config = test_config();
+    let config = test_config().await;
     selected_mcp_tools.extend(filter_codex_apps_mcp_tools(
         &mcp_tools,
         &connectors,
@@ -763,8 +770,8 @@ fn non_app_mcp_tools_remain_visible_without_search_selection() {
     assert_eq!(tool_names, vec!["mcp__rmcp__echo".to_string()]);
 }
 
-#[test]
-fn search_tool_selection_keeps_codex_apps_tools_without_mentions() {
+#[tokio::test]
+async fn search_tool_selection_keeps_codex_apps_tools_without_mentions() {
     let selected_tool_names = [
         "mcp__codex_apps__calendar_create_event".to_string(),
         "mcp__rmcp__echo".to_string(),
@@ -798,7 +805,7 @@ fn search_tool_selection_keeps_codex_apps_tools_without_mentions() {
         &explicitly_enabled_connectors,
         &HashMap::new(),
     );
-    let config = test_config();
+    let config = test_config().await;
     selected_mcp_tools.extend(filter_codex_apps_mcp_tools(
         &mcp_tools,
         &connectors,
@@ -816,8 +823,8 @@ fn search_tool_selection_keeps_codex_apps_tools_without_mentions() {
     );
 }
 
-#[test]
-fn apps_mentions_add_codex_apps_tools_to_search_selected_set() {
+#[tokio::test]
+async fn apps_mentions_add_codex_apps_tools_to_search_selected_set() {
     let selected_tool_names = ["mcp__rmcp__echo".to_string()];
     let mcp_tools = HashMap::from([
         (
@@ -848,7 +855,7 @@ fn apps_mentions_add_codex_apps_tools_to_search_selected_set() {
         &explicitly_enabled_connectors,
         &HashMap::new(),
     );
-    let config = test_config();
+    let config = test_config().await;
     selected_mcp_tools.extend(filter_codex_apps_mcp_tools(
         &mcp_tools,
         &connectors,
@@ -1168,6 +1175,7 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
+            responsesapi_client_metadata: None,
         })
         .await?;
     wait_for_event(&initial.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -1214,6 +1222,7 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
                 text_elements: Vec::new(),
             }],
             final_output_json_schema: None,
+            responsesapi_client_metadata: None,
         })
         .await?;
     wait_for_event(&forked.thread, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
@@ -1275,6 +1284,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: turn_id.clone(),
+                started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
@@ -1292,6 +1302,8 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
             codex_protocol::protocol::TurnCompleteEvent {
                 turn_id,
                 last_agent_message: None,
+                completed_at: None,
+                duration_ms: None,
             },
         )),
     ];
@@ -1448,6 +1460,7 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: first_turn_id.clone(),
+                started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
@@ -1466,10 +1479,13 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
         RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: first_turn_id,
             last_agent_message: None,
+            completed_at: None,
+            duration_ms: None,
         })),
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: rolled_back_turn_id.clone(),
+                started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
@@ -1488,6 +1504,8 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
         RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: rolled_back_turn_id,
             last_agent_message: None,
+            completed_at: None,
+            duration_ms: None,
         })),
     ])
     .await;
@@ -1546,6 +1564,7 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: first_turn_id.clone(),
+                started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
@@ -1562,10 +1581,13 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
         RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: first_turn_id,
             last_agent_message: None,
+            completed_at: None,
+            duration_ms: None,
         })),
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: compact_turn_id.clone(),
+                started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
@@ -1577,10 +1599,13 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
         RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: compact_turn_id,
             last_agent_message: None,
+            completed_at: None,
+            duration_ms: None,
         })),
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: rolled_back_turn_id.clone(),
+                started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
@@ -1601,6 +1626,8 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
         RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: rolled_back_turn_id,
             last_agent_message: None,
+            completed_at: None,
+            duration_ms: None,
         })),
     ])
     .await;
@@ -1628,6 +1655,7 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: "turn-1".to_string(),
+                started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
@@ -1644,10 +1672,13 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
         RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: "turn-1".to_string(),
             last_agent_message: None,
+            completed_at: None,
+            duration_ms: None,
         })),
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: "turn-2".to_string(),
+                started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
@@ -1664,10 +1695,13 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
         RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: "turn-2".to_string(),
             last_agent_message: None,
+            completed_at: None,
+            duration_ms: None,
         })),
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: "turn-3".to_string(),
+                started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
@@ -1684,6 +1718,8 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
         RolloutItem::EventMsg(EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id: "turn-3".to_string(),
             last_agent_message: None,
+            completed_at: None,
+            duration_ms: None,
         })),
     ])
     .await;
@@ -1765,7 +1801,10 @@ async fn set_rate_limits_retains_previous_credits() {
     let config = build_test_config(codex_home.path()).await;
     let config = Arc::new(config);
     let model = ModelsManager::get_model_offline_for_tests(config.model.as_deref());
-    let model_info = ModelsManager::construct_model_info_offline_for_tests(model.as_str(), &config);
+    let model_info = ModelsManager::construct_model_info_offline_for_tests(
+        model.as_str(),
+        &config.to_models_manager_config(),
+    );
     let reasoning_effort = config.model_reasoning_effort;
     let collaboration_mode = CollaborationMode {
         mode: ModeKind::Default,
@@ -1863,7 +1902,10 @@ async fn set_rate_limits_updates_plan_type_when_present() {
     let config = build_test_config(codex_home.path()).await;
     let config = Arc::new(config);
     let model = ModelsManager::get_model_offline_for_tests(config.model.as_deref());
-    let model_info = ModelsManager::construct_model_info_offline_for_tests(model.as_str(), &config);
+    let model_info = ModelsManager::construct_model_info_offline_for_tests(
+        model.as_str(),
+        &config.to_models_manager_config(),
+    );
     let reasoning_effort = config.model_reasoning_effort;
     let collaboration_mode = CollaborationMode {
         mode: ModeKind::Default,
@@ -2013,7 +2055,7 @@ async fn turn_context_with_model_updates_model_fields() {
     let expected_model_info = session
         .services
         .models_manager
-        .get_model_info("gpt-5.1", updated.config.as_ref())
+        .get_model_info("gpt-5.1", &updated.config.to_models_manager_config())
         .await;
 
     assert_eq!(updated.config.model.as_deref(), Some("gpt-5.1"));
@@ -2206,7 +2248,10 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
     let config = build_test_config(codex_home.path()).await;
     let config = Arc::new(config);
     let model = ModelsManager::get_model_offline_for_tests(config.model.as_deref());
-    let model_info = ModelsManager::construct_model_info_offline_for_tests(model.as_str(), &config);
+    let model_info = ModelsManager::construct_model_info_offline_for_tests(
+        model.as_str(),
+        &config.to_models_manager_config(),
+    );
     let reasoning_effort = config.model_reasoning_effort;
     let collaboration_mode = CollaborationMode {
         mode: ModeKind::Default,
@@ -2319,16 +2364,19 @@ async fn new_default_turn_uses_config_aware_skills_for_role_overrides() {
         .skills_manager
         .skills_for_cwd(
             &crate::skills::SkillsLoadInput::new(
-                parent_config.cwd.clone(),
+                AbsolutePathBuf::from_absolute_path(&parent_config.cwd)
+                    .expect("parent cwd must be absolute"),
                 session
                     .services
                     .plugins_manager
                     .plugins_for_config(&parent_config)
+                    .await
                     .effective_skill_roots(),
                 parent_config.config_layer_stack.clone(),
                 parent_config.bundled_skills_enabled(),
             ),
             true,
+            Some(codex_exec_server::LOCAL_FS.clone()),
         )
         .await;
     let parent_skill = parent_outcome
@@ -2451,7 +2499,10 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         CollaborationModesConfig::default(),
     ));
     let model = ModelsManager::get_model_offline_for_tests(config.model.as_deref());
-    let model_info = ModelsManager::construct_model_info_offline_for_tests(model.as_str(), &config);
+    let model_info = ModelsManager::construct_model_info_offline_for_tests(
+        model.as_str(),
+        &config.to_models_manager_config(),
+    );
     let collaboration_mode = CollaborationMode {
         mode: ModeKind::Default,
         settings: Settings {
@@ -2497,7 +2548,11 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.clone()));
     let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
     let environment_manager = Arc::new(codex_exec_server::EnvironmentManager::new(None));
-    let skills_manager = Arc::new(SkillsManager::new(config.codex_home.clone(), true));
+    let skills_manager = Arc::new(SkillsManager::new(
+        AbsolutePathBuf::from_absolute_path(&config.codex_home)
+            .expect("codex_home must be absolute"),
+        true,
+    ));
     let skills_watcher = Arc::new(crate::skills_watcher::SkillsWatcher::noop());
     let result = Session::new(
         session_configuration,
@@ -2544,7 +2599,10 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
     let exec_policy = Arc::new(ExecPolicyManager::default());
     let (agent_status_tx, _agent_status_rx) = watch::channel(AgentStatus::PendingInit);
     let model = ModelsManager::get_model_offline_for_tests(config.model.as_deref());
-    let model_info = ModelsManager::construct_model_info_offline_for_tests(model.as_str(), &config);
+    let model_info = ModelsManager::construct_model_info_offline_for_tests(
+        model.as_str(),
+        &config.to_models_manager_config(),
+    );
     let reasoning_effort = config.model_reasoning_effort;
     let collaboration_mode = CollaborationMode {
         mode: ModeKind::Default,
@@ -2588,7 +2646,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
     let per_turn_config = Session::build_per_turn_config(&session_configuration);
     let model_info = ModelsManager::construct_model_info_offline_for_tests(
         session_configuration.collaboration_mode.model(),
-        &per_turn_config,
+        &per_turn_config.to_models_manager_config(),
     );
     let session_telemetry = session_telemetry(
         conversation_id,
@@ -2600,7 +2658,11 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
     let state = SessionState::new(session_configuration.clone());
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.clone()));
     let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
-    let skills_manager = Arc::new(SkillsManager::new(config.codex_home.clone(), true));
+    let skills_manager = Arc::new(SkillsManager::new(
+        AbsolutePathBuf::from_absolute_path(&config.codex_home)
+            .expect("codex_home must be absolute"),
+        true,
+    ));
     let network_approval = Arc::new(NetworkApprovalService::default());
     let environment = Arc::new(
         codex_exec_server::Environment::create(None)
@@ -2639,6 +2701,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         session_telemetry: session_telemetry.clone(),
         models_manager: Arc::clone(&models_manager),
         tool_approvals: Mutex::new(ApprovalStore::default()),
+        guardian_rejections: Mutex::new(HashMap::new()),
         skills_manager,
         plugins_manager,
         mcp_manager,
@@ -2650,6 +2713,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         model_client: ModelClient::new(
             Some(auth_manager.clone()),
             conversation_id,
+            "test-installation".to_string(),
             session_configuration.provider.clone(),
             session_configuration.session_source.clone(),
             config.model_verbosity,
@@ -2670,13 +2734,18 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
     let skills_outcome = Arc::new(
         services
             .skills_manager
-            .skills_for_config(&crate::skills::skills_load_input_from_config(
-                &per_turn_config,
-                services
-                    .plugins_manager
-                    .plugins_for_config(&per_turn_config)
-                    .effective_skill_roots(),
-            )),
+            .skills_for_config(
+                &crate::skills::skills_load_input_from_config(
+                    &per_turn_config,
+                    services
+                        .plugins_manager
+                        .plugins_for_config(&per_turn_config)
+                        .await
+                        .effective_skill_roots(),
+                ),
+                None,
+            )
+            .await,
     );
     let turn_context = Session::make_turn_context(
         conversation_id,
@@ -3034,6 +3103,7 @@ fn op_kind_distinguishes_turn_ops() {
         Op::UserInput {
             items: vec![],
             final_output_json_schema: None,
+            responsesapi_client_metadata: None,
         }
         .kind(),
         "user_input"
@@ -3387,7 +3457,10 @@ pub(crate) async fn make_session_and_context_with_dynamic_tools_and_rx(
     let exec_policy = Arc::new(ExecPolicyManager::default());
     let (agent_status_tx, _agent_status_rx) = watch::channel(AgentStatus::PendingInit);
     let model = ModelsManager::get_model_offline_for_tests(config.model.as_deref());
-    let model_info = ModelsManager::construct_model_info_offline_for_tests(model.as_str(), &config);
+    let model_info = ModelsManager::construct_model_info_offline_for_tests(
+        model.as_str(),
+        &config.to_models_manager_config(),
+    );
     let reasoning_effort = config.model_reasoning_effort;
     let collaboration_mode = CollaborationMode {
         mode: ModeKind::Default,
@@ -3431,7 +3504,7 @@ pub(crate) async fn make_session_and_context_with_dynamic_tools_and_rx(
     let per_turn_config = Session::build_per_turn_config(&session_configuration);
     let model_info = ModelsManager::construct_model_info_offline_for_tests(
         session_configuration.collaboration_mode.model(),
-        &per_turn_config,
+        &per_turn_config.to_models_manager_config(),
     );
     let session_telemetry = session_telemetry(
         conversation_id,
@@ -3443,7 +3516,11 @@ pub(crate) async fn make_session_and_context_with_dynamic_tools_and_rx(
     let state = SessionState::new(session_configuration.clone());
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.clone()));
     let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
-    let skills_manager = Arc::new(SkillsManager::new(config.codex_home.clone(), true));
+    let skills_manager = Arc::new(SkillsManager::new(
+        AbsolutePathBuf::from_absolute_path(&config.codex_home)
+            .expect("codex_home must be absolute"),
+        true,
+    ));
     let network_approval = Arc::new(NetworkApprovalService::default());
     let environment = Arc::new(
         codex_exec_server::Environment::create(None)
@@ -3482,6 +3559,7 @@ pub(crate) async fn make_session_and_context_with_dynamic_tools_and_rx(
         session_telemetry: session_telemetry.clone(),
         models_manager: Arc::clone(&models_manager),
         tool_approvals: Mutex::new(ApprovalStore::default()),
+        guardian_rejections: Mutex::new(HashMap::new()),
         skills_manager,
         plugins_manager,
         mcp_manager,
@@ -3493,6 +3571,7 @@ pub(crate) async fn make_session_and_context_with_dynamic_tools_and_rx(
         model_client: ModelClient::new(
             Some(Arc::clone(&auth_manager)),
             conversation_id,
+            "test-installation".to_string(),
             session_configuration.provider.clone(),
             session_configuration.session_source.clone(),
             config.model_verbosity,
@@ -3513,13 +3592,18 @@ pub(crate) async fn make_session_and_context_with_dynamic_tools_and_rx(
     let skills_outcome = Arc::new(
         services
             .skills_manager
-            .skills_for_config(&crate::skills::skills_load_input_from_config(
-                &per_turn_config,
-                services
-                    .plugins_manager
-                    .plugins_for_config(&per_turn_config)
-                    .effective_skill_roots(),
-            )),
+            .skills_for_config(
+                &crate::skills::skills_load_input_from_config(
+                    &per_turn_config,
+                    services
+                        .plugins_manager
+                        .plugins_for_config(&per_turn_config)
+                        .await
+                        .effective_skill_roots(),
+                ),
+                None,
+            )
+            .await,
     );
     let turn_context = Arc::new(Session::make_turn_context(
         conversation_id,
@@ -3930,7 +4014,8 @@ async fn handle_output_item_done_records_image_save_history_message() {
     let turn_context = Arc::new(turn_context);
     let call_id = "ig_history_records_message";
     let expected_saved_path = crate::stream_events_utils::image_generation_artifact_path(
-        turn_context.config.codex_home.as_path(),
+        &AbsolutePathBuf::from_absolute_path(&turn_context.config.codex_home)
+            .expect("codex_home must be absolute"),
         &session.conversation_id.to_string(),
         call_id,
     );
@@ -3954,7 +4039,8 @@ async fn handle_output_item_done_records_image_save_history_message() {
 
     let history = session.clone_history().await;
     let image_output_path = crate::stream_events_utils::image_generation_artifact_path(
-        turn_context.config.codex_home.as_path(),
+        &AbsolutePathBuf::from_absolute_path(&turn_context.config.codex_home)
+            .expect("codex_home must be absolute"),
         &session.conversation_id.to_string(),
         "<image_id>",
     );
@@ -3987,7 +4073,8 @@ async fn handle_output_item_done_skips_image_save_message_when_save_fails() {
     let turn_context = Arc::new(turn_context);
     let call_id = "ig_history_no_message";
     let expected_saved_path = crate::stream_events_utils::image_generation_artifact_path(
-        turn_context.config.codex_home.as_path(),
+        &AbsolutePathBuf::from_absolute_path(&turn_context.config.codex_home)
+            .expect("codex_home must be absolute"),
         &session.conversation_id.to_string(),
         call_id,
     );
@@ -4532,6 +4619,8 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
         EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id,
             last_agent_message: None,
+            completed_at: None,
+            duration_ms: None,
         }) if turn_id == tc.sub_id
     ));
 }
@@ -4545,7 +4634,7 @@ async fn steer_input_requires_active_turn() {
     }];
 
     let err = sess
-        .steer_input(input, None)
+        .steer_input(input, None, None)
         .await
         .expect_err("steering without active turn should fail");
 
@@ -4574,7 +4663,7 @@ async fn steer_input_enforces_expected_turn_id() {
         text_elements: Vec::new(),
     }];
     let err = sess
-        .steer_input(steer_input, Some("different-turn-id"))
+        .steer_input(steer_input, Some("different-turn-id"), None)
         .await
         .expect_err("mismatched expected turn id should fail");
 
@@ -4616,7 +4705,7 @@ async fn steer_input_rejects_non_regular_turns() {
             text_elements: Vec::new(),
         }];
         let err = sess
-            .steer_input(steer_input, /*expected_turn_id*/ None)
+            .steer_input(steer_input, /*expected_turn_id*/ None, None)
             .await
             .expect_err("steering a non-regular turn should fail");
 
@@ -4648,7 +4737,7 @@ async fn steer_input_returns_active_turn_id() {
         text_elements: Vec::new(),
     }];
     let turn_id = sess
-        .steer_input(steer_input, Some(&tc.sub_id))
+        .steer_input(steer_input, Some(&tc.sub_id), None)
         .await
         .expect("steering with matching expected turn id should succeed");
 
@@ -4829,13 +4918,12 @@ async fn fatal_tool_error_stops_turn_and_reports_error() {
     let router = ToolRouter::from_config(
         &turn_context.tools_config,
         crate::tools::router::ToolRouterParams {
-            mcp_tools: Some(
-                tools
-                    .into_iter()
-                    .map(|(name, tool)| (name, tool.tool))
-                    .collect(),
-            ),
-            app_tools,
+            mcp_tools: Some(crate::codex::public_mcp_tools_from_local(&tools)),
+            deferred_mcp_tools: app_tools
+                .as_ref()
+                .map(|tools| crate::codex::public_mcp_tools_from_local(tools)),
+            unavailable_called_tools: Vec::new(),
+            parallel_mcp_server_names: std::collections::HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
         },

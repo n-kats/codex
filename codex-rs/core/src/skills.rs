@@ -45,7 +45,7 @@ pub(crate) fn skills_load_input_from_config(
     effective_skill_roots: Vec<AbsolutePathBuf>,
 ) -> SkillsLoadInput {
     SkillsLoadInput::new(
-        config.cwd.clone(),
+        AbsolutePathBuf::from_absolute_path(&config.cwd).expect("config cwd must be absolute"),
         effective_skill_roots,
         config.config_layer_stack.clone(),
         config.bundled_skills_enabled(),

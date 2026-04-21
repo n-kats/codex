@@ -323,6 +323,7 @@ fn sample_turn_steer_request(
         params: TurnSteerParams {
             thread_id: thread_id.to_string(),
             expected_turn_id: expected_turn_id.to_string(),
+            responsesapi_client_metadata: None,
             input: vec![
                 UserInput::Text {
                     text: "more".to_string(),
@@ -332,7 +333,6 @@ fn sample_turn_steer_request(
                     path: "/tmp/a.png".into(),
                 },
             ],
-            responsesapi_client_metadata: None,
         },
     }
 }

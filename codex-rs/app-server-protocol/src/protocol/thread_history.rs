@@ -1804,7 +1804,7 @@ mod tests {
                 process_id: Some("pid-1".into()),
                 turn_id: "turn-1".into(),
                 command: vec!["echo".into(), "hello world".into()],
-                cwd: test_path_buf("/tmp").abs(),
+                cwd: test_path_buf("/tmp").abs().to_path_buf(),
                 parsed_cmd: vec![ParsedCommand::Unknown {
                     cmd: "echo hello world".into(),
                 }],
@@ -2027,7 +2027,7 @@ mod tests {
                 process_id: Some("pid-2".into()),
                 turn_id: "turn-1".into(),
                 command: vec!["ls".into()],
-                cwd: test_path_buf("/tmp").abs(),
+                cwd: test_path_buf("/tmp").abs().to_path_buf(),
                 parsed_cmd: vec![ParsedCommand::Unknown { cmd: "ls".into() }],
                 source: ExecCommandSource::Agent,
                 interaction_input: None,
@@ -2132,11 +2132,11 @@ mod tests {
                 target_item_id: Some("guardian-exec".into()),
                 turn_id: "turn-1".into(),
                 status: GuardianAssessmentStatus::Denied,
-                risk_level: Some(codex_protocol::protocol::GuardianRiskLevel::High),
-                user_authorization: Some(codex_protocol::protocol::GuardianUserAuthorization::Low),
+                risk_level: Some(codex_protocol::approvals::GuardianRiskLevel::High),
+                user_authorization: Some(codex_protocol::approvals::GuardianUserAuthorization::Low),
                 rationale: Some("Would delete user data.".into()),
                 decision_source: Some(
-                    codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                    codex_protocol::approvals::GuardianAssessmentDecisionSource::Agent,
                 ),
                 action: serde_json::from_value(serde_json::json!({
                     "type": "command",
@@ -2273,7 +2273,7 @@ mod tests {
                 process_id: Some("pid-42".into()),
                 turn_id: "turn-a".into(),
                 command: vec!["echo".into(), "done".into()],
-                cwd: test_path_buf("/tmp").abs(),
+                cwd: test_path_buf("/tmp").abs().to_path_buf(),
                 parsed_cmd: vec![ParsedCommand::Unknown {
                     cmd: "echo done".into(),
                 }],
@@ -2362,7 +2362,7 @@ mod tests {
                 process_id: Some("pid-42".into()),
                 turn_id: "turn-missing".into(),
                 command: vec!["echo".into(), "done".into()],
-                cwd: test_path_buf("/tmp").abs(),
+                cwd: test_path_buf("/tmp").abs().to_path_buf(),
                 parsed_cmd: vec![ParsedCommand::Unknown {
                     cmd: "echo done".into(),
                 }],

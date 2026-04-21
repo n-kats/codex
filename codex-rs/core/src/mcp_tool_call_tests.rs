@@ -859,7 +859,7 @@ async fn guardian_review_decision_maps_to_mcp_tool_decision() {
         "review-id".to_string(),
         crate::guardian::GuardianRejection {
             rationale: "too risky".to_string(),
-            source: codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+            source: codex_protocol::approvals::GuardianAssessmentDecisionSource::Agent,
         },
     );
     let denial = mcp_tool_approval_decision_from_guardian(

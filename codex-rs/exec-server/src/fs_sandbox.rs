@@ -137,6 +137,7 @@ impl FileSystemSandboxRunner {
         PermissionProfile {
             network: None,
             file_system,
+            macos: None,
         }
     }
 }
@@ -377,6 +378,7 @@ mod tests {
                 read: Some(vec![]),
                 write: Some(vec![writable.clone()]),
             }),
+            macos: None,
         }));
 
         assert_eq!(permissions.network, None);

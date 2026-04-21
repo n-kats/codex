@@ -1,30 +1,8 @@
 use super::LoadedPlugin;
 use super::PluginLoadOutcome;
-use super::PluginManifestPaths;
 use super::curated_plugins_repo_path;
-use super::load_plugin_manifest;
-use super::manifest::PluginManifestInterface;
-use super::marketplace::MarketplaceError;
-use super::marketplace::MarketplaceInterface;
-use super::marketplace::MarketplaceListError;
-use super::marketplace::MarketplacePluginAuthPolicy;
-use super::marketplace::MarketplacePluginPolicy;
-use super::marketplace::MarketplacePluginSource;
-use super::marketplace::ResolvedMarketplacePlugin;
-use super::marketplace::list_marketplaces;
-use super::marketplace::load_marketplace;
-use super::marketplace::resolve_marketplace_plugin;
 use super::read_curated_plugins_sha;
-use super::remote::RemotePluginFetchError;
-use super::remote::RemotePluginMutationError;
-use super::remote::enable_remote_plugin;
-use super::remote::fetch_remote_featured_plugin_ids;
-use super::remote::fetch_remote_plugin_status;
-use super::remote::uninstall_remote_plugin;
 use super::startup_sync::start_startup_remote_plugin_sync_once;
-use super::store::PluginInstallResult as StorePluginInstallResult;
-use super::store::PluginStore;
-use super::store::PluginStoreError;
 use super::sync_openai_plugins_repo;
 use crate::AuthManager;
 use crate::auth::CodexAuth;
@@ -45,6 +23,30 @@ use crate::skills::loader::load_skills_from_roots;
 use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::ConfigValueWriteParams;
 use codex_app_server_protocol::MergeStrategy;
+use codex_core_plugins::manifest::PluginManifestInterface;
+use codex_core_plugins::manifest::PluginManifestPaths;
+use codex_core_plugins::manifest::load_plugin_manifest;
+use codex_core_plugins::marketplace::MarketplaceError;
+use codex_core_plugins::marketplace::MarketplaceInterface;
+use codex_core_plugins::marketplace::MarketplaceListError;
+use codex_core_plugins::marketplace::MarketplacePluginAuthPolicy;
+use codex_core_plugins::marketplace::MarketplacePluginPolicy;
+use codex_core_plugins::marketplace::MarketplacePluginSource;
+use codex_core_plugins::marketplace::ResolvedMarketplacePlugin;
+use codex_core_plugins::marketplace::list_marketplaces;
+use codex_core_plugins::marketplace::load_marketplace;
+use codex_core_plugins::marketplace::resolve_marketplace_plugin;
+use codex_core_plugins::remote::RemotePluginFetchError;
+use codex_core_plugins::remote::RemotePluginMutationError;
+use codex_core_plugins::remote::RemotePluginServiceConfig;
+use codex_core_plugins::remote::enable_remote_plugin;
+use codex_core_plugins::remote::fetch_remote_featured_plugin_ids;
+use codex_core_plugins::remote::fetch_remote_plugin_status;
+use codex_core_plugins::remote::uninstall_remote_plugin;
+use codex_core_plugins::store::PluginInstallResult as StorePluginInstallResult;
+use codex_core_plugins::store::PluginStore;
+use codex_core_plugins::store::PluginStoreError;
+use codex_exec_server::LOCAL_FS;
 use codex_features::Feature;
 use codex_plugin::AppConnectorId;
 use codex_plugin::PluginCapabilitySummary;
@@ -193,7 +195,7 @@ impl From<PluginDetail> for PluginCapabilitySummary {
         let has_skills = value.skills.iter().any(|skill| {
             !value
                 .disabled_skill_paths
-                .contains(&skill.path_to_skills_md)
+                .contains(skill.path_to_skills_md.as_path())
         });
         Self {
             config_name: value.id,
@@ -362,11 +364,12 @@ impl PluginsManager {
         }
     }
 
-    pub fn plugins_for_config(&self, config: &Config) -> PluginLoadOutcome {
+    pub async fn plugins_for_config(&self, config: &Config) -> PluginLoadOutcome {
         self.plugins_for_config_with_force_reload(config, /*force_reload*/ false)
+            .await
     }
 
-    pub(crate) fn plugins_for_config_with_force_reload(
+    pub(crate) async fn plugins_for_config_with_force_reload(
         &self,
         config: &Config,
         force_reload: bool,
@@ -383,7 +386,8 @@ impl PluginsManager {
             &config.config_layer_stack,
             &self.store,
             self.restriction_product,
-        );
+        )
+        .await;
         log_plugin_load_errors(&outcome);
         let mut cache = match self.cached_enabled_outcome.write() {
             Ok(cache) => cache,
@@ -406,16 +410,34 @@ impl PluginsManager {
         *cached_enabled_outcome = None;
     }
 
+    /// Best-effort cache refresh hook used by app-server when plugin roots
+    /// change.
+    ///
+    /// The current tree does not keep a separate non-curated refresh cache, so
+    /// we conservatively clear the enabled plugin cache when there are roots to
+    /// consider. This keeps follow-up requests from reading stale plugin state
+    /// without reintroducing a second plugin ownership path in app-server.
+    pub fn maybe_start_non_curated_plugin_cache_refresh(
+        &self,
+        roots: &[codex_utils_absolute_path::AbsolutePathBuf],
+    ) {
+        if roots.is_empty() {
+            return;
+        }
+        self.clear_cache();
+    }
+
     /// Resolve plugin skill roots for a config layer stack without touching the plugins cache.
-    pub fn effective_skill_roots_for_layer_stack(
+    pub async fn effective_skill_roots_for_layer_stack(
         &self,
         config_layer_stack: &ConfigLayerStack,
         plugins_feature_enabled: bool,
-    ) -> Vec<PathBuf> {
+    ) -> Vec<AbsolutePathBuf> {
         if !plugins_feature_enabled {
             return Vec::new();
         }
         load_plugins_from_layer_stack(config_layer_stack, &self.store, self.restriction_product)
+            .await
             .effective_skill_roots()
     }
 
@@ -487,8 +509,12 @@ impl PluginsManager {
         if let Some(featured_plugin_ids) = self.cached_featured_plugin_ids(&cache_key) {
             return Ok(featured_plugin_ids);
         }
+        let remote_config = RemotePluginServiceConfig {
+            chatgpt_base_url: config.chatgpt_base_url.clone(),
+        };
         let featured_plugin_ids =
-            fetch_remote_featured_plugin_ids(config, auth, self.restriction_product).await?;
+            fetch_remote_featured_plugin_ids(&remote_config, auth, self.restriction_product)
+                .await?;
         self.write_featured_plugin_ids_cache(cache_key, &featured_plugin_ids);
         Ok(featured_plugin_ids)
     }
@@ -520,7 +546,10 @@ impl PluginsManager {
         // This only forwards the backend mutation before the local install flow. We rely on
         // `plugin/list(forceRemoteSync=true)` to sync local state rather than doing an extra
         // reconcile pass here.
-        enable_remote_plugin(config, auth, &plugin_id)
+        let remote_config = RemotePluginServiceConfig {
+            chatgpt_base_url: config.chatgpt_base_url.clone(),
+        };
+        enable_remote_plugin(&remote_config, auth, &plugin_id)
             .await
             .map_err(PluginInstallError::from)?;
         self.install_resolved_plugin(resolved).await
@@ -603,7 +632,10 @@ impl PluginsManager {
         // This only forwards the backend mutation before the local uninstall flow. We rely on
         // `plugin/list(forceRemoteSync=true)` to sync local state rather than doing an extra
         // reconcile pass here.
-        uninstall_remote_plugin(config, auth, &plugin_key)
+        let remote_config = RemotePluginServiceConfig {
+            chatgpt_base_url: config.chatgpt_base_url.clone(),
+        };
+        uninstall_remote_plugin(&remote_config, auth, &plugin_key)
             .await
             .map_err(PluginUninstallError::from)?;
         self.uninstall_plugin_id(plugin_id).await
@@ -653,7 +685,10 @@ impl PluginsManager {
         }
 
         info!("starting remote plugin sync");
-        let remote_plugins = fetch_remote_plugin_status(config, auth)
+        let remote_config = RemotePluginServiceConfig {
+            chatgpt_base_url: config.chatgpt_base_url.clone(),
+        };
+        let remote_plugins = fetch_remote_plugin_status(&remote_config, auth)
             .await
             .map_err(PluginRemoteSyncError::from)?;
         let configured_plugins = configured_plugins_from_stack(&config.config_layer_stack);
@@ -908,7 +943,7 @@ impl PluginsManager {
         })
     }
 
-    pub fn read_plugin_for_config(
+    pub async fn read_plugin_for_config(
         &self,
         config: &Config,
         request: &PluginReadRequest,
@@ -964,7 +999,8 @@ impl PluginsManager {
             manifest_paths,
             self.restriction_product,
             &skill_config_rules,
-        );
+        )
+        .await;
         let apps = load_plugin_apps(source_path.as_path());
         let mcp_config_paths = plugin_mcp_config_paths(source_path.as_path(), manifest_paths);
         let mut mcp_server_names = Vec::new();
@@ -1209,7 +1245,7 @@ struct PluginAppConfig {
     id: String,
 }
 
-pub(crate) fn load_plugins_from_layer_stack(
+pub(crate) async fn load_plugins_from_layer_stack(
     config_layer_stack: &ConfigLayerStack,
     store: &PluginStore,
     restriction_product: Option<Product>,
@@ -1229,7 +1265,8 @@ pub(crate) fn load_plugins_from_layer_stack(
             store,
             restriction_product,
             &skill_config_rules,
-        );
+        )
+        .await;
         for name in loaded_plugin.mcp_servers.keys() {
             if let Some(previous_plugin) =
                 seen_mcp_server_names.insert(name.clone(), configured_name.clone())
@@ -1307,7 +1344,7 @@ fn refresh_curated_plugin_cache(
     Ok(cache_refreshed)
 }
 
-fn configured_plugins_from_stack(
+pub(crate) fn configured_plugins_from_stack(
     config_layer_stack: &ConfigLayerStack,
 ) -> HashMap<String, PluginConfig> {
     // Plugin entries remain persisted user config only.
@@ -1386,7 +1423,7 @@ fn configured_curated_plugin_ids_from_codex_home(codex_home: &Path) -> Vec<Plugi
     configured_curated_plugin_ids(configured_plugins_from_user_config_value(&user_config))
 }
 
-fn load_plugin(
+async fn load_plugin(
     config_name: String,
     plugin: &PluginConfig,
     store: &PluginStore,
@@ -1456,15 +1493,29 @@ fn load_plugin(
         .map(str::to_string)
         .or_else(|| Some(manifest.name.clone()));
     loaded_plugin.manifest_description = manifest.description.clone();
-    loaded_plugin.skill_roots = plugin_skill_roots(plugin_root.as_path(), manifest_paths);
+    loaded_plugin.skill_roots = plugin_skill_roots(plugin_root.as_path(), manifest_paths)
+        .into_iter()
+        .map(|path| {
+            AbsolutePathBuf::from_absolute_path_checked(path)
+                .expect("plugin skill root must be absolute")
+        })
+        .collect();
     let resolved_skills = load_plugin_skills(
         plugin_root.as_path(),
         manifest_paths,
         restriction_product,
         skill_config_rules,
-    );
+    )
+    .await;
     let has_enabled_skills = resolved_skills.has_enabled_skills();
-    loaded_plugin.disabled_skill_paths = resolved_skills.disabled_skill_paths;
+    loaded_plugin.disabled_skill_paths = resolved_skills
+        .disabled_skill_paths
+        .into_iter()
+        .map(|path| {
+            AbsolutePathBuf::from_absolute_path_checked(path)
+                .expect("disabled skill path must be absolute")
+        })
+        .collect();
     loaded_plugin.has_enabled_skills = has_enabled_skills;
     let mut mcp_servers = HashMap::new();
     for mcp_config_path in plugin_mcp_config_paths(plugin_root.as_path(), manifest_paths) {
@@ -1495,14 +1546,15 @@ impl ResolvedPluginSkills {
     fn has_enabled_skills(&self) -> bool {
         // Keep the plugin visible in capability summaries if skill loading was partial.
         self.had_errors
-            || self
-                .skills
-                .iter()
-                .any(|skill| !self.disabled_skill_paths.contains(&skill.path_to_skills_md))
+            || self.skills.iter().any(|skill| {
+                !self
+                    .disabled_skill_paths
+                    .contains(skill.path_to_skills_md.as_path())
+            })
     }
 }
 
-fn load_plugin_skills(
+async fn load_plugin_skills(
     plugin_root: &Path,
     manifest_paths: &PluginManifestPaths,
     restriction_product: Option<Product>,
@@ -1512,17 +1564,23 @@ fn load_plugin_skills(
         plugin_skill_roots(plugin_root, manifest_paths)
             .into_iter()
             .map(|path| SkillRoot {
-                path,
+                path: AbsolutePathBuf::from_absolute_path_checked(path)
+                    .expect("plugin skill root must be absolute"),
                 scope: SkillScope::User,
+                file_system: Arc::clone(&LOCAL_FS),
             }),
-    );
+    )
+    .await;
     let had_errors = !outcome.errors.is_empty();
     let skills = outcome
         .skills
         .into_iter()
         .filter(|skill| skill.matches_product_restriction_for_product(restriction_product))
         .collect::<Vec<_>>();
-    let disabled_skill_paths = resolve_disabled_skill_paths(&skills, skill_config_rules);
+    let disabled_skill_paths = resolve_disabled_skill_paths(&skills, skill_config_rules)
+        .into_iter()
+        .map(|path| path.to_path_buf())
+        .collect();
 
     ResolvedPluginSkills {
         skills,
@@ -1677,22 +1735,6 @@ pub fn plugin_telemetry_metadata_from_root(
             app_connector_ids: load_plugin_apps(plugin_root),
         }),
     }
-}
-
-pub fn load_plugin_mcp_servers(plugin_root: &Path) -> HashMap<String, McpServerConfig> {
-    let Some(manifest) = load_plugin_manifest(plugin_root) else {
-        return HashMap::new();
-    };
-
-    let mut mcp_servers = HashMap::new();
-    for mcp_config_path in plugin_mcp_config_paths(plugin_root, &manifest.paths) {
-        let plugin_mcp = load_mcp_servers_from_file(plugin_root, &mcp_config_path);
-        for (name, config) in plugin_mcp.mcp_servers {
-            mcp_servers.entry(name).or_insert(config);
-        }
-    }
-
-    mcp_servers
 }
 
 pub fn installed_plugin_telemetry_metadata(

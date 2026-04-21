@@ -1,5 +1,6 @@
 use anyhow::Result;
 use codex_exec_server::CreateDirectoryOptions;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_once;
@@ -31,8 +32,11 @@ async fn agents_instructions(mut builder: TestCodexBuilder) -> Result<String> {
 async fn agents_override_is_preferred_over_agents_md() -> Result<()> {
     let instructions =
         agents_instructions(test_codex().with_workspace_setup(|cwd, fs| async move {
-            let agents_md = cwd.join("AGENTS.md");
-            let override_md = cwd.join("AGENTS.override.md");
+            let agents_md = AbsolutePathBuf::from_absolute_path_checked(cwd.join("AGENTS.md"))
+                .expect("workspace path should be absolute");
+            let override_md =
+                AbsolutePathBuf::from_absolute_path_checked(cwd.join("AGENTS.override.md"))
+                    .expect("workspace path should be absolute");
             fs.write_file(&agents_md, b"base doc".to_vec(), /*sandbox*/ None)
                 .await?;
             fs.write_file(
@@ -65,8 +69,10 @@ async fn configured_fallback_is_used_when_agents_candidate_is_directory() -> Res
                 config.project_doc_fallback_filenames = vec!["WORKFLOW.md".to_string()];
             })
             .with_workspace_setup(|cwd, fs| async move {
-                let agents_dir = cwd.join("AGENTS.md");
-                let fallback = cwd.join("WORKFLOW.md");
+                let agents_dir = AbsolutePathBuf::from_absolute_path_checked(cwd.join("AGENTS.md"))
+                    .expect("workspace path should be absolute");
+                let fallback = AbsolutePathBuf::from_absolute_path_checked(cwd.join("WORKFLOW.md"))
+                    .expect("workspace path should be absolute");
                 fs.create_directory(
                     &agents_dir,
                     CreateDirectoryOptions { recursive: true },
@@ -97,16 +103,23 @@ async fn agents_docs_are_concatenated_from_project_root_to_cwd() -> Result<()> {
             })
             .with_workspace_setup(|cwd, fs| async move {
                 let nested = cwd.clone();
+                let nested_abs = AbsolutePathBuf::from_absolute_path_checked(nested.clone())
+                    .expect("workspace path should be absolute");
                 let root = nested
                     .parent()
                     .and_then(|parent| parent.parent())
                     .expect("nested workspace should have a project root ancestor");
-                let root_agents = root.join("AGENTS.md");
-                let git_marker = root.join(".git");
-                let nested_agents = nested.join("AGENTS.md");
+                let root_agents =
+                    AbsolutePathBuf::from_absolute_path_checked(root.join("AGENTS.md"))
+                        .expect("workspace path should be absolute");
+                let git_marker = AbsolutePathBuf::from_absolute_path_checked(root.join(".git"))
+                    .expect("workspace path should be absolute");
+                let nested_agents =
+                    AbsolutePathBuf::from_absolute_path_checked(nested.join("AGENTS.md"))
+                        .expect("workspace path should be absolute");
 
                 fs.create_directory(
-                    &nested,
+                    &nested_abs,
                     CreateDirectoryOptions { recursive: true },
                     /*sandbox*/ None,
                 )

@@ -379,17 +379,6 @@ pub(crate) async fn apply_bespoke_event_handling(
                     .await;
             }
         }
-        EventMsg::RealtimeConversationSdp(event) => {
-            if let ApiVersion::V2 = api_version {
-                let notification = ThreadRealtimeSdpNotification {
-                    thread_id: conversation_id.to_string(),
-                    sdp: event.sdp,
-                };
-                outgoing
-                    .send_server_notification(ServerNotification::ThreadRealtimeSdp(notification))
-                    .await;
-            }
-        }
         EventMsg::RealtimeConversationRealtime(event) => {
             if let ApiVersion::V2 = api_version {
                 match event.payload {
@@ -524,6 +513,17 @@ pub(crate) async fn apply_bespoke_event_handling(
                             .await;
                     }
                 }
+            }
+        }
+        EventMsg::RealtimeConversationSdp(event) => {
+            if let ApiVersion::V2 = api_version {
+                let notification = ThreadRealtimeSdpNotification {
+                    thread_id: conversation_id.to_string(),
+                    sdp: event.sdp,
+                };
+                outgoing
+                    .send_server_notification(ServerNotification::ThreadRealtimeSdp(notification))
+                    .await;
             }
         }
         EventMsg::RealtimeConversationClosed(event) => {
@@ -1648,7 +1648,18 @@ pub(crate) async fn apply_bespoke_event_handling(
                 return;
             }
             let item_id = exec_command_begin_event.call_id.clone();
-            let cwd = exec_command_begin_event.cwd.clone();
+            let cwd = match AbsolutePathBuf::from_absolute_path_checked(
+                exec_command_begin_event.cwd.clone(),
+            ) {
+                Ok(cwd) => cwd,
+                Err(err) => {
+                    warn!(
+                        path = %exec_command_begin_event.cwd.display(),
+                        "failed to normalize command execution cwd: {err}"
+                    );
+                    return;
+                }
+            };
             let command_actions = exec_command_begin_event
                 .parsed_cmd
                 .into_iter()
@@ -3099,7 +3110,7 @@ mod tests {
             decision_source: if matches!(status, GuardianAssessmentStatus::InProgress) {
                 None
             } else {
-                Some(codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent)
+                Some(codex_protocol::approvals::GuardianAssessmentDecisionSource::Agent)
             },
             action: serde_json::from_value(json!({
                 "type": "command",
@@ -3149,7 +3160,7 @@ mod tests {
     fn guardian_assessment_started_uses_event_turn_id_fallback() {
         let conversation_id = ThreadId::new();
         let action = codex_protocol::protocol::GuardianAssessmentAction::Command {
-            source: codex_protocol::protocol::GuardianCommandSource::Shell,
+            source: codex_protocol::approvals::GuardianCommandSource::Shell,
             command: "rm -rf /tmp/example.sqlite".to_string(),
             cwd: test_path_buf("/tmp").abs(),
         };
@@ -3192,7 +3203,7 @@ mod tests {
     fn guardian_assessment_completed_emits_review_payload() {
         let conversation_id = ThreadId::new();
         let action = codex_protocol::protocol::GuardianAssessmentAction::Command {
-            source: codex_protocol::protocol::GuardianCommandSource::Shell,
+            source: codex_protocol::approvals::GuardianCommandSource::Shell,
             command: "rm -rf /tmp/example.sqlite".to_string(),
             cwd: test_path_buf("/tmp").abs(),
         };
@@ -3208,7 +3219,7 @@ mod tests {
                 user_authorization: Some(codex_protocol::protocol::GuardianUserAuthorization::Low),
                 rationale: Some("too risky".to_string()),
                 decision_source: Some(
-                    codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                    codex_protocol::approvals::GuardianAssessmentDecisionSource::Agent,
                 ),
                 action: action.clone(),
             },
@@ -3258,7 +3269,7 @@ mod tests {
                 user_authorization: None,
                 rationale: None,
                 decision_source: Some(
-                    codex_protocol::protocol::GuardianAssessmentDecisionSource::Agent,
+                    codex_protocol::approvals::GuardianAssessmentDecisionSource::Agent,
                 ),
                 action: action.clone(),
             },

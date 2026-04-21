@@ -1,3 +1,4 @@
+use codex_utils_absolute_path::AbsolutePathBuf;
 use rand::Rng;
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -162,12 +163,15 @@ impl UnifiedExecProcessManager {
         request: ExecCommandRequest,
         context: &UnifiedExecContext,
     ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
-        let cwd = request
-            .workdir
-            .clone()
-            .unwrap_or_else(|| context.turn.cwd.to_path_buf());
+        let cwd = AbsolutePathBuf::from_absolute_path_checked(
+            request.workdir.clone().unwrap_or_else(|| {
+                AbsolutePathBuf::from_absolute_path_checked(context.turn.cwd.clone())
+                    .expect("turn cwd must be absolute")
+            }),
+        )
+        .expect("unified exec cwd must be absolute");
         let process = self
-            .open_session_with_sandbox(&request, cwd.clone(), context)
+            .open_session_with_sandbox(&request, cwd.to_path_buf(), context)
             .await;
 
         let (process, mut deferred_network_approval) = match process {
@@ -208,7 +212,7 @@ impl UnifiedExecProcessManager {
                 Arc::clone(&process),
                 context,
                 &request.command,
-                cwd.clone(),
+                cwd.to_path_buf(),
                 start,
                 request.process_id,
                 request.tty,
@@ -572,7 +576,8 @@ impl UnifiedExecProcessManager {
             Arc::clone(&context.turn),
             context.call_id.clone(),
             command.to_vec(),
-            cwd,
+            AbsolutePathBuf::from_absolute_path_checked(cwd)
+                .expect("stored unified exec cwd must be absolute"),
             process_id,
             transcript,
             started_at,
@@ -612,9 +617,11 @@ impl UnifiedExecProcessManager {
                 .start(codex_exec_server::ExecParams {
                     process_id: exec_server_process_id(process_id).into(),
                     argv: env.command.clone(),
-                    cwd: env.cwd.clone(),
+                    cwd: env.cwd.to_path_buf(),
+                    env_policy: None,
                     env: env.env.clone(),
                     tty,
+                    pipe_stdin: false,
                     arg0: env.arg0.clone(),
                 })
                 .await

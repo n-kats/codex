@@ -20,7 +20,6 @@ use crate::tools::registry::PostToolUsePayload;
 use crate::tools::registry::PreToolUsePayload;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
-use crate::tools::spec::UnifiedExecShellMode;
 use crate::unified_exec::ExecCommandRequest;
 use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::UnifiedExecProcessManager;
@@ -28,8 +27,10 @@ use crate::unified_exec::WriteStdinRequest;
 use async_trait::async_trait;
 use codex_features::Feature;
 use codex_otel::SessionTelemetry;
-use codex_otel::metrics::names::TOOL_CALL_UNIFIED_EXEC_METRIC;
+use codex_otel::TOOL_CALL_UNIFIED_EXEC_METRIC;
 use codex_protocol::models::PermissionProfile;
+use codex_tools::UnifiedExecShellMode;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -182,15 +183,26 @@ impl ToolHandler for UnifiedExecHandler {
 
         let response = match tool_name.as_str() {
             "exec_command" => {
-                let cwd = resolve_workdir_base_path(&arguments, context.turn.cwd.as_path())?;
-                let args: ExecCommandArgs =
-                    parse_arguments_with_base_path(&arguments, cwd.as_path())?;
-                let workdir = context.turn.resolve_path(args.workdir.clone());
+                let cwd_base = AbsolutePathBuf::from_absolute_path(&context.turn.cwd)
+                    .expect("turn cwd must be absolute");
+                let cwd = resolve_workdir_base_path(&arguments, &cwd_base)?;
+                let args: ExecCommandArgs = parse_arguments_with_base_path(&arguments, &cwd)?;
+                let resolved_workdir =
+                    args.workdir
+                        .clone()
+                        .filter(|value| !value.is_empty())
+                        .map(|dir| {
+                            AbsolutePathBuf::from_absolute_path(
+                                &context.turn.resolve_path(Some(dir)),
+                            )
+                            .expect("turn workdir must be absolute")
+                        });
+                let cwd = resolved_workdir.clone().unwrap_or_else(|| cwd.clone());
                 crate::skills::maybe_emit_implicit_skill_invocation(
                     session.as_ref(),
                     context.turn.as_ref(),
                     &args.cmd,
-                    &workdir,
+                    resolved_workdir.as_ref().unwrap_or(&cwd),
                 )
                 .await;
                 let process_id = manager.allocate_process_id().await;
@@ -204,7 +216,7 @@ impl ToolHandler for UnifiedExecHandler {
                 let command_for_display = codex_shell_command::parse_command::shlex_join(&command);
 
                 let ExecCommandArgs {
-                    workdir,
+                    workdir: _workdir,
                     tty,
                     yield_time_ms,
                     max_output_tokens,
@@ -246,10 +258,6 @@ impl ToolHandler for UnifiedExecHandler {
                     )));
                 }
 
-                let workdir = workdir.filter(|value| !value.is_empty());
-
-                let workdir = workdir.map(|dir| context.turn.resolve_path(Some(dir)));
-                let cwd = workdir.clone().unwrap_or(cwd);
                 let normalized_additional_permissions = match implicit_granted_permissions(
                     sandbox_permissions,
                     requested_additional_permissions.as_ref(),
@@ -309,7 +317,7 @@ impl ToolHandler for UnifiedExecHandler {
                             process_id,
                             yield_time_ms,
                             max_output_tokens,
-                            workdir,
+                            workdir: resolved_workdir,
                             network: context.turn.network.clone(),
                             tty,
                             sandbox_permissions: effective_additional_permissions

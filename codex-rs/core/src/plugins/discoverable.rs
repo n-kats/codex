@@ -4,6 +4,7 @@ use tracing::warn;
 
 use super::OPENAI_CURATED_MARKETPLACE_NAME;
 use super::PluginCapabilitySummary;
+use super::PluginReadRequest;
 use super::PluginsManager;
 use crate::config::Config;
 use codex_config::types::ToolSuggestDiscoverableType;
@@ -59,12 +60,16 @@ pub(crate) async fn list_tool_suggest_discoverable_plugins(
 
         let plugin_id = plugin.id.clone();
 
+        let request = PluginReadRequest {
+            plugin_name: plugin.name.clone(),
+            marketplace_path: curated_marketplace.path.clone(),
+        };
         match plugins_manager
-            .read_plugin_detail_for_marketplace_plugin(config, &curated_marketplace_name, plugin)
+            .read_plugin_for_config(config, &request)
             .await
         {
             Ok(plugin) => {
-                let plugin: PluginCapabilitySummary = plugin.into();
+                let plugin: PluginCapabilitySummary = plugin.plugin.into();
                 discoverable_plugins.push(DiscoverablePluginInfo {
                     id: plugin.config_name,
                     name: plugin.display_name,

@@ -14,6 +14,7 @@ use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
+use async_trait::async_trait;
 use codex_hooks::HookEvent;
 use codex_hooks::HookEventAfterToolUse;
 use codex_hooks::HookPayload;
@@ -27,6 +28,7 @@ use codex_protocol::protocol::SandboxPolicy;
 use codex_tools::ConfiguredToolSpec;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_readiness::Readiness;
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -38,6 +40,7 @@ pub enum ToolKind {
     Mcp,
 }
 
+#[async_trait]
 pub trait ToolHandler: Send + Sync {
     type Output: ToolOutput + 'static;
 
@@ -56,11 +59,8 @@ pub trait ToolHandler: Send + Sync {
     /// user (through file system, OS operations, ...).
     /// This function must remains defensive and return `true` if a doubt exist on the
     /// exact effect of a ToolInvocation.
-    fn is_mutating(
-        &self,
-        _invocation: &ToolInvocation,
-    ) -> impl std::future::Future<Output = bool> + Send {
-        async { false }
+    async fn is_mutating(&self, _invocation: &ToolInvocation) -> bool {
+        false
     }
 
     fn pre_tool_use_payload(&self, _invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
@@ -83,10 +83,7 @@ pub trait ToolHandler: Send + Sync {
 
     /// Perform the actual [ToolInvocation] and returns a [ToolOutput] containing
     /// the final output to return to the model.
-    fn handle(
-        &self,
-        invocation: ToolInvocation,
-    ) -> impl std::future::Future<Output = Result<Self::Output, FunctionCallError>> + Send;
+    async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError>;
 }
 
 /// Consumes streamed argument diffs for a tool call and emits protocol events
@@ -238,7 +235,12 @@ impl ToolRegistry {
         &self,
         invocation: ToolInvocation,
     ) -> Result<AnyToolResult, FunctionCallError> {
-        let tool_name = invocation.tool_name.clone();
+        let tool_name = match invocation.tool_namespace.as_deref() {
+            Some(namespace) => {
+                ToolName::namespaced(namespace.to_string(), invocation.tool_name.clone())
+            }
+            None => ToolName::plain(invocation.tool_name.clone()),
+        };
         let display_name = tool_name.display();
         let call_id_owned = invocation.call_id.clone();
         let otel = invocation.turn.session_telemetry.clone();
@@ -284,7 +286,7 @@ impl ToolRegistry {
         let handler = match self.handler(&tool_name) {
             Some(handler) => handler,
             None => {
-                let message = unsupported_tool_call_message(&invocation.payload, &tool_name);
+                let message = unsupported_tool_call_message(&invocation.payload, &display_name);
                 otel.tool_result_with_tags(
                     &display_name,
                     &call_id_owned,
@@ -519,8 +521,7 @@ impl ToolRegistryBuilder {
     }
 }
 
-fn unsupported_tool_call_message(payload: &ToolPayload, tool_name: &ToolName) -> String {
-    let tool_name = tool_name.display();
+fn unsupported_tool_call_message(payload: &ToolPayload, tool_name: &str) -> String {
     match payload {
         ToolPayload::Custom { .. } => format!("unsupported custom tool call: {tool_name}"),
         _ => format!("unsupported call: {tool_name}"),
@@ -606,14 +607,15 @@ async fn dispatch_after_tool_use_hook(
         .hooks()
         .dispatch(HookPayload {
             session_id: session.conversation_id,
-            cwd: turn.cwd.clone(),
+            cwd: AbsolutePathBuf::from_absolute_path_checked(turn.cwd.clone())
+                .expect("turn cwd must be absolute"),
             client: turn.app_server_client_name.clone(),
             triggered_at: chrono::Utc::now(),
             hook_event: HookEvent::AfterToolUse {
                 event: HookEventAfterToolUse {
                     turn_id: turn.sub_id.clone(),
                     call_id: invocation.call_id.clone(),
-                    tool_name: invocation.tool_name.display(),
+                    tool_name: invocation.tool_name.clone(),
                     tool_kind: hook_tool_kind(&tool_input),
                     tool_input,
                     executed: dispatch.executed,
@@ -636,7 +638,7 @@ async fn dispatch_after_tool_use_hook(
             HookResult::FailedContinue(error) => {
                 warn!(
                     call_id = %invocation.call_id,
-                    tool_name = %invocation.tool_name.display(),
+                    tool_name = %invocation.tool_name,
                     hook_name = %hook_name,
                     error = %error,
                     "after_tool_use hook failed; continuing"
@@ -645,7 +647,7 @@ async fn dispatch_after_tool_use_hook(
             HookResult::FailedAbort(error) => {
                 warn!(
                     call_id = %invocation.call_id,
-                    tool_name = %invocation.tool_name.display(),
+                    tool_name = %invocation.tool_name,
                     hook_name = %hook_name,
                     error = %error,
                     "after_tool_use hook failed; aborting operation"

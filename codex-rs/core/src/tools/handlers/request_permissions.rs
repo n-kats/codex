@@ -1,5 +1,6 @@
 use codex_protocol::request_permissions::RequestPermissionsArgs;
 use codex_sandboxing::policy_transforms::normalize_additional_permissions;
+use codex_utils_absolute_path::AbsolutePathBuf;
 
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
@@ -11,6 +12,7 @@ use crate::tools::registry::ToolKind;
 
 pub struct RequestPermissionsHandler;
 
+#[async_trait::async_trait]
 impl ToolHandler for RequestPermissionsHandler {
     type Output = FunctionToolOutput;
 
@@ -36,8 +38,8 @@ impl ToolHandler for RequestPermissionsHandler {
             }
         };
 
-        let mut args: RequestPermissionsArgs =
-            parse_arguments_with_base_path(&arguments, &turn.cwd)?;
+        let cwd = AbsolutePathBuf::from_absolute_path_checked(turn.cwd.clone()).expect("turn cwd");
+        let mut args: RequestPermissionsArgs = parse_arguments_with_base_path(&arguments, &cwd)?;
         args.permissions = normalize_additional_permissions(args.permissions.into())
             .map(codex_protocol::request_permissions::RequestPermissionProfile::from)
             .map_err(FunctionCallError::RespondToModel)?;

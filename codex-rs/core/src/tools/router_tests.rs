@@ -5,6 +5,7 @@ use crate::codex::make_session_and_context;
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::ToolPayload;
 use crate::turn_diff_tracker::TurnDiffTracker;
+use codex_mcp::ToolInfo as PublicToolInfo;
 use codex_protocol::models::ResponseItem;
 use codex_tools::ToolName;
 
@@ -13,6 +14,30 @@ use super::ToolCallSource;
 use super::ToolRouter;
 use super::ToolRouterParams;
 
+fn to_public_mcp_tools(
+    tools: std::collections::HashMap<String, crate::mcp_connection_manager::ToolInfo>,
+) -> std::collections::HashMap<String, PublicToolInfo> {
+    tools
+        .into_iter()
+        .map(|(name, tool)| {
+            (
+                name,
+                PublicToolInfo {
+                    server_name: tool.server_name,
+                    callable_name: tool.tool_name,
+                    callable_namespace: tool.tool_namespace,
+                    server_instructions: None,
+                    tool: tool.tool,
+                    connector_id: tool.connector_id,
+                    connector_name: tool.connector_name,
+                    plugin_display_names: tool.plugin_display_names,
+                    connector_description: tool.connector_description,
+                },
+            )
+        })
+        .collect()
+}
+
 #[tokio::test]
 async fn js_repl_tools_only_blocks_direct_tool_calls() -> anyhow::Result<()> {
     let (session, mut turn) = make_session_and_context().await;
@@ -20,13 +45,15 @@ async fn js_repl_tools_only_blocks_direct_tool_calls() -> anyhow::Result<()> {
 
     let session = Arc::new(session);
     let turn = Arc::new(turn);
-    let mcp_tools = session
-        .services
-        .mcp_connection_manager
-        .read()
-        .await
-        .list_all_tools()
-        .await;
+    let mcp_tools = to_public_mcp_tools(
+        session
+            .services
+            .mcp_connection_manager
+            .read()
+            .await
+            .list_all_tools()
+            .await,
+    );
     let deferred_mcp_tools = Some(mcp_tools.clone());
     let router = ToolRouter::from_config(
         &turn.tools_config,
@@ -74,13 +101,15 @@ async fn js_repl_tools_only_allows_js_repl_source_calls() -> anyhow::Result<()> 
 
     let session = Arc::new(session);
     let turn = Arc::new(turn);
-    let mcp_tools = session
-        .services
-        .mcp_connection_manager
-        .read()
-        .await
-        .list_all_tools()
-        .await;
+    let mcp_tools = to_public_mcp_tools(
+        session
+            .services
+            .mcp_connection_manager
+            .read()
+            .await
+            .list_all_tools()
+            .await,
+    );
     let deferred_mcp_tools = Some(mcp_tools.clone());
     let router = ToolRouter::from_config(
         &turn.tools_config,
@@ -173,13 +202,15 @@ async fn js_repl_tools_only_blocks_namespaced_js_repl_tool() -> anyhow::Result<(
 #[tokio::test]
 async fn parallel_support_does_not_match_namespaced_local_tool_names() -> anyhow::Result<()> {
     let (session, turn) = make_session_and_context().await;
-    let mcp_tools = session
-        .services
-        .mcp_connection_manager
-        .read()
-        .await
-        .list_all_tools()
-        .await;
+    let mcp_tools = to_public_mcp_tools(
+        session
+            .services
+            .mcp_connection_manager
+            .read()
+            .await
+            .list_all_tools()
+            .await,
+    );
     let router = ToolRouter::from_config(
         &turn.tools_config,
         ToolRouterParams {

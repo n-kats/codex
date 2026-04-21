@@ -31,6 +31,7 @@ use crate::state::TaskKind;
 use crate::tools::format_exec_output_str;
 use crate::tools::runtimes::maybe_wrap_shell_lc_with_snapshot;
 use crate::user_shell_command::user_shell_command_record_item;
+use codex_utils_absolute_path::AbsolutePathBuf;
 
 use super::SessionTask;
 use super::SessionTaskContext;
@@ -114,6 +115,7 @@ pub(crate) async fn execute_user_shell_command(
         // freshly reinjected context before the summary/replacement history is applied.
         let event = EventMsg::TurnStarted(TurnStartedEvent {
             turn_id: turn_context.sub_id.clone(),
+            started_at: turn_context.turn_timing_state.started_at_unix_secs().await,
             model_context_window: turn_context.model_context_window(),
             collaboration_mode_kind: turn_context.collaboration_mode.mode,
         });
@@ -131,11 +133,13 @@ pub(crate) async fn execute_user_shell_command(
         session_shell.as_ref(),
         turn_context.cwd.as_path(),
         &turn_context.shell_environment_policy.r#set,
+        &std::collections::HashMap::new(),
     );
 
     let call_id = Uuid::new_v4().to_string();
     let raw_command = command;
-    let cwd = turn_context.cwd.clone();
+    let cwd = AbsolutePathBuf::from_absolute_path_checked(turn_context.cwd.as_path())
+        .expect("turn_context.cwd must be absolute");
 
     let parsed_cmd = parse_command(&display_command);
     session
@@ -146,7 +150,7 @@ pub(crate) async fn execute_user_shell_command(
                 process_id: None,
                 turn_id: turn_context.sub_id.clone(),
                 command: display_command.clone(),
-                cwd: cwd.clone(),
+                cwd: cwd.clone().to_path_buf(),
                 parsed_cmd: parsed_cmd.clone(),
                 source: ExecCommandSource::UserShell,
                 interaction_input: None,
@@ -158,6 +162,7 @@ pub(crate) async fn execute_user_shell_command(
     let exec_env = ExecRequest {
         command: exec_command.clone(),
         cwd: cwd.clone(),
+        exec_server_env_config: None,
         env: create_env(
             &turn_context.shell_environment_policy,
             Some(session.conversation_id),
@@ -179,6 +184,7 @@ pub(crate) async fn execute_user_shell_command(
         sandbox_policy: sandbox_policy.clone(),
         file_system_sandbox_policy: FileSystemSandboxPolicy::from(&sandbox_policy),
         network_sandbox_policy: NetworkSandboxPolicy::from(&sandbox_policy),
+        windows_sandbox_filesystem_overrides: None,
         justification: None,
         arg0: None,
     };
@@ -225,7 +231,7 @@ pub(crate) async fn execute_user_shell_command(
                         process_id: None,
                         turn_id: turn_context.sub_id.clone(),
                         command: display_command.clone(),
-                        cwd: cwd.clone(),
+                        cwd: cwd.clone().to_path_buf(),
                         parsed_cmd: parsed_cmd.clone(),
                         source: ExecCommandSource::UserShell,
                         interaction_input: None,
@@ -249,7 +255,7 @@ pub(crate) async fn execute_user_shell_command(
                         process_id: None,
                         turn_id: turn_context.sub_id.clone(),
                         command: display_command.clone(),
-                        cwd: cwd.clone(),
+                        cwd: cwd.clone().to_path_buf(),
                         parsed_cmd: parsed_cmd.clone(),
                         source: ExecCommandSource::UserShell,
                         interaction_input: None,
@@ -293,7 +299,7 @@ pub(crate) async fn execute_user_shell_command(
                         process_id: None,
                         turn_id: turn_context.sub_id.clone(),
                         command: display_command,
-                        cwd,
+                        cwd: cwd.to_path_buf(),
                         parsed_cmd,
                         source: ExecCommandSource::UserShell,
                         interaction_input: None,

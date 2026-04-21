@@ -43,9 +43,9 @@ use codex_app_server_protocol::McpServerStatus;
 use codex_core::config::Config;
 use codex_core::config::types::McpServerTransportConfig;
 use codex_core::mcp::McpManager;
-use codex_core::mcp::qualified_mcp_tool_name_prefix;
 use codex_core::plugins::PluginsManager;
 use codex_core::web_search::web_search_detail;
+use codex_mcp::qualified_mcp_tool_name_prefix;
 use codex_otel::RuntimeMetricsSummary;
 use codex_protocol::account::PlanType;
 use codex_protocol::config_types::ServiceTier;
@@ -64,7 +64,7 @@ use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::request_user_input::RequestUserInputAnswer;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
 use codex_protocol::user_input::TextElement;
-use codex_utils_cli::format_env_display::format_env_display;
+use codex_utils_cli::format_env_display;
 use image::DynamicImage;
 use image::ImageReader;
 use ratatui::prelude::*;
@@ -893,6 +893,18 @@ pub fn new_approval_decision_cell(
                     actor.subject().into(),
                     "canceled".bold(),
                     " the request to run ".into(),
+                    snippet,
+                ],
+            )
+        }
+        TimedOut => {
+            let snippet = Span::from(exec_snippet(&command)).dim();
+            (
+                "✗ ".red(),
+                vec![
+                    actor.subject().into(),
+                    "timed out".bold(),
+                    " waiting to approve running ".into(),
                     snippet,
                 ],
             )
@@ -1821,7 +1833,8 @@ pub(crate) fn new_mcp_tools_output(
     }
 
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(config.codex_home.clone())));
-    let effective_servers = mcp_manager.effective_servers(config, /*auth*/ None);
+    let effective_servers = tokio::runtime::Handle::current()
+        .block_on(mcp_manager.effective_servers(config, /*auth*/ None));
     let mut servers: Vec<_> = effective_servers.iter().collect();
     servers.sort_by(|(a, _), (b, _)| a.cmp(b));
 

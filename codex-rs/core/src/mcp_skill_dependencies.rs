@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
+use codex_core_skills::model::SkillToolDependency;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::request_user_input::RequestUserInputArgs;
@@ -11,10 +12,6 @@ use codex_rmcp_client::perform_oauth_login;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use super::auth::McpOAuthLoginSupport;
-use super::auth::oauth_login_support;
-use super::auth::resolve_oauth_scopes;
-use super::auth::should_retry_without_scopes;
 use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::config::Config;
@@ -24,8 +21,11 @@ use crate::config::types::McpServerConfig;
 use crate::config::types::McpServerTransportConfig;
 use crate::default_client::is_first_party_originator;
 use crate::default_client::originator;
-use crate::skills::model::SkillToolDependency;
 use codex_features::Feature;
+use codex_mcp::McpOAuthLoginSupport;
+use codex_mcp::oauth_login_support;
+use codex_mcp::resolve_oauth_scopes;
+use codex_mcp::should_retry_without_scopes;
 
 const SKILL_MCP_DEPENDENCY_PROMPT_ID: &str = "skill_mcp_dependency_install";
 const MCP_DEPENDENCY_OPTION_INSTALL: &str = "Install";
@@ -152,7 +152,8 @@ pub(crate) async fn maybe_prompt_and_install_mcp_dependencies(
     let installed = sess
         .services
         .mcp_manager
-        .configured_servers(config.as_ref());
+        .configured_servers(config.as_ref())
+        .await;
     let missing = collect_missing_mcp_dependencies(mentioned_skills, &installed);
     if missing.is_empty() {
         return;
@@ -181,7 +182,7 @@ pub(crate) async fn maybe_install_mcp_dependencies(
     }
 
     let codex_home = config.codex_home.clone();
-    let installed = sess.services.mcp_manager.configured_servers(config);
+    let installed = sess.services.mcp_manager.configured_servers(config).await;
     let missing = collect_missing_mcp_dependencies(mentioned_skills, &installed);
     if missing.is_empty() {
         return;
@@ -292,7 +293,8 @@ pub(crate) async fn maybe_install_mcp_dependencies(
     let mut refresh_servers = sess
         .services
         .mcp_manager
-        .effective_servers(config, auth.as_ref());
+        .effective_servers(config, auth.as_ref())
+        .await;
     for (name, server_config) in &servers {
         refresh_servers
             .entry(name.clone())
@@ -418,11 +420,14 @@ fn mcp_dependency_to_server_config(
                 http_headers: None,
                 env_http_headers: None,
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: None,
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -444,11 +449,14 @@ fn mcp_dependency_to_server_config(
                 env_vars: Vec::new(),
                 cwd: None,
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: None,
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -459,7 +467,3 @@ fn mcp_dependency_to_server_config(
 
     Err(format!("unsupported transport {transport}"))
 }
-
-#[cfg(test)]
-#[path = "skill_dependencies_tests.rs"]
-mod tests;

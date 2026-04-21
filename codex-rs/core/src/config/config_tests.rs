@@ -14,9 +14,12 @@ use crate::config::types::ModelAvailabilityNuxConfig;
 use crate::config::types::NotificationMethod;
 use crate::config::types::Notifications;
 use crate::config::types::ToolSuggestDiscoverableType;
+use crate::config::types::TuiNotificationSettings;
 use crate::config_loader::RequirementSource;
 use assert_matches::assert_matches;
 use codex_config::CONFIG_TOML_FILE;
+use codex_config::permissions_toml::NetworkDomainPermissionToml;
+use codex_config::permissions_toml::NetworkDomainPermissionsToml;
 use codex_features::Feature;
 use codex_features::FeaturesToml;
 use codex_protocol::permissions::FileSystemAccessMode;
@@ -50,11 +53,14 @@ fn stdio_mcp(command: &str) -> McpServerConfig {
             env_vars: Vec::new(),
             cwd: None,
         },
+        experimental_environment: None,
         enabled: true,
         required: false,
+        supports_parallel_tool_calls: false,
         disabled_reason: None,
         startup_timeout_sec: None,
         tool_timeout_sec: None,
+        default_tools_approval_mode: None,
         enabled_tools: None,
         disabled_tools: None,
         scopes: None,
@@ -71,11 +77,14 @@ fn http_mcp(url: &str) -> McpServerConfig {
             http_headers: None,
             env_http_headers: None,
         },
+        experimental_environment: None,
         enabled: true,
         required: false,
+        supports_parallel_tool_calls: false,
         disabled_reason: None,
         startup_timeout_sec: None,
         tool_timeout_sec: None,
+        default_tools_approval_mode: None,
         enabled_tools: None,
         disabled_tools: None,
         scopes: None,
@@ -281,8 +290,11 @@ fn config_toml_deserializes_model_availability_nux() {
     assert_eq!(
         cfg.tui.expect("tui config should deserialize"),
         Tui {
-            notifications: Notifications::default(),
-            notification_method: NotificationMethod::default(),
+            notification_settings: TuiNotificationSettings {
+                notifications: Notifications::default(),
+                method: NotificationMethod::default(),
+                condition: Default::default(),
+            },
             animations: true,
             show_tooltips: true,
             alternate_screen: AltScreenMode::default(),
@@ -346,6 +358,7 @@ allow_upstream_proxy = false
                 "workspace".to_string(),
                 PermissionProfileToml {
                     filesystem: Some(FilesystemPermissionsToml {
+                        glob_scan_max_depth: None,
                         entries: BTreeMap::from([
                             (
                                 ":minimal".to_string(),
@@ -370,10 +383,10 @@ allow_upstream_proxy = false
                         dangerously_allow_non_loopback_proxy: None,
                         dangerously_allow_all_unix_sockets: None,
                         mode: None,
-                        domains: Some(crate::config::permissions::NetworkDomainPermissionsToml {
+                        domains: Some(NetworkDomainPermissionsToml {
                             entries: BTreeMap::from([(
                                 "openai.com".to_string(),
-                                crate::config::permissions::NetworkDomainPermissionToml::Allow,
+                                NetworkDomainPermissionToml::Allow,
                             )]),
                         }),
                         unix_sockets: None,
@@ -399,6 +412,7 @@ fn permissions_profiles_network_populates_runtime_network_proxy_spec() -> std::i
                     "workspace".to_string(),
                     PermissionProfileToml {
                         filesystem: Some(FilesystemPermissionsToml {
+                            glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
                                 ":minimal".to_string(),
                                 FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
@@ -446,16 +460,17 @@ fn permissions_profiles_network_disabled_by_default_does_not_start_proxy() -> st
                     "workspace".to_string(),
                     PermissionProfileToml {
                         filesystem: Some(FilesystemPermissionsToml {
+                            glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
                                 ":minimal".to_string(),
                                 FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
                             )]),
                         }),
                         network: Some(NetworkToml {
-                            domains: Some(crate::config::permissions::NetworkDomainPermissionsToml {
+                            domains: Some(NetworkDomainPermissionsToml {
                                 entries: BTreeMap::from([(
                                     "openai.com".to_string(),
-                                    crate::config::permissions::NetworkDomainPermissionToml::Allow,
+                                    NetworkDomainPermissionToml::Allow,
                                 )]),
                             }),
                             ..Default::default()
@@ -490,6 +505,7 @@ fn default_permissions_profile_populates_runtime_sandbox_policy() -> std::io::Re
                 "workspace".to_string(),
                 PermissionProfileToml {
                     filesystem: Some(FilesystemPermissionsToml {
+                        glob_scan_max_depth: None,
                         entries: BTreeMap::from([
                             (
                                 ":minimal".to_string(),
@@ -583,6 +599,7 @@ fn permissions_profiles_require_default_permissions() -> std::io::Result<()> {
                     "workspace".to_string(),
                     PermissionProfileToml {
                         filesystem: Some(FilesystemPermissionsToml {
+                            glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
                                 ":minimal".to_string(),
                                 FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
@@ -625,6 +642,7 @@ fn permissions_profiles_reject_writes_outside_workspace_root() -> std::io::Resul
                     "workspace".to_string(),
                     PermissionProfileToml {
                         filesystem: Some(FilesystemPermissionsToml {
+                            glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
                                 external_write_path.to_string(),
                                 FilesystemPermissionToml::Access(FileSystemAccessMode::Write),
@@ -667,6 +685,7 @@ fn permissions_profiles_reject_nested_entries_for_non_project_roots() -> std::io
                     "workspace".to_string(),
                     PermissionProfileToml {
                         filesystem: Some(FilesystemPermissionsToml {
+                            glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
                                 ":minimal".to_string(),
                                 FilesystemPermissionToml::Scoped(BTreeMap::from([(
@@ -722,6 +741,7 @@ fn load_workspace_permission_profile(profile: PermissionProfileToml) -> std::io:
 fn permissions_profiles_allow_unknown_special_paths() -> std::io::Result<()> {
     let config = load_workspace_permission_profile(PermissionProfileToml {
         filesystem: Some(FilesystemPermissionsToml {
+            glob_scan_max_depth: None,
             entries: BTreeMap::from([(
                 ":future_special_path".to_string(),
                 FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
@@ -766,6 +786,7 @@ fn permissions_profiles_allow_unknown_special_paths() -> std::io::Result<()> {
 fn permissions_profiles_allow_unknown_special_paths_with_nested_entries() -> std::io::Result<()> {
     let config = load_workspace_permission_profile(PermissionProfileToml {
         filesystem: Some(FilesystemPermissionsToml {
+            glob_scan_max_depth: None,
             entries: BTreeMap::from([(
                 ":future_special_path".to_string(),
                 FilesystemPermissionToml::Scoped(BTreeMap::from([(
@@ -831,6 +852,7 @@ fn permissions_profiles_allow_missing_filesystem_with_warning() -> std::io::Resu
 fn permissions_profiles_allow_empty_filesystem_with_warning() -> std::io::Result<()> {
     let config = load_workspace_permission_profile(PermissionProfileToml {
         filesystem: Some(FilesystemPermissionsToml {
+            glob_scan_max_depth: None,
             entries: BTreeMap::new(),
         }),
         network: None,
@@ -864,6 +886,7 @@ fn permissions_profiles_reject_project_root_parent_traversal() -> std::io::Resul
                     "workspace".to_string(),
                     PermissionProfileToml {
                         filesystem: Some(FilesystemPermissionsToml {
+                            glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
                                 ":project_roots".to_string(),
                                 FilesystemPermissionToml::Scoped(BTreeMap::from([(
@@ -908,6 +931,7 @@ fn permissions_profiles_allow_network_enablement() -> std::io::Result<()> {
                     "workspace".to_string(),
                     PermissionProfileToml {
                         filesystem: Some(FilesystemPermissionsToml {
+                            glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
                                 ":minimal".to_string(),
                                 FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
@@ -978,8 +1002,11 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
     assert_eq!(
         tui,
         Tui {
-            notifications: Notifications::Enabled(true),
-            notification_method: NotificationMethod::Auto,
+            notification_settings: TuiNotificationSettings {
+                notifications: Notifications::Enabled(true),
+                method: NotificationMethod::Auto,
+                condition: Default::default(),
+            },
             animations: true,
             show_tooltips: true,
             alternate_screen: AltScreenMode::Auto,
@@ -1724,7 +1751,10 @@ fn feature_table_overrides_legacy_flags() -> std::io::Result<()> {
     let mut entries = BTreeMap::new();
     entries.insert("apply_patch_freeform".to_string(), false);
     let cfg = ConfigToml {
-        features: Some(FeaturesToml { entries }),
+        features: Some(FeaturesToml {
+            entries,
+            multi_agent_v2: None,
+        }),
         ..Default::default()
     };
 
@@ -1772,7 +1802,10 @@ fn responses_websocket_features_do_not_change_wire_api() -> std::io::Result<()> 
         let mut entries = BTreeMap::new();
         entries.insert(feature_key.to_string(), true);
         let cfg = ConfigToml {
-            features: Some(FeaturesToml { entries }),
+            features: Some(FeaturesToml {
+                entries,
+                multi_agent_v2: None,
+            }),
             ..Default::default()
         };
 
@@ -1890,11 +1923,14 @@ async fn replace_mcp_servers_round_trips_entries() -> anyhow::Result<()> {
                 env_vars: Vec::new(),
                 cwd: None,
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: Some(Duration::from_secs(3)),
             tool_timeout_sec: Some(Duration::from_secs(5)),
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -2120,11 +2156,14 @@ async fn replace_mcp_servers_serializes_env_sorted() -> anyhow::Result<()> {
                 env_vars: Vec::new(),
                 cwd: None,
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: None,
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -2193,11 +2232,14 @@ async fn replace_mcp_servers_serializes_env_vars() -> anyhow::Result<()> {
                 env_vars: vec!["ALPHA".to_string(), "BETA".to_string()],
                 cwd: None,
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: None,
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -2246,11 +2288,14 @@ async fn replace_mcp_servers_serializes_cwd() -> anyhow::Result<()> {
                 env_vars: Vec::new(),
                 cwd: Some(cwd_path.clone()),
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: None,
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -2297,11 +2342,14 @@ async fn replace_mcp_servers_streamable_http_serializes_bearer_token() -> anyhow
                 http_headers: None,
                 env_http_headers: None,
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: Some(Duration::from_secs(2)),
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -2364,11 +2412,14 @@ async fn replace_mcp_servers_streamable_http_serializes_custom_headers() -> anyh
                     "DOCS_AUTH".to_string(),
                 )])),
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: Some(Duration::from_secs(2)),
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -2443,11 +2494,14 @@ async fn replace_mcp_servers_streamable_http_removes_optional_sections() -> anyh
                     "DOCS_AUTH".to_string(),
                 )])),
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: Some(Duration::from_secs(2)),
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -2475,11 +2529,14 @@ async fn replace_mcp_servers_streamable_http_removes_optional_sections() -> anyh
                 http_headers: None,
                 env_http_headers: None,
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: None,
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -2542,11 +2599,14 @@ async fn replace_mcp_servers_streamable_http_isolates_headers_between_servers() 
                         "DOCS_AUTH".to_string(),
                     )])),
                 },
+                experimental_environment: None,
                 enabled: true,
                 required: false,
+                supports_parallel_tool_calls: false,
                 disabled_reason: None,
                 startup_timeout_sec: Some(Duration::from_secs(2)),
                 tool_timeout_sec: None,
+                default_tools_approval_mode: None,
                 enabled_tools: None,
                 disabled_tools: None,
                 scopes: None,
@@ -2564,11 +2624,14 @@ async fn replace_mcp_servers_streamable_http_isolates_headers_between_servers() 
                     env_vars: Vec::new(),
                     cwd: None,
                 },
+                experimental_environment: None,
                 enabled: true,
                 required: false,
+                supports_parallel_tool_calls: false,
                 disabled_reason: None,
                 startup_timeout_sec: None,
                 tool_timeout_sec: None,
+                default_tools_approval_mode: None,
                 enabled_tools: None,
                 disabled_tools: None,
                 scopes: None,
@@ -2649,11 +2712,14 @@ async fn replace_mcp_servers_serializes_disabled_flag() -> anyhow::Result<()> {
                 env_vars: Vec::new(),
                 cwd: None,
             },
+            experimental_environment: None,
             enabled: false,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: None,
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -2696,11 +2762,14 @@ async fn replace_mcp_servers_serializes_required_flag() -> anyhow::Result<()> {
                 env_vars: Vec::new(),
                 cwd: None,
             },
+            experimental_environment: None,
             enabled: true,
             required: true,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: None,
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -2743,11 +2812,14 @@ async fn replace_mcp_servers_serializes_tool_filters() -> anyhow::Result<()> {
                 env_vars: Vec::new(),
                 cwd: None,
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: None,
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: Some(vec!["allowed".to_string()]),
             disabled_tools: Some(vec!["blocked".to_string()]),
             scopes: None,
@@ -2794,11 +2866,14 @@ async fn replace_mcp_servers_streamable_http_serializes_oauth_resource() -> anyh
                 http_headers: None,
                 env_http_headers: None,
             },
+            experimental_environment: None,
             enabled: true,
             required: false,
+            supports_parallel_tool_calls: false,
             disabled_reason: None,
             startup_timeout_sec: None,
             tool_timeout_sec: None,
+            default_tools_approval_mode: None,
             enabled_tools: None,
             disabled_tools: None,
             scopes: None,
@@ -4229,7 +4304,8 @@ fn model_catalog_json_loads_from_path() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let catalog_path = codex_home.path().join("catalog.json");
     let mut catalog: ModelsResponse =
-        serde_json::from_str(include_str!("../../models.json")).expect("valid models.json");
+        serde_json::from_str(include_str!("../../../models-manager/models.json"))
+            .expect("valid models.json");
     catalog.models = catalog.models.into_iter().take(1).collect();
     std::fs::write(
         &catalog_path,
@@ -4431,6 +4507,9 @@ fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             approvals_reviewer: ApprovalsReviewer::User,
             enforce_residency: Constrained::allow_any(/*initial_value*/ None),
             user_instructions: None,
+            include_environment_context: false,
+            include_permissions_instructions: false,
+            guardian_policy_config: None,
             notify: None,
             cwd: fixture.cwd().to_path_buf(),
             cli_auth_credentials_store_mode: Default::default(),
@@ -4587,6 +4666,9 @@ fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         approvals_reviewer: ApprovalsReviewer::User,
         enforce_residency: Constrained::allow_any(/*initial_value*/ None),
         user_instructions: None,
+        include_environment_context: false,
+        include_permissions_instructions: false,
+        guardian_policy_config: None,
         notify: None,
         cwd: fixture.cwd().to_path_buf(),
         cli_auth_credentials_store_mode: Default::default(),
@@ -4741,6 +4823,9 @@ fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         approvals_reviewer: ApprovalsReviewer::User,
         enforce_residency: Constrained::allow_any(/*initial_value*/ None),
         user_instructions: None,
+        include_environment_context: false,
+        include_permissions_instructions: false,
+        guardian_policy_config: None,
         notify: None,
         cwd: fixture.cwd().to_path_buf(),
         cli_auth_credentials_store_mode: Default::default(),
@@ -4881,6 +4966,9 @@ fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         approvals_reviewer: ApprovalsReviewer::User,
         enforce_residency: Constrained::allow_any(/*initial_value*/ None),
         user_instructions: None,
+        include_environment_context: false,
+        include_permissions_instructions: false,
+        guardian_policy_config: None,
         notify: None,
         cwd: fixture.cwd().to_path_buf(),
         cli_auth_credentials_store_mode: Default::default(),
@@ -4988,6 +5076,7 @@ fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() -> any
 
     let requirements_toml = crate::config_loader::ConfigRequirementsToml {
         allowed_approval_policies: None,
+        allowed_approvals_reviewers: None,
         allowed_sandbox_modes: None,
         allowed_web_search_modes: Some(vec![
             crate::config_loader::WebSearchModeRequirement::Cached,
@@ -4999,6 +5088,7 @@ fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() -> any
         enforce_residency: None,
         network: None,
         guardian_developer_instructions: None,
+        guardian_policy_config: None,
     };
     let requirement_source = crate::config_loader::RequirementSource::Unknown;
     let requirement_source_for_error = requirement_source.clone();
@@ -5610,6 +5700,7 @@ async fn explicit_sandbox_mode_falls_back_when_disallowed_by_requirements() -> s
 
     let requirements = crate::config_loader::ConfigRequirementsToml {
         allowed_approval_policies: None,
+        allowed_approvals_reviewers: None,
         allowed_sandbox_modes: Some(vec![crate::config_loader::SandboxModeRequirement::ReadOnly]),
         allowed_web_search_modes: None,
         feature_requirements: None,
@@ -5619,6 +5710,7 @@ async fn explicit_sandbox_mode_falls_back_when_disallowed_by_requirements() -> s
         enforce_residency: None,
         network: None,
         guardian_developer_instructions: None,
+        guardian_policy_config: None,
     };
 
     let config = ConfigBuilder::default()

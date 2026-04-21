@@ -9,19 +9,18 @@ use codex_protocol::openai_models::TruncationPolicyConfig;
 use codex_protocol::openai_models::WebSearchToolType;
 use codex_protocol::openai_models::default_input_modalities;
 
-use crate::config::Config;
-use crate::truncate::approx_bytes_for_tokens;
-use codex_features::Feature;
+use crate::ModelsManagerConfig;
+use codex_utils_output_truncation::approx_bytes_for_tokens;
 use tracing::warn;
 
-pub const BASE_INSTRUCTIONS: &str = include_str!("../../prompt.md");
+pub const BASE_INSTRUCTIONS: &str = include_str!("../prompt.md");
 const DEFAULT_PERSONALITY_HEADER: &str = "You are Codex, a coding agent based on GPT-5. You and the user share the same workspace and collaborate to achieve the user's goals.";
 const LOCAL_FRIENDLY_TEMPLATE: &str =
     "You optimize for team morale and being a supportive teammate as much as code quality.";
 const LOCAL_PRAGMATIC_TEMPLATE: &str = "You are a deeply pragmatic, effective software engineer.";
 const PERSONALITY_PLACEHOLDER: &str = "{{ personality }}";
 
-pub(crate) fn with_config_overrides(mut model: ModelInfo, config: &Config) -> ModelInfo {
+pub fn with_config_overrides(mut model: ModelInfo, config: &ModelsManagerConfig) -> ModelInfo {
     if let Some(supports_reasoning_summaries) = config.model_supports_reasoning_summaries
         && supports_reasoning_summaries
     {
@@ -50,7 +49,7 @@ pub(crate) fn with_config_overrides(mut model: ModelInfo, config: &Config) -> Mo
     if let Some(base_instructions) = &config.base_instructions {
         model.base_instructions = base_instructions.clone();
         model.model_messages = None;
-    } else if !config.features.enabled(Feature::Personality) {
+    } else if !config.personality_enabled {
         model.model_messages = None;
     }
 
@@ -86,6 +85,7 @@ pub(crate) fn model_info_from_slug(slug: &str) -> ModelInfo {
         context_window: Some(272_000),
         auto_compact_token_limit: None,
         effective_context_window_percent: 95,
+        additional_speed_tiers: Vec::new(),
         experimental_supported_tools: Vec::new(),
         input_modalities: default_input_modalities(),
         used_fallback_model_metadata: true, // this is the fallback model metadata

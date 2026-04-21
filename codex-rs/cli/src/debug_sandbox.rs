@@ -23,6 +23,7 @@ use codex_protocol::config_types::SandboxMode;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 #[cfg(target_os = "macos")]
 use codex_sandboxing::seatbelt::create_seatbelt_command_args_for_policies_with_extensions;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
 #[cfg(target_os = "macos")]
 use tokio::process::Child;
@@ -292,9 +293,10 @@ async fn run_command_under_sandbox(
             spawn_command_under_linux_sandbox(
                 codex_linux_sandbox_exe,
                 command,
-                cwd,
+                AbsolutePathBuf::from_absolute_path(&cwd).expect("absolute cwd"),
                 config.permissions.sandbox_policy.get(),
-                sandbox_policy_cwd.as_path(),
+                &AbsolutePathBuf::from_absolute_path(&sandbox_policy_cwd)
+                    .expect("absolute sandbox cwd"),
                 use_legacy_landlock,
                 stdio_policy,
                 network.as_ref(),

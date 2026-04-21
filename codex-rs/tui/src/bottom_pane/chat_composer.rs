@@ -22,6 +22,8 @@
 //!
 //! - Persistent cross-session history (text-only; no element ranges or attachments).
 //! - Local in-session history (full text + text elements + local/remote image attachments).
+//! - Reverse incremental search (`Ctrl+R`), which previews matching entries in the composer body
+//!   and restores the prior draft on cancel.
 //!
 //! When recalling a local entry, the composer rehydrates text elements and both attachment kinds
 //! (local image paths + remote image URLs).
@@ -35,6 +37,10 @@
 //! same submit action for terminals that do not report `Ctrl+Enter` distinctly.
 //! `Tab` requests queuing while a task is running; if no task is running, `Tab` submits.
 //! `Tab` does not submit when entering a `!` shell command.
+//!
+//! Slash commands are staged for local history instead of being recorded immediately. Command
+//! recall is a two-phase handoff: stage the submitted slash text here, then record it after
+//! `ChatWidget` dispatches the command.
 //!
 //! On submit/queue paths, the composer:
 //!
@@ -151,6 +157,7 @@ use ratatui::widgets::WidgetRef;
 
 use super::chat_composer_history::ChatComposerHistory;
 use super::chat_composer_history::HistoryEntry;
+use super::chat_composer_history::HistoryEntryResponse;
 use super::command_popup::CommandItem;
 use super::command_popup::CommandPopup;
 use super::command_popup::CommandPopupFlags;
@@ -214,11 +221,13 @@ use crate::clipboard_paste::pasted_image_format;
 use crate::history_cell;
 use crate::tui::FrameRequester;
 use crate::ui_consts::LIVE_PREFIX_COLS;
+use codex_app_server_protocol::AppInfo;
 use codex_chatgpt::connectors;
-use codex_chatgpt::connectors::AppInfo;
+use codex_connectors::metadata::connector_display_label;
 use codex_core::plugins::PluginCapabilitySummary;
 use codex_core::skills::model::SkillMetadata;
 use codex_file_search::FileMatch;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -400,6 +409,12 @@ pub(crate) struct ChatComposer {
     dismissed_mention_popup_token: Option<String>,
     mention_bindings: HashMap<u64, ComposerMentionBinding>,
     recent_submission_mention_bindings: Vec<MentionBinding>,
+    /// Slash-command draft staged for local recall after application-level dispatch.
+    ///
+    /// This slot is intentionally separate from `ChatComposerHistory` so inline slash commands can
+    /// prepare their argument text without also double-recording the full command invocation.
+    pending_slash_command_history: Option<String>,
+    history_search: Option<HistorySearchSession>,
     collaboration_modes_enabled: bool,
     config: ChatComposerConfig,
     collaboration_mode_indicator: Option<CollaborationModeIndicator>,
@@ -427,6 +442,23 @@ struct ComposerMentionBinding {
     mention: String,
     path: String,
 }
+
+/// Snapshot of the current rich composer draft.
+///
+/// This intentionally keeps enough structure to round-trip temporary command workflows without
+/// flattening elements or attachment state into plain text.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub(super) struct ComposerDraft {
+    text: String,
+    text_elements: Vec<TextElement>,
+    local_image_paths: Vec<PathBuf>,
+    pending_pastes: Vec<(String, String)>,
+    remote_image_urls: Vec<String>,
+    mention_bindings: Vec<MentionBinding>,
+}
+
+mod history_search;
+use self::history_search::HistorySearchSession;
 
 /// Popup state – at most one can be visible at any time.
 enum ActivePopup {
@@ -524,6 +556,8 @@ impl ChatComposer {
             dismissed_mention_popup_token: None,
             mention_bindings: HashMap::new(),
             recent_submission_mention_bindings: Vec::new(),
+            pending_slash_command_history: None,
+            history_search: None,
             collaboration_modes_enabled: false,
             config,
             collaboration_mode_indicator: None,
@@ -742,6 +776,59 @@ impl ChatComposer {
         self.history.set_metadata(log_id, entry_count);
     }
 
+    /// Snapshot the current rich draft so command flows can temporarily replace it and restore it
+    /// later without losing attachments, mention bindings, or pending paste placeholders.
+    pub(super) fn snapshot_draft(&self) -> ComposerDraft {
+        let local_image_paths = self
+            .local_images()
+            .into_iter()
+            .map(|image| image.path)
+            .collect();
+        ComposerDraft {
+            text: self.current_text(),
+            text_elements: self.text_elements(),
+            local_image_paths,
+            pending_pastes: self.pending_pastes(),
+            remote_image_urls: self.remote_image_urls.clone(),
+            mention_bindings: self
+                .mention_bindings
+                .values()
+                .map(|binding| MentionBinding {
+                    mention: binding.mention.clone(),
+                    path: binding.path.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Restore a previously snapshotted draft.
+    ///
+    /// The draft intentionally does not persist an explicit cursor offset; after restoration we use
+    /// the same text-setting paths as ordinary recall so cursor placement stays consistent with the
+    /// current textarea semantics.
+    pub(super) fn restore_draft(&mut self, draft: ComposerDraft) {
+        self.set_remote_image_urls(draft.remote_image_urls);
+        self.set_text_content_with_mention_bindings(
+            draft.text,
+            draft.text_elements,
+            draft.local_image_paths,
+            draft.mention_bindings,
+        );
+        self.set_pending_pastes(draft.pending_pastes);
+    }
+
+    /// Commit the staged slash-command draft to local Up-arrow recall.
+    ///
+    /// Call this after command dispatch. Calling it more than once is harmless because the pending
+    /// slot is consumed on the first call.
+    pub(crate) fn record_pending_slash_command_history(&mut self) {
+        let Some(text) = self.pending_slash_command_history.take() else {
+            return;
+        };
+        self.history
+            .record_local_submission(HistoryEntry::new(text));
+    }
+
     /// Integrate an asynchronous response to an on-demand history lookup.
     ///
     /// If the entry is present and the offset still matches the active history cursor, the
@@ -754,13 +841,23 @@ impl ChatComposer {
         offset: usize,
         entry: Option<String>,
     ) -> bool {
-        let Some(entry) = self.history.on_entry_response(log_id, offset, entry) else {
-            return false;
-        };
-        // Persistent ↑/↓ history is text-only (backwards-compatible and avoids persisting
-        // attachments), but local in-session ↑/↓ history can rehydrate elements and image paths.
-        self.apply_history_entry(entry);
-        true
+        match self
+            .history
+            .on_entry_response(log_id, offset, entry, &self.app_event_tx)
+        {
+            HistoryEntryResponse::Found(entry) => {
+                // Persistent ↑/↓ history is text-only (backwards-compatible and avoids
+                // persisting attachments), but local in-session ↑/↓ history can rehydrate
+                // elements and image paths.
+                self.apply_history_entry(entry);
+                true
+            }
+            HistoryEntryResponse::Search(result) => {
+                self.apply_history_search_result(result);
+                true
+            }
+            HistoryEntryResponse::Ignored => false,
+        }
     }
 
     /// Integrate pasted text into the composer.
@@ -2562,6 +2659,7 @@ impl ChatComposer {
             if self.reject_slash_command_if_unavailable(cmd) {
                 return Some(InputResult::None);
             }
+            self.pending_slash_command_history = Some(self.textarea.text().to_string());
             self.textarea.set_text_clearing_elements("");
             Some(InputResult::Command(cmd))
         } else {
@@ -2585,6 +2683,7 @@ impl ChatComposer {
             if self.reject_slash_command_if_unavailable(cmd) {
                 return Some(InputResult::None);
             }
+            self.pending_slash_command_history = Some(pending_text.clone());
             self.paste_burst.clear_after_explicit_paste();
             self.textarea.set_text_clearing_elements("");
             return Some(InputResult::Command(cmd));
@@ -2621,6 +2720,7 @@ impl ChatComposer {
             Self::slash_command_args_elements(rest, rest_offset, &self.textarea.text_elements());
         let trimmed_rest = rest.trim();
         args_elements = Self::trim_text_elements(rest, trimmed_rest, args_elements);
+        self.pending_slash_command_history = Some(text.clone());
         Some(InputResult::CommandWithArgs(
             cmd,
             trimmed_rest.to_string(),
@@ -3279,6 +3379,7 @@ impl ChatComposer {
             FooterMode::QuitShortcutReminder if self.quit_shortcut_hint_visible() => {
                 FooterMode::QuitShortcutReminder
             }
+            FooterMode::HistorySearch => FooterMode::HistorySearch,
             FooterMode::ComposerEmpty | FooterMode::ComposerHasDraft
                 if self.quit_shortcut_hint_visible() =>
             {
@@ -3753,7 +3854,7 @@ impl ChatComposer {
                 if plugin_backed_connector {
                     continue;
                 }
-                let display_name = connectors::connector_display_label(connector);
+                let display_name = connector_display_label(connector);
                 let description = Some(Self::connector_brief_description(connector));
                 let slug = codex_core::connectors::connector_mention_slug(connector);
                 let search_terms = vec![display_name.clone(), connector.id.clone(), slug.clone()];
@@ -4293,13 +4394,15 @@ impl ChatComposer {
                 let show_shortcuts_hint = match footer_props.mode {
                     FooterMode::ComposerEmpty => !self.is_in_paste_burst(),
                     FooterMode::ComposerHasDraft => false,
-                    FooterMode::QuitShortcutReminder
+                    FooterMode::HistorySearch
+                    | FooterMode::QuitShortcutReminder
                     | FooterMode::ShortcutOverlay
                     | FooterMode::EscHint => false,
                 };
                 let show_queue_hint = match footer_props.mode {
                     FooterMode::ComposerHasDraft => footer_props.is_task_running,
-                    FooterMode::QuitShortcutReminder
+                    FooterMode::HistorySearch
+                    | FooterMode::QuitShortcutReminder
                     | FooterMode::ComposerEmpty
                     | FooterMode::ShortcutOverlay
                     | FooterMode::EscHint => false,
@@ -4411,7 +4514,8 @@ impl ChatComposer {
                                 show_queue_hint,
                             ))
                         }
-                        FooterMode::EscHint
+                        FooterMode::HistorySearch
+                        | FooterMode::EscHint
                         | FooterMode::QuitShortcutReminder
                         | FooterMode::ShortcutOverlay => None,
                     }
@@ -4419,6 +4523,7 @@ impl ChatComposer {
                 let show_right = if matches!(
                     footer_props.mode,
                     FooterMode::EscHint
+                        | FooterMode::HistorySearch
                         | FooterMode::QuitShortcutReminder
                         | FooterMode::ShortcutOverlay
                 ) {
@@ -4515,7 +4620,7 @@ impl ChatComposer {
         let mut state = self.textarea_state.borrow_mut();
         if let Some(mask_char) = mask_char {
             self.textarea
-                .render_ref_masked(textarea_rect, buf, &mut state, mask_char);
+                .render_ref_masked(textarea_rect, buf, &mut state, mask_char, style);
         } else {
             StatefulWidgetRef::render_ref(&(&self.textarea), textarea_rect, buf, &mut state);
         }
@@ -5567,7 +5672,10 @@ mod tests {
             }),
             dependencies: None,
             policy: None,
-            path_to_skills_md: PathBuf::from("/tmp/repo/google-calendar/SKILL.md"),
+            path_to_skills_md: AbsolutePathBuf::from_absolute_path(
+                "/tmp/repo/google-calendar/SKILL.md",
+            )
+            .expect("absolute skills path"),
             scope: codex_protocol::protocol::SkillScope::Repo,
         }]));
         composer.set_plugin_mentions(Some(vec![PluginCapabilitySummary {
@@ -5650,7 +5758,10 @@ mod tests {
                 }),
                 dependencies: None,
                 policy: None,
-                path_to_skills_md: PathBuf::from("/tmp/repo/google-calendar/SKILL.md"),
+                path_to_skills_md: AbsolutePathBuf::from_absolute_path(
+                    "/tmp/repo/google-calendar/SKILL.md",
+                )
+                .expect("absolute skills path"),
                 scope: codex_protocol::protocol::SkillScope::Repo,
             }]));
             composer.set_plugin_mentions(Some(vec![PluginCapabilitySummary {

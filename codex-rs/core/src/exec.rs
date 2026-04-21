@@ -40,6 +40,7 @@ use codex_network_proxy::NetworkProxy;
 use codex_protocol::permissions::FileSystemSandboxKind;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
 use codex_utils_pty::process_group::kill_child_process_group;
 
@@ -123,6 +124,8 @@ pub enum ExecExpiration {
     DefaultTimeout,
     Cancellation(CancellationToken),
 }
+
+pub type WindowsSandboxFilesystemOverrides = ();
 
 impl From<Option<u64>> for ExecExpiration {
     fn from(timeout_ms: Option<u64>) -> Self {
@@ -284,6 +287,7 @@ pub fn build_exec_request(
         justification,
         arg0: _,
     } = params;
+    let cwd = AbsolutePathBuf::from_absolute_path_checked(cwd).expect("exec cwd must be absolute");
     if let Some(network) = network.as_ref() {
         network.apply_to_env(&mut env);
     }
@@ -297,7 +301,7 @@ pub fn build_exec_request(
     let spec = CommandSpec {
         program: program.clone(),
         args: args.to_vec(),
-        cwd,
+        cwd: cwd.to_path_buf(),
         env,
         expiration,
         capture_policy,
@@ -339,6 +343,7 @@ pub(crate) async fn execute_exec_request(
         command,
         cwd,
         env,
+        exec_server_env_config: _exec_server_env_config,
         network,
         expiration,
         capture_policy,
@@ -350,6 +355,7 @@ pub(crate) async fn execute_exec_request(
         sandbox_policy: _sandbox_policy_from_env,
         file_system_sandbox_policy,
         network_sandbox_policy,
+        windows_sandbox_filesystem_overrides: _windows_sandbox_filesystem_overrides,
         justification,
         arg0,
     } = exec_request;
@@ -357,7 +363,7 @@ pub(crate) async fn execute_exec_request(
 
     let params = ExecParams {
         command,
-        cwd,
+        cwd: cwd.to_path_buf(),
         expiration,
         capture_policy,
         env,
@@ -874,6 +880,7 @@ async fn exec(
         ))
     })?;
     let arg0_ref = arg0.as_deref();
+    let cwd = AbsolutePathBuf::from_absolute_path_checked(cwd).expect("exec cwd must be absolute");
     let spawn_request = SpawnChildRequest {
         program: PathBuf::from(program),
         args: args.into(),

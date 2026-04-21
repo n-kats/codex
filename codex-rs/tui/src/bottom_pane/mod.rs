@@ -110,7 +110,7 @@ pub(crate) fn feedback_upload_consent_params(
     app_event_tx: AppEventSender,
     category: crate::app_event::FeedbackCategory,
     rollout_path: Option<std::path::PathBuf>,
-    feedback_diagnostics: &codex_feedback::feedback_diagnostics::FeedbackDiagnostics,
+    feedback_diagnostics: &codex_feedback::FeedbackDiagnostics,
 ) -> list_selection_view::SelectionViewParams {
     feedback_view::feedback_upload_consent_params(
         app_event_tx,
@@ -1347,10 +1347,10 @@ mod tests {
     use crate::app_event::AppEvent;
     use crate::status_indicator_widget::STATUS_DETAILS_DEFAULT_MAX_LINES;
     use crate::status_indicator_widget::StatusDetailsCapitalization;
-    use crate::test_support::PathBufExt;
-    use crate::test_support::test_path_buf;
     use codex_protocol::protocol::Op;
     use codex_protocol::protocol::SkillScope;
+    use codex_utils_absolute_path::test_support::PathBufExt;
+    use codex_utils_absolute_path::test_support::test_path_buf;
     use crossterm::event::KeyCode;
     use crossterm::event::KeyEvent;
     use crossterm::event::KeyEventKind;

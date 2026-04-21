@@ -363,7 +363,7 @@ pub async fn run_main_with_transport(
 ) -> IoResult<()> {
     let environment_manager = Arc::new(EnvironmentManager::from_env_with_runtime_paths(Some(
         ExecServerRuntimePaths::from_optional_paths(
-            arg0_paths.codex_self_exe.clone(),
+            arg0_paths.main_execve_wrapper_exe.clone(),
             arg0_paths.codex_linux_sandbox_exe.clone(),
         )?,
     )));
@@ -405,8 +405,11 @@ pub async fn run_main_with_transport(
                 }
             }
 
-            let auth_manager =
-                AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false);
+            let auth_manager = Arc::new(AuthManager::new(
+                config.codex_home.clone(),
+                /*enable_codex_api_key_env*/ false,
+                config.cli_auth_credentials_store_mode,
+            ));
             cloud_requirements_loader(
                 auth_manager,
                 config.chatgpt_base_url,
@@ -465,9 +468,7 @@ pub async fn run_main_with_transport(
             range: None,
         });
     }
-    if let Some(warning) =
-        codex_core::config::system_bwrap_warning(config.permissions.sandbox_policy.get())
-    {
+    if let Some(warning) = codex_core::config::system_bwrap_warning() {
         config_warnings.push(ConfigWarningNotification {
             summary: warning,
             details: None,
@@ -569,8 +570,11 @@ pub async fn run_main_with_transport(
         AppServerTransport::Off => {}
     }
 
-    let auth_manager =
-        AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false);
+    let auth_manager = Arc::new(AuthManager::new(
+        config.codex_home.clone(),
+        /*enable_codex_api_key_env*/ false,
+        config.cli_auth_credentials_store_mode,
+    ));
 
     let remote_control_enabled = config.features.enabled(Feature::RemoteControl);
     if transport_accept_handles.is_empty() && !remote_control_enabled {
@@ -650,8 +654,11 @@ pub async fn run_main_with_transport(
     let processor_handle = tokio::spawn({
         let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(outgoing_tx));
         let outbound_control_tx = outbound_control_tx;
-        let auth_manager =
-            AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false);
+        let auth_manager = Arc::new(AuthManager::new(
+            config.codex_home.clone(),
+            /*enable_codex_api_key_env*/ false,
+            config.cli_auth_credentials_store_mode,
+        ));
         let cli_overrides: Vec<(String, TomlValue)> = cli_kv_overrides.clone();
         let loader_overrides = loader_overrides_for_config_api;
         let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {

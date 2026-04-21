@@ -24,17 +24,18 @@ use crate::protocol::v2::PatchApplyStatus;
 use crate::protocol::v2::PatchChangeKind;
 use crate::protocol::v2::ThreadItem;
 use codex_protocol::ThreadId;
+use codex_protocol::approvals::GuardianAssessmentAction;
 use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
 use codex_protocol::protocol::ExecApprovalRequestEvent;
 use codex_protocol::protocol::ExecCommandBeginEvent;
 use codex_protocol::protocol::ExecCommandEndEvent;
 use codex_protocol::protocol::FileChange;
-use codex_protocol::protocol::GuardianAssessmentAction;
 use codex_protocol::protocol::GuardianAssessmentEvent;
 use codex_protocol::protocol::PatchApplyBeginEvent;
 use codex_protocol::protocol::PatchApplyEndEvent;
 use codex_shell_command::parse_command::parse_command;
 use codex_shell_command::parse_command::shlex_join;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -67,19 +68,22 @@ pub fn build_file_change_end_item(payload: &PatchApplyEndEvent) -> ThreadItem {
 pub fn build_command_execution_approval_request_item(
     payload: &ExecApprovalRequestEvent,
 ) -> ThreadItem {
+    let cwd = AbsolutePathBuf::from_absolute_path(&payload.cwd)
+        .expect("exec approval cwd should be absolute");
+    let command_actions = payload
+        .parsed_cmd
+        .iter()
+        .cloned()
+        .map(|parsed| CommandAction::from_core_with_cwd(parsed, &cwd))
+        .collect();
     ThreadItem::CommandExecution {
         id: payload.call_id.clone(),
         command: shlex_join(&payload.command),
-        cwd: payload.cwd.clone(),
+        cwd: cwd.clone(),
         process_id: None,
         source: CommandExecutionSource::Agent,
         status: CommandExecutionStatus::InProgress,
-        command_actions: payload
-            .parsed_cmd
-            .iter()
-            .cloned()
-            .map(|parsed| CommandAction::from_core_with_cwd(parsed, &payload.cwd))
-            .collect(),
+        command_actions,
         aggregated_output: None,
         exit_code: None,
         duration_ms: None,
@@ -87,19 +91,22 @@ pub fn build_command_execution_approval_request_item(
 }
 
 pub fn build_command_execution_begin_item(payload: &ExecCommandBeginEvent) -> ThreadItem {
+    let cwd = AbsolutePathBuf::from_absolute_path(&payload.cwd)
+        .expect("exec command cwd should be absolute");
+    let command_actions = payload
+        .parsed_cmd
+        .iter()
+        .cloned()
+        .map(|parsed| CommandAction::from_core_with_cwd(parsed, &cwd))
+        .collect();
     ThreadItem::CommandExecution {
         id: payload.call_id.clone(),
         command: shlex_join(&payload.command),
-        cwd: payload.cwd.clone(),
+        cwd: cwd.clone(),
         process_id: payload.process_id.clone(),
         source: payload.source.into(),
         status: CommandExecutionStatus::InProgress,
-        command_actions: payload
-            .parsed_cmd
-            .iter()
-            .cloned()
-            .map(|parsed| CommandAction::from_core_with_cwd(parsed, &payload.cwd))
-            .collect(),
+        command_actions,
         aggregated_output: None,
         exit_code: None,
         duration_ms: None,
@@ -107,6 +114,14 @@ pub fn build_command_execution_begin_item(payload: &ExecCommandBeginEvent) -> Th
 }
 
 pub fn build_command_execution_end_item(payload: &ExecCommandEndEvent) -> ThreadItem {
+    let cwd = AbsolutePathBuf::from_absolute_path(&payload.cwd)
+        .expect("exec command cwd should be absolute");
+    let command_actions = payload
+        .parsed_cmd
+        .iter()
+        .cloned()
+        .map(|parsed| CommandAction::from_core_with_cwd(parsed, &cwd))
+        .collect();
     let aggregated_output = if payload.aggregated_output.is_empty() {
         None
     } else {
@@ -117,16 +132,11 @@ pub fn build_command_execution_end_item(payload: &ExecCommandEndEvent) -> Thread
     ThreadItem::CommandExecution {
         id: payload.call_id.clone(),
         command: shlex_join(&payload.command),
-        cwd: payload.cwd.clone(),
+        cwd: cwd.clone(),
         process_id: payload.process_id.clone(),
         source: payload.source.into(),
         status: (&payload.status).into(),
-        command_actions: payload
-            .parsed_cmd
-            .iter()
-            .cloned()
-            .map(|parsed| CommandAction::from_core_with_cwd(parsed, &payload.cwd))
-            .collect(),
+        command_actions,
         aggregated_output,
         exit_code: Some(payload.exit_code),
         duration_ms: Some(duration_ms),

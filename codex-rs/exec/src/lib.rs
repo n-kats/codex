@@ -14,6 +14,7 @@ pub use cli::Cli;
 pub use cli::Command;
 pub use cli::ReviewArgs;
 use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
+use codex_app_server_client::EnvironmentManager;
 use codex_app_server_client::InProcessAppServerClient;
 use codex_app_server_client::InProcessClientStartArgs;
 use codex_app_server_client::InProcessServerEvent;
@@ -81,6 +82,7 @@ use std::collections::HashMap;
 use std::io::IsTerminal;
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::Arc;
 use supports_color::Stream;
 use tokio::sync::mpsc;
 use tracing::Instrument;
@@ -439,6 +441,8 @@ pub async fn run_main_with_agents_md(
         loader_overrides: run_loader_overrides.clone(),
         cloud_requirements: run_cloud_requirements.clone(),
         feedback: CodexFeedback::new(),
+        log_db: None,
+        environment_manager: Arc::new(EnvironmentManager::from_env()),
         config_warnings,
         session_source: SessionSource::Exec,
         enable_codex_api_key_env: true,
@@ -733,6 +737,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                         personality: None,
                         output_schema,
                         collaboration_mode: None,
+                        responsesapi_client_metadata: None,
                     },
                 },
                 "turn/start",
@@ -975,7 +980,7 @@ fn session_configured_from_thread_start_response(
         response.approval_policy.to_core(),
         response.approvals_reviewer.to_core(),
         response.sandbox.to_core(),
-        response.cwd.clone(),
+        response.cwd.clone().to_path_buf(),
         response.reasoning_effort,
     )
 }
@@ -993,7 +998,7 @@ fn session_configured_from_thread_resume_response(
         response.approval_policy.to_core(),
         response.approvals_reviewer.to_core(),
         response.sandbox.to_core(),
-        response.cwd.clone(),
+        response.cwd.clone().to_path_buf(),
         response.reasoning_effort,
     )
 }
@@ -1320,6 +1325,7 @@ fn local_external_chatgpt_tokens(
         AccountPlanType::Go => "go".to_string(),
         AccountPlanType::Plus => "plus".to_string(),
         AccountPlanType::Pro => "pro".to_string(),
+        AccountPlanType::ProLite => "prolite".to_string(),
         AccountPlanType::Team => "team".to_string(),
         AccountPlanType::Business => "business".to_string(),
         AccountPlanType::Enterprise => "enterprise".to_string(),
@@ -1371,7 +1377,7 @@ async fn resolve_resume_path(
             Ok(path)
         } else {
             let path = find_thread_path_by_name_str(&config.codex_home, id_str).await?;
-            Ok(path)
+            Ok(path.map(|(path, _)| path))
         }
     } else {
         Ok(None)
@@ -1800,6 +1806,7 @@ mod tests {
         let response = ThreadStartResponse {
             thread: codex_app_server_protocol::Thread {
                 id: "67e55044-10b1-426f-9247-bb680e5fe0c8".to_string(),
+                forked_from_id: None,
                 preview: String::new(),
                 ephemeral: false,
                 model_provider: "openai".to_string(),
@@ -1807,7 +1814,7 @@ mod tests {
                 updated_at: 0,
                 status: codex_app_server_protocol::ThreadStatus::Idle,
                 path: Some(PathBuf::from("/tmp/rollout.jsonl")),
-                cwd: PathBuf::from("/tmp"),
+                cwd: AbsolutePathBuf::from_absolute_path("/tmp").expect("absolute cwd"),
                 cli_version: "0.0.0".to_string(),
                 source: codex_app_server_protocol::SessionSource::Cli,
                 agent_nickname: None,
@@ -1819,7 +1826,8 @@ mod tests {
             model: "gpt-5.4".to_string(),
             model_provider: "openai".to_string(),
             service_tier: None,
-            cwd: PathBuf::from("/tmp"),
+            cwd: AbsolutePathBuf::from_absolute_path("/tmp").expect("absolute cwd"),
+            instruction_sources: vec![],
             approval_policy: codex_app_server_protocol::AskForApproval::OnRequest,
             approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::GuardianSubagent,
             sandbox: codex_app_server_protocol::SandboxPolicy::WorkspaceWrite {

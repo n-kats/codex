@@ -24,6 +24,7 @@ use codex_protocol::models::function_call_output_content_items_to_text;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::PathExt;
 use core_test_support::TempDirExt;
 use core_test_support::codex_linux_sandbox_exe_or_skip;
@@ -145,7 +146,8 @@ async fn guardian_allows_shell_additional_permissions_requests_past_policy_valid
             turn: Arc::clone(&turn_context),
             tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
             call_id: "test-call".to_string(),
-            tool_name: codex_tools::ToolName::plain("shell"),
+            tool_name: "shell".to_string(),
+            tool_namespace: None,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
                     "command": params.command.clone(),
@@ -212,7 +214,8 @@ async fn guardian_allows_unified_exec_additional_permissions_requests_past_polic
             turn: Arc::clone(&turn_context),
             tracker: Arc::clone(&tracker),
             call_id: "exec-call".to_string(),
-            tool_name: codex_tools::ToolName::plain("exec_command"),
+            tool_name: "exec_command".to_string(),
+            tool_namespace: None,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
                     "cmd": "echo hi",
@@ -311,6 +314,7 @@ async fn shell_handler_allows_sticky_turn_permissions_without_inline_request_per
             network: Some(NetworkPermissions {
                 enabled: Some(true),
             }),
+            macos: None,
             ..Default::default()
         });
     }
@@ -325,7 +329,8 @@ async fn shell_handler_allows_sticky_turn_permissions_without_inline_request_per
             turn: Arc::clone(&turn_context),
             tracker: Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new())),
             call_id: "sticky-turn-grant".to_string(),
-            tool_name: codex_tools::ToolName::plain("shell"),
+            tool_name: "shell".to_string(),
+            tool_namespace: None,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
                     "command": [
@@ -426,7 +431,8 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
     ));
     let plugins_manager = Arc::new(PluginsManager::new(config.codex_home.to_path_buf()));
     let skills_manager = Arc::new(SkillsManager::new(
-        config.codex_home.clone(),
+        AbsolutePathBuf::from_absolute_path(&config.codex_home)
+            .expect("codex_home must be absolute"),
         /*bundled_skills_enabled*/ true,
     ));
     let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
@@ -453,7 +459,6 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         inherited_exec_policy: Some(Arc::new(parent_exec_policy)),
         user_shell_override: None,
         parent_trace: None,
-        analytics_events_client: None,
     })
     .await
     .expect("spawn guardian subagent");

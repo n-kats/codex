@@ -5,11 +5,14 @@
 //!   2. User-defined entries inside `~/.codex/config.toml` under the `model_providers`
 //!      key. These override or extend the defaults at runtime.
 
-use crate::auth::AuthMode;
-use crate::error::EnvVarError;
 use codex_api::Provider as ApiProvider;
-use codex_api::provider::RetryConfig as ApiRetryConfig;
+use codex_api::RetryConfig as ApiRetryConfig;
+use codex_api::is_azure_responses_provider;
+use codex_app_server_protocol::AuthMode;
 use codex_protocol::config_types::ModelProviderAuthInfo;
+use codex_protocol::error::CodexErr;
+use codex_protocol::error::EnvVarError;
+use codex_protocol::error::Result as CodexResult;
 use http::HeaderMap;
 use http::header::HeaderName;
 use http::header::HeaderValue;
@@ -32,8 +35,8 @@ const MAX_REQUEST_MAX_RETRIES: u64 = 100;
 const OPENAI_PROVIDER_NAME: &str = "OpenAI";
 pub const OPENAI_PROVIDER_ID: &str = "openai";
 const CHAT_WIRE_API_REMOVED_ERROR: &str = "`wire_api = \"chat\"` is no longer supported.\nHow to fix: set `wire_api = \"responses\"` in your provider config.\nMore info: https://github.com/openai/codex/discussions/7782";
-pub(crate) const LEGACY_OLLAMA_CHAT_PROVIDER_ID: &str = "ollama-chat";
-pub(crate) const OLLAMA_CHAT_PROVIDER_REMOVED_ERROR: &str = "`ollama-chat` is no longer supported.\nHow to fix: replace `ollama-chat` with `ollama` in `model_provider`, `oss_provider`, or `--local-provider`.\nMore info: https://github.com/openai/codex/discussions/7782";
+pub const LEGACY_OLLAMA_CHAT_PROVIDER_ID: &str = "ollama-chat";
+pub const OLLAMA_CHAT_PROVIDER_REMOVED_ERROR: &str = "`ollama-chat` is no longer supported.\nHow to fix: replace `ollama-chat` with `ollama` in `model_provider`, `oss_provider`, or `--local-provider`.\nMore info: https://github.com/openai/codex/discussions/7782";
 
 /// Wire protocol that the provider speaks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, JsonSchema)]
@@ -54,7 +57,7 @@ impl fmt::Display for WireApi {
 }
 
 impl<'de> Deserialize<'de> for WireApi {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
@@ -134,8 +137,7 @@ pub struct ModelProviderInfo {
 }
 
 impl ModelProviderInfo {
-    #[cfg(test)]
-    pub(crate) fn validate(&self) -> std::result::Result<(), String> {
+    pub fn validate(&self) -> std::result::Result<(), String> {
         let Some(auth) = self.auth.as_ref() else {
             return Ok(());
         };
@@ -165,7 +167,7 @@ impl ModelProviderInfo {
         }
     }
 
-    fn build_header_map(&self) -> crate::error::Result<HeaderMap> {
+    fn build_header_map(&self) -> CodexResult<HeaderMap> {
         let capacity = self.http_headers.as_ref().map_or(0, HashMap::len)
             + self.env_http_headers.as_ref().map_or(0, HashMap::len);
         let mut headers = HeaderMap::with_capacity(capacity);
@@ -192,10 +194,7 @@ impl ModelProviderInfo {
         Ok(headers)
     }
 
-    pub(crate) fn to_api_provider(
-        &self,
-        auth_mode: Option<AuthMode>,
-    ) -> crate::error::Result<ApiProvider> {
+    pub fn to_api_provider(&self, auth_mode: Option<AuthMode>) -> CodexResult<ApiProvider> {
         let default_base_url = if matches!(auth_mode, Some(AuthMode::Chatgpt)) {
             "https://chatgpt.com/backend-api/codex"
         } else {
@@ -228,14 +227,14 @@ impl ModelProviderInfo {
     /// If `env_key` is Some, returns the API key for this provider if present
     /// (and non-empty) in the environment. If `env_key` is required but
     /// cannot be found, returns an error.
-    pub fn api_key(&self) -> crate::error::Result<Option<String>> {
+    pub fn api_key(&self) -> CodexResult<Option<String>> {
         match &self.env_key {
             Some(env_key) => {
                 let api_key = std::env::var(env_key)
                     .ok()
                     .filter(|v| !v.trim().is_empty())
                     .ok_or_else(|| {
-                        crate::error::CodexErr::EnvVar(EnvVarError {
+                        CodexErr::EnvVar(EnvVarError {
                             var: env_key.clone(),
                             instructions: self.env_key_instructions.clone(),
                         })
@@ -314,7 +313,11 @@ impl ModelProviderInfo {
         self.name == OPENAI_PROVIDER_NAME
     }
 
-    pub(crate) fn has_command_auth(&self) -> bool {
+    pub fn supports_remote_compaction(&self) -> bool {
+        self.is_openai() || is_azure_responses_provider(&self.name, self.base_url.as_deref())
+    }
+
+    pub fn has_command_auth(&self) -> bool {
         self.auth.is_some()
     }
 }

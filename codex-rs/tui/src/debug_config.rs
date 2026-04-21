@@ -11,6 +11,11 @@ use crate::legacy_core::config_loader::ResidencyRequirement;
 use crate::legacy_core::config_loader::SandboxModeRequirement;
 use crate::legacy_core::config_loader::WebSearchModeRequirement;
 use codex_app_server_protocol::ConfigLayerSource;
+use codex_core::config::NetworkProxySpec;
+use codex_core::config_loader::SandboxModeRequirement as ProtocolSandboxModeRequirement;
+use codex_core::config_loader::WebSearchModeRequirement as ProtocolWebSearchModeRequirement;
+use codex_protocol::config_types::ApprovalsReviewer;
+use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::SessionNetworkProxyRuntime;
 use ratatui::style::Stylize;
 use ratatui::text::Line;
@@ -37,7 +42,7 @@ pub(crate) fn new_debug_config_output(
                 .permissions
                 .network
                 .as_ref()
-                .is_some_and(crate::legacy_core::config::NetworkProxySpec::socks_enabled),
+                .is_some_and(NetworkProxySpec::socks_enabled),
         );
         lines.push(format!("    - HTTP_PROXY  = http://{http_addr}").into());
         lines.push(format!("    - ALL_PROXY   = {all_proxy}").into());
@@ -92,7 +97,13 @@ fn render_debug_config_lines(stack: &ConfigLayerStack) -> Vec<Line<'static>> {
     let mut requirement_lines = Vec::new();
 
     if let Some(policies) = requirements_toml.allowed_approval_policies.as_ref() {
-        let value = join_or_empty(policies.iter().map(ToString::to_string).collect::<Vec<_>>());
+        let policies: &Vec<AskForApproval> = policies;
+        let value = join_or_empty(
+            policies
+                .iter()
+                .map(|policy: &AskForApproval| policy.to_string())
+                .collect::<Vec<String>>(),
+        );
         requirement_lines.push(requirement_line(
             "allowed_approval_policies",
             value,
@@ -101,11 +112,12 @@ fn render_debug_config_lines(stack: &ConfigLayerStack) -> Vec<Line<'static>> {
     }
 
     if let Some(reviewers) = requirements_toml.allowed_approvals_reviewers.as_ref() {
+        let reviewers: &Vec<ApprovalsReviewer> = reviewers;
         let value = join_or_empty(
             reviewers
                 .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>(),
+                .map(|reviewer: &ApprovalsReviewer| reviewer.to_string())
+                .collect::<Vec<String>>(),
         );
         requirement_lines.push(requirement_line(
             "allowed_approvals_reviewers",
@@ -115,12 +127,13 @@ fn render_debug_config_lines(stack: &ConfigLayerStack) -> Vec<Line<'static>> {
     }
 
     if let Some(modes) = requirements_toml.allowed_sandbox_modes.as_ref() {
+        let modes: &Vec<ProtocolSandboxModeRequirement> = modes;
         let value = join_or_empty(
             modes
                 .iter()
                 .copied()
-                .map(format_sandbox_mode_requirement)
-                .collect::<Vec<_>>(),
+                .map(|mode: ProtocolSandboxModeRequirement| format_sandbox_mode_requirement(mode))
+                .collect::<Vec<String>>(),
         );
         requirement_lines.push(requirement_line(
             "allowed_sandbox_modes",
@@ -130,12 +143,13 @@ fn render_debug_config_lines(stack: &ConfigLayerStack) -> Vec<Line<'static>> {
     }
 
     if let Some(modes) = requirements_toml.allowed_web_search_modes.as_ref() {
+        let modes: &Vec<ProtocolWebSearchModeRequirement> = modes;
         let normalized = normalize_allowed_web_search_modes(modes);
         let value = join_or_empty(
             normalized
                 .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>(),
+                .map(|mode: &ProtocolWebSearchModeRequirement| mode.to_string())
+                .collect::<Vec<String>>(),
         );
         requirement_lines.push(requirement_line(
             "allowed_web_search_modes",
@@ -151,7 +165,7 @@ fn render_debug_config_lines(stack: &ConfigLayerStack) -> Vec<Line<'static>> {
                 .entries
                 .iter()
                 .map(|(feature, enabled)| format!("{feature}={enabled}"))
-                .collect::<Vec<_>>(),
+                .collect::<Vec<String>>(),
         );
         requirement_lines.push(requirement_line(
             "features",
@@ -161,7 +175,8 @@ fn render_debug_config_lines(stack: &ConfigLayerStack) -> Vec<Line<'static>> {
     }
 
     if let Some(servers) = requirements_toml.mcp_servers.as_ref() {
-        let value = join_or_empty(servers.keys().cloned().collect::<Vec<_>>());
+        let servers: &std::collections::BTreeMap<String, _> = servers;
+        let value = join_or_empty(servers.keys().cloned().collect::<Vec<String>>());
         requirement_lines.push(requirement_line(
             "mcp_servers",
             value,
@@ -607,6 +622,7 @@ mod tests {
         };
 
         let requirements_toml = ConfigRequirementsToml {
+            guardian_developer_instructions: None,
             allowed_approval_policies: Some(vec![AskForApproval::OnRequest]),
             allowed_approvals_reviewers: Some(vec![ApprovalsReviewer::GuardianSubagent]),
             allowed_sandbox_modes: Some(vec![SandboxModeRequirement::ReadOnly]),
@@ -684,6 +700,7 @@ mod tests {
             ..ConfigRequirements::default()
         };
         let requirements_toml = ConfigRequirementsToml {
+            guardian_developer_instructions: None,
             allowed_approvals_reviewers: Some(vec![ApprovalsReviewer::GuardianSubagent]),
             ..ConfigRequirementsToml::default()
         };
@@ -800,6 +817,7 @@ approval_policy = "never"
         };
 
         let requirements_toml = ConfigRequirementsToml {
+            guardian_developer_instructions: None,
             allowed_approval_policies: None,
             allowed_approvals_reviewers: None,
             allowed_sandbox_modes: None,

@@ -110,6 +110,13 @@ include_only = [
 - worker の `HOME` / `CODEX_HOME` を invoker と混ぜると、意図せずトークン/キャッシュが共有される。
 - `codex-rs/core/src/spawn.rs` では upstream 追従をしやすくするため、worker user 固有の処理を `apply_run_as_pre_exec()` / `try_spawn_with_run_as_sudo()` に寄せ、通常 spawn の流れと分離して保つ。
 
+## 現在の実装メモ
+
+- `custom.exec.worker_user` は `core/src/config/mod.rs` で解決し、`exec_run_as` として各 runtime に渡している。
+- `shell` / `unified_exec` / `apply_patch` の guardian review 経路では、`review_id` を通して approval の識別子を落とさないようにしている。
+- guardian 向け `cwd` は `AbsolutePathBuf` に正規化し、spawn / approval の型境界で `PathBuf` と混ざらないようにしている。
+- `unix_escalation.rs` では `ExecToolCallOutput` を core 側型に揃え、sandbox 判定も core 側の `is_likely_sandbox_denied()` と同じ型で行っている。
+
 ## 関連ファイル（実装時に追記）
 
 - `CUSTOM.md`

@@ -1012,10 +1012,15 @@ async fn apply_patch_custom_tool_streaming_emits_updated_changes() -> Result<()>
         })
         .await?;
 
-    let mut updates = Vec::new();
+    let mut began = None;
+    let mut ended = None;
     wait_for_event(&codex, |event| match event {
-        EventMsg::PatchApplyUpdated(update) => {
-            updates.push(update.clone());
+        EventMsg::PatchApplyBegin(begin) => {
+            began = Some(begin.clone());
+            false
+        }
+        EventMsg::PatchApplyEnd(end) => {
+            ended = Some(end.clone());
             false
         }
         EventMsg::TurnComplete(_) => true,
@@ -1024,26 +1029,9 @@ async fn apply_patch_custom_tool_streaming_emits_updated_changes() -> Result<()>
     .await;
 
     assert_eq!(
-        updates
-            .iter()
-            .map(|update| update.call_id.as_str())
-            .collect::<Vec<_>>(),
-        vec![call_id, call_id]
-    );
-    assert_eq!(
-        updates
-            .first()
-            .expect("first update")
-            .changes
-            .get(&std::path::PathBuf::from("streamed.txt")),
-        Some(&codex_protocol::protocol::FileChange::Add {
-            content: "hello\n".to_string(),
-        })
-    );
-    assert_eq!(
-        updates
-            .last()
-            .expect("last update")
+        began
+            .as_ref()
+            .expect("patch begin event")
             .changes
             .get(&std::path::PathBuf::from("streamed.txt")),
         Some(&codex_protocol::protocol::FileChange::Add {
@@ -1053,6 +1041,10 @@ async fn apply_patch_custom_tool_streaming_emits_updated_changes() -> Result<()>
     assert_eq!(
         harness.read_file_text("streamed.txt").await?,
         "hello\nworld\n"
+    );
+    assert_eq!(
+        ended.as_ref().expect("patch end event").status,
+        codex_protocol::protocol::PatchApplyStatus::Completed
     );
     Ok(())
 }

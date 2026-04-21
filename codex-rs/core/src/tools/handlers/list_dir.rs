@@ -47,6 +47,7 @@ struct ListDirArgs {
     depth: usize,
 }
 
+#[async_trait::async_trait]
 impl ToolHandler for ListDirHandler {
     type Output = FunctionToolOutput;
 

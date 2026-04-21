@@ -47,6 +47,7 @@ impl ReviewTask {
     }
 }
 
+#[async_trait::async_trait]
 impl SessionTask for ReviewTask {
     fn kind(&self) -> TaskKind {
         TaskKind::Review

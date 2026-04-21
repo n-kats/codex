@@ -4,7 +4,7 @@ use crate::event_mapping::is_contextual_user_message_content;
 use crate::truncate::TruncationPolicy;
 use crate::truncate::truncate_text;
 use chrono::Utc;
-use codex_git_utils::resolve_root_git_project_for_trust;
+use codex_git_utils::get_git_repo_root;
 use codex_protocol::models::ResponseItem;
 use codex_state::SortKey;
 use codex_state::ThreadMetadata;
@@ -47,6 +47,13 @@ const NOISY_DIR_NAMES: &[&str] = &[
     "out",
     "target",
 ];
+
+fn resolve_git_root_path(cwd: &Path) -> Option<PathBuf> {
+    // Keep realtime startup context construction sync-friendly: this helper is
+    // called from async code, but the lookup itself only needs the nearest
+    // .git-based repo root for display/grouping.
+    get_git_repo_root(cwd)
+}
 
 pub(crate) async fn build_realtime_startup_context(
     sess: &Session,
@@ -144,13 +151,11 @@ async fn load_recent_threads(sess: &Session) -> Vec<ThreadMetadata> {
 fn build_recent_work_section(cwd: &Path, recent_threads: &[ThreadMetadata]) -> Option<String> {
     let mut groups: HashMap<PathBuf, Vec<&ThreadMetadata>> = HashMap::new();
     for entry in recent_threads {
-        let group =
-            resolve_root_git_project_for_trust(&entry.cwd).unwrap_or_else(|| entry.cwd.clone());
+        let group = resolve_git_root_path(&entry.cwd).unwrap_or_else(|| entry.cwd.clone());
         groups.entry(group).or_default().push(entry);
     }
 
-    let current_group =
-        resolve_root_git_project_for_trust(cwd).unwrap_or_else(|| cwd.to_path_buf());
+    let current_group = resolve_git_root_path(cwd).unwrap_or_else(|| cwd.to_path_buf());
     let mut groups = groups.into_iter().collect::<Vec<_>>();
     groups.sort_by(|(left_group, left_entries), (right_group, right_entries)| {
         let left_latest = left_entries
@@ -274,7 +279,7 @@ fn build_workspace_section_with_user_root(
     cwd: &Path,
     user_root: Option<PathBuf>,
 ) -> Option<String> {
-    let git_root = resolve_root_git_project_for_trust(cwd);
+    let git_root = resolve_git_root_path(cwd);
     let cwd_tree = render_tree(cwd);
     let git_root_tree = git_root
         .as_ref()
@@ -415,7 +420,7 @@ fn format_thread_group(
     entries: Vec<&ThreadMetadata>,
 ) -> Option<String> {
     let latest = entries.first()?;
-    let group_label = if resolve_root_git_project_for_trust(latest.cwd.as_path()).is_some() {
+    let group_label = if resolve_git_root_path(latest.cwd.as_path()).is_some() {
         format!("### Git repo: {}", group.display())
     } else {
         format!("### Directory: {}", group.display())

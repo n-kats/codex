@@ -144,6 +144,7 @@ fn transform_additional_permissions_enable_network_for_external_sandbox() {
                         read: Some(vec![path]),
                         write: Some(Vec::new()),
                     }),
+                    macos: None,
                     ..Default::default()
                 }),
                 justification: None,
@@ -187,8 +188,8 @@ fn transform_additional_permissions_preserves_denied_entries() {
         canonicalize(temp_dir.path()).expect("canonicalize temp dir"),
     )
     .expect("absolute temp dir");
-    let allowed_path = workspace_root.join("allowed").expect("allowed path");
-    let denied_path = workspace_root.join("denied").expect("denied path");
+    let allowed_path = workspace_root.join("allowed");
+    let denied_path = workspace_root.join("denied");
     let exec_request = manager
         .transform(super::SandboxTransformRequest {
             spec: super::CommandSpec {
@@ -205,6 +206,7 @@ fn transform_additional_permissions_preserves_denied_entries() {
                         read: None,
                         write: Some(vec![allowed_path.clone()]),
                     }),
+                    macos: None,
                     ..Default::default()
                 }),
                 justification: None,

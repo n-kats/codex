@@ -139,12 +139,12 @@ fn resolve_executable_for_escalation(
 
     // If the program contains a path separator, execve treats it as a path (relative to CWD).
     if file.contains(std::path::MAIN_SEPARATOR) || file.contains('/') {
-        let absolute = AbsolutePathBuf::resolve_path_against_base(candidate, workdir.as_path())?;
+        let absolute = AbsolutePathBuf::resolve_path_against_base(candidate, workdir.as_path());
         return Ok(absolute.as_path().to_path_buf());
     }
 
     let Some(path) = env.get("PATH") else {
-        let absolute = AbsolutePathBuf::resolve_path_against_base(candidate, workdir.as_path())?;
+        let absolute = AbsolutePathBuf::resolve_path_against_base(candidate, workdir.as_path());
         return Ok(absolute.as_path().to_path_buf());
     };
 
@@ -152,12 +152,12 @@ fn resolve_executable_for_escalation(
         let p = entry.join(file);
         if std::fs::metadata(&p).is_ok_and(|m| m.is_file()) {
             let resolved = std::fs::canonicalize(&p).unwrap_or(p);
-            let absolute = AbsolutePathBuf::resolve_path_against_base(resolved, workdir.as_path())?;
+            let absolute = AbsolutePathBuf::resolve_path_against_base(resolved, workdir.as_path());
             return Ok(absolute.as_path().to_path_buf());
         }
     }
 
-    let absolute = AbsolutePathBuf::resolve_path_against_base(candidate, workdir.as_path())?;
+    let absolute = AbsolutePathBuf::resolve_path_against_base(candidate, workdir.as_path());
     Ok(absolute.as_path().to_path_buf())
 }
 

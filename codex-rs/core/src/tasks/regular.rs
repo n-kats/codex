@@ -24,6 +24,7 @@ impl RegularTask {
     }
 }
 
+#[async_trait::async_trait]
 impl SessionTask for RegularTask {
     fn kind(&self) -> TaskKind {
         TaskKind::Regular

@@ -29,7 +29,6 @@ use codex_app_server_protocol::OverriddenMetadata;
 use codex_app_server_protocol::WriteStatus;
 use codex_config::CONFIG_TOML_FILE;
 use codex_config::config_toml::ConfigToml;
-use codex_exec_server::LOCAL_FS;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
@@ -349,7 +348,7 @@ impl ConfigService {
                 format!("Invalid configuration: {err}"),
             )
         })?;
-        let user_config_toml =
+        let user_config_toml_local =
             deserialize_config_toml_with_base(user_config.clone(), &self.codex_home).map_err(
                 |err| {
                     ConfigServiceError::write(
@@ -358,6 +357,11 @@ impl ConfigService {
                     )
                 },
             )?;
+        let user_config_toml: ConfigToml = serde_json::from_value(
+            serde_json::to_value(&user_config_toml_local)
+                .map_err(|err| ConfigServiceError::json("invalid configuration", err))?,
+        )
+        .map_err(|err| ConfigServiceError::json("invalid configuration", err))?;
         validate_explicit_feature_settings_in_config_toml(
             &user_config_toml,
             layers.requirements().feature_requirements.as_ref(),
@@ -425,7 +429,6 @@ impl ConfigService {
     async fn load_thread_agnostic_config(&self) -> std::io::Result<ConfigLayerStack> {
         let cwd: Option<AbsolutePathBuf> = None;
         load_config_layers_state(
-            LOCAL_FS.as_ref(),
             &self.codex_home,
             cwd,
             &self.cli_overrides,

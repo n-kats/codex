@@ -11,6 +11,7 @@ use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 
 pub struct McpHandler;
+#[async_trait::async_trait]
 impl ToolHandler for McpHandler {
     type Output = McpToolOutput;
 

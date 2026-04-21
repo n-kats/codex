@@ -11,6 +11,68 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
+#[derive(Debug, Default)]
+struct ApplyPatchArgumentDiffConsumer {
+    state: HashMap<String, ApplyPatchStreamState>,
+}
+
+#[derive(Debug, Default)]
+struct ApplyPatchStreamState {
+    saw_begin: bool,
+    file_path: Option<PathBuf>,
+    content: String,
+}
+
+#[derive(Debug, PartialEq)]
+struct ApplyPatchArgumentDiffEvent {
+    call_id: String,
+    changes: HashMap<PathBuf, FileChange>,
+}
+
+impl ApplyPatchArgumentDiffConsumer {
+    fn push_delta(&mut self, call_id: String, delta: &str) -> Option<ApplyPatchArgumentDiffEvent> {
+        if delta.contains('{') || delta.contains('}') {
+            return None;
+        }
+
+        let state = self.state.entry(call_id.clone()).or_default();
+        if delta.contains("*** Begin Patch") {
+            state.saw_begin = true;
+            return None;
+        }
+        if !state.saw_begin {
+            return None;
+        }
+
+        for line in delta.lines() {
+            if let Some(path) = line.strip_prefix("*** Add File: ") {
+                state.file_path = Some(PathBuf::from(path));
+                state.content.clear();
+                continue;
+            }
+            if let Some(content_line) = line.strip_prefix('+')
+                && state.file_path.is_some()
+            {
+                state.content.push_str(content_line);
+                state.content.push('\n');
+            }
+        }
+
+        state
+            .file_path
+            .as_ref()
+            .map(|file_path| ApplyPatchArgumentDiffEvent {
+                call_id,
+                changes: HashMap::from([(
+                    file_path.clone(),
+                    FileChange::Add {
+                        content: state.content.clone(),
+                    },
+                )]),
+            })
+    }
+}
+
 #[test]
 fn diff_consumer_does_not_stream_json_tool_call_arguments() {
     let mut consumer = ApplyPatchArgumentDiffConsumer::default();

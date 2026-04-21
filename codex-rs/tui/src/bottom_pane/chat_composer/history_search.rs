@@ -259,7 +259,7 @@ impl ChatComposer {
     }
 
     fn history_search_in_direction(&mut self, direction: HistorySearchDirection) -> InputResult {
-        let Some((query, original_draft)) = self
+        let Some((query, original_draft)): Option<(String, ComposerDraft)> = self
             .history_search
             .as_ref()
             .map(|search| (search.query.clone(), search.original_draft.clone()))
@@ -285,7 +285,7 @@ impl ChatComposer {
     }
 
     fn update_history_search_query(&mut self, query: String) {
-        let Some(original_draft) = self
+        let Some(original_draft): Option<ComposerDraft> = self
             .history_search
             .as_ref()
             .map(|search| search.original_draft.clone())

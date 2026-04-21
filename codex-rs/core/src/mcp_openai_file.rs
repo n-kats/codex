@@ -219,7 +219,9 @@ mod tests {
         tokio::fs::write(&local_path, b"hello")
             .await
             .expect("write local file");
-        turn_context.cwd = AbsolutePathBuf::try_from(dir.path()).expect("absolute path");
+        turn_context.cwd = AbsolutePathBuf::try_from(dir.path())
+            .expect("absolute path")
+            .to_path_buf();
 
         let mut config = (*turn_context.config).clone();
         config.chatgpt_base_url = format!("{}/backend-api", server.uri());
@@ -300,7 +302,9 @@ mod tests {
         tokio::fs::write(&local_path, b"hello")
             .await
             .expect("write local file");
-        turn_context.cwd = AbsolutePathBuf::try_from(dir.path()).expect("absolute path");
+        turn_context.cwd = AbsolutePathBuf::try_from(dir.path())
+            .expect("absolute path")
+            .to_path_buf();
 
         let mut config = (*turn_context.config).clone();
         config.chatgpt_base_url = format!("{}/backend-api", server.uri());
@@ -414,7 +418,9 @@ mod tests {
         tokio::fs::write(dir.path().join("two.csv"), b"two")
             .await
             .expect("write second local file");
-        turn_context.cwd = AbsolutePathBuf::try_from(dir.path()).expect("absolute path");
+        turn_context.cwd = AbsolutePathBuf::try_from(dir.path())
+            .expect("absolute path")
+            .to_path_buf();
 
         let mut config = (*turn_context.config).clone();
         config.chatgpt_base_url = format!("{}/backend-api", server.uri());
