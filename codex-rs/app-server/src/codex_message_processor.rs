@@ -6563,8 +6563,7 @@ impl CodexMessageProcessor {
                         "installed plugin was not present in the refreshed plugin outcome"
                     );
                 }
-                let (plugin_mcp_servers, plugin_apps) =
-                    installed_plugin_caps.unwrap_or_default();
+                let (plugin_mcp_servers, plugin_apps) = installed_plugin_caps.unwrap_or_default();
 
                 if !plugin_mcp_servers.is_empty() {
                     if let Err(err) = self.queue_mcp_server_refresh_for_config(&config).await {

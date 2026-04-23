@@ -2403,7 +2403,9 @@ impl ChatWidget {
             && let Some(current) = &self.mcp_startup_status
             && let Some(expected_servers) = &self.mcp_startup_expected_servers
             && !current.is_empty()
-            && expected_servers.iter().all(|name| current.contains_key(name))
+            && expected_servers
+                .iter()
+                .all(|name| current.contains_key(name))
             && current
                 .values()
                 .all(|state| !matches!(state, McpStartupStatus::Starting))

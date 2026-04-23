@@ -2734,7 +2734,10 @@ impl App {
     async fn open_agent_picker_for_test(&mut self, app_server: &mut AppServerSession) {
         let thread_ids: Vec<ThreadId> = self.thread_event_channels.keys().cloned().collect();
         for thread_id in thread_ids {
-            let is_open = match app_server.thread_read(thread_id, /*include_turns*/ false).await {
+            let is_open = match app_server
+                .thread_read(thread_id, /*include_turns*/ false)
+                .await
+            {
                 Ok(thread) => {
                     self.upsert_agent_picker_thread(
                         thread_id,
@@ -3382,7 +3385,9 @@ impl App {
         let feedback_audience = bootstrap.feedback_audience;
         let auth = auth_manager.auth().await;
         let auth_ref = auth.as_ref();
-        let auth_mode = auth_ref.map(CodexAuth::auth_mode).map(TelemetryAuthMode::from);
+        let auth_mode = auth_ref
+            .map(CodexAuth::auth_mode)
+            .map(TelemetryAuthMode::from);
         let session_telemetry = SessionTelemetry::new(
             ThreadId::new(),
             model.as_str(),
@@ -9475,7 +9480,12 @@ no_inject = true
 
         app.shutdown_current_thread_for_test(&mut app_server).await;
 
-        assert!(app_server.thread_read(session_id, /*include_turns*/ false).await.is_err());
+        assert!(
+            app_server
+                .thread_read(session_id, /*include_turns*/ false)
+                .await
+                .is_err()
+        );
         Ok(())
     }
 
@@ -9505,7 +9515,12 @@ no_inject = true
             control,
             AppRunControl::Exit(ExitReason::UserRequested)
         ));
-        assert!(app_server.thread_read(thread_id, /*include_turns*/ false).await.is_err());
+        assert!(
+            app_server
+                .thread_read(thread_id, /*include_turns*/ false)
+                .await
+                .is_err()
+        );
         Ok(())
     }
 
@@ -9535,7 +9550,12 @@ no_inject = true
             control,
             AppRunControl::Exit(ExitReason::UserRequested)
         ));
-        assert!(app_server.thread_read(thread_id, /*include_turns*/ false).await.is_err());
+        assert!(
+            app_server
+                .thread_read(thread_id, /*include_turns*/ false)
+                .await
+                .is_err()
+        );
         Ok(())
     }
 
@@ -9558,7 +9578,12 @@ no_inject = true
 
         app.shutdown_current_thread_for_test(&mut app_server).await;
 
-        assert!(app_server.thread_read(thread_id, /*include_turns*/ false).await.is_err());
+        assert!(
+            app_server
+                .thread_read(thread_id, /*include_turns*/ false)
+                .await
+                .is_err()
+        );
         Ok(())
     }
 

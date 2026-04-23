@@ -213,8 +213,16 @@ mod tests {
             .active_plugin_by_config_name("active@test")
             .expect("active plugin");
         assert_eq!(found.config_name, active.config_name);
-        assert!(outcome.active_plugin_by_config_name("inactive@test").is_none());
-        assert!(outcome.active_plugin_by_config_name("missing@test").is_none());
+        assert!(
+            outcome
+                .active_plugin_by_config_name("inactive@test")
+                .is_none()
+        );
+        assert!(
+            outcome
+                .active_plugin_by_config_name("missing@test")
+                .is_none()
+        );
     }
 
     #[test]

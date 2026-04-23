@@ -1913,8 +1913,9 @@ impl ConfigToml {
         // (the primary repository working directory) is trusted. This lets
         // worktrees inherit trust from the main project.
         if let Some(repo_root) = resolve_root_git_project_for_trust_sync(&resolved_cwd_abs)
-            && let Some(project_config_for_root) =
-                projects.get(&crate::config_loader::project_trust_key(repo_root.as_path()))
+            && let Some(project_config_for_root) = projects.get(
+                &crate::config_loader::project_trust_key(repo_root.as_path()),
+            )
         {
             return Some(project_config_for_root.clone());
         }

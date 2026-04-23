@@ -1001,7 +1001,11 @@ async fn install_plugin_exposes_bundled_mcp_servers_in_mcp_config() {
     let repo_root = tmp.path().join("repo");
     fs::create_dir_all(repo_root.join(".git")).unwrap();
     fs::create_dir_all(repo_root.join(".agents/plugins")).unwrap();
-    fs::write(tmp.path().join(CONFIG_TOML_FILE), "[features]\nplugins = true\n").unwrap();
+    fs::write(
+        tmp.path().join(CONFIG_TOML_FILE),
+        "[features]\nplugins = true\n",
+    )
+    .unwrap();
     write_plugin(&repo_root, "sample-plugin", "sample-plugin");
     fs::write(
         repo_root.join("sample-plugin/.mcp.json"),
@@ -1058,12 +1062,15 @@ async fn install_plugin_exposes_bundled_mcp_servers_in_mcp_config() {
     let mcp_config = config.to_mcp_config(&manager).await;
 
     assert!(mcp_config.configured_mcp_servers.contains_key("sample-mcp"));
-    assert!(mcp_config
-        .plugin_capability_summaries
-        .iter()
-        .any(|summary| summary.config_name == "sample@test"
-            && summary.mcp_server_names == vec!["sample-mcp".to_string()]
-            && summary.app_connector_ids == vec![AppConnectorId("connector_example".to_string())]));
+    assert!(
+        mcp_config
+            .plugin_capability_summaries
+            .iter()
+            .any(|summary| summary.config_name == "sample@test"
+                && summary.mcp_server_names == vec!["sample-mcp".to_string()]
+                && summary.app_connector_ids
+                    == vec![AppConnectorId("connector_example".to_string())])
+    );
 }
 
 #[tokio::test]
