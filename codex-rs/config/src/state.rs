@@ -18,6 +18,12 @@ use toml::Value as TomlValue;
 #[derive(Debug, Default, Clone)]
 pub struct LoaderOverrides {
     pub managed_config_path: Option<PathBuf>,
+    /// Overrides the path for the user config layer (normally `$CODEX_HOME/config.toml`).
+    pub user_config_path: Option<PathBuf>,
+    /// When true, the user config layer is omitted entirely.
+    pub disable_user_config: bool,
+    /// When true, project config layers (cwd + `.codex/` tree/repo) are omitted.
+    pub disable_project_config: bool,
     pub ignore_user_config: bool,
     pub ignore_user_and_project_exec_policy_rules: bool,
     //TODO(gt): Add a macos_ prefix to this field and remove the target_os check.
@@ -44,6 +50,9 @@ impl LoaderOverrides {
     pub fn with_managed_config_path_for_tests(managed_config_path: PathBuf) -> Self {
         Self {
             managed_config_path: Some(managed_config_path),
+            user_config_path: None,
+            disable_user_config: false,
+            disable_project_config: false,
             ignore_user_config: false,
             ignore_user_and_project_exec_policy_rules: false,
             #[cfg(target_os = "macos")]

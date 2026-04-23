@@ -848,6 +848,19 @@ impl Config {
             .await
     }
 
+    /// Load configuration with CLI overrides plus loader overrides for config
+    /// file selection.
+    pub async fn load_with_cli_overrides_and_loader_overrides(
+        cli_overrides: Vec<(String, TomlValue)>,
+        loader_overrides: LoaderOverrides,
+    ) -> std::io::Result<Self> {
+        ConfigBuilder::default()
+            .cli_overrides(cli_overrides)
+            .loader_overrides(loader_overrides)
+            .build()
+            .await
+    }
+
     /// Load a default configuration when user config files are invalid.
     pub async fn load_default_with_cli_overrides(
         cli_overrides: Vec<(String, TomlValue)>,

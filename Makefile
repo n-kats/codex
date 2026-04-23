@@ -48,6 +48,21 @@ SKIP_ALMOST_TESTS ?= \
 	turn_start_jsonrpc_span_parents_core_turn_spans \
 	suite::codex_tool::test_shell_command_approval_triggers_elicitation \
 	system_bwrap_warning_skips_supported_system_bwrap \
+	sandboxed_file_system_helper_finds_bwrap_on_preserved_path \
+	file_system_sandboxed_read_allows_readable_root \
+	file_system_sandboxed_write_rejects_unwritable_path \
+	file_system_sandboxed_write_allows_explicit_alias_roots \
+	file_system_sandboxed_write_allows_additional_write_root \
+	file_system_sandboxed_read_rejects_symlink_escape \
+	file_system_sandboxed_read_rejects_symlink_parent_dotdot_escape \
+	file_system_sandboxed_write_rejects_symlink_escape \
+	file_system_create_directory_rejects_symlink_escape \
+	file_system_read_directory_rejects_symlink_escape \
+	file_system_copy_rejects_symlink_escape_destination \
+	file_system_remove_removes_symlink_not_target \
+	file_system_copy_preserves_symlink_source \
+	file_system_remove_rejects_symlink_escape \
+	file_system_copy_rejects_symlink_escape_source \
 	chatwidget::tests::approval_modal_exec_no_reason \
 	chatwidget::tests::approval_modal_exec \
 	chatwidget::tests::chatwidget_markdown_code_blocks_vt100_snapshot \

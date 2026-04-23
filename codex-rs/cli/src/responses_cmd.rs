@@ -1,5 +1,6 @@
 use clap::Parser;
 use codex_core::config::Config;
+use codex_core::config_loader::LoaderOverrides;
 use codex_model_provider::create_model_provider;
 use codex_utils_cli::CliConfigOverrides;
 use serde_json::json;
@@ -10,6 +11,7 @@ pub(crate) struct ResponsesCommand {}
 
 pub(crate) async fn run_responses_command(
     root_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     let mut payload_text = String::new();
     tokio::io::stdin().read_to_string(&mut payload_text).await?;
@@ -26,7 +28,9 @@ pub(crate) async fn run_responses_command(
     let cli_overrides = root_config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
-    let config = Config::load_with_cli_overrides(cli_overrides).await?;
+    let config =
+        Config::load_with_cli_overrides_and_loader_overrides(cli_overrides, loader_overrides)
+            .await?;
     let base_auth_manager = codex_login::AuthManager::shared_from_config(
         &config, /*enable_codex_api_key_env*/ true,
     );

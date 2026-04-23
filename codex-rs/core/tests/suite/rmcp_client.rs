@@ -787,7 +787,7 @@ async fn stdio_mcp_tool_call_includes_sandbox_state_meta() -> anyhow::Result<()>
         sandbox_meta.get("sandboxCwd").and_then(Value::as_str),
         fixture.config.cwd.as_path().to_str()
     );
-    assert_eq!(sandbox_meta.get("useLegacyLandlock"), Some(&json!(false)));
+    assert_eq!(sandbox_meta.get("useLegacyLandlock"), Some(&json!(true)));
 
     server.verify().await;
 

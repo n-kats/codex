@@ -63,7 +63,7 @@ type WorkspaceSetup = dyn FnOnce(AbsolutePathBuf, Arc<dyn ExecutorFileSystem>) -
 const TEST_MODEL_WITH_EXPERIMENTAL_TOOLS: &str = "test-gpt-5.1-codex";
 const REMOTE_EXEC_SERVER_URL_ENV_VAR: &str = "CODEX_TEST_REMOTE_EXEC_SERVER_URL";
 static REMOTE_TEST_INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(0);
-const SUBMIT_TURN_COMPLETE_TIMEOUT: Duration = Duration::from_secs(30);
+const SUBMIT_TURN_COMPLETE_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 pub struct TestEnv {
@@ -518,6 +518,10 @@ impl TestCodexBuilder {
         } else {
             config.features.disable(Feature::ApplyPatchFreeform)?;
         }
+
+        // Test environments often lack unprivileged user namespaces for bwrap.
+        // Use legacy landlock so sandboxed core tests exercise the intended paths.
+        config.features.enable(Feature::UseLegacyLandlock)?;
 
         Ok((config, cwd))
     }

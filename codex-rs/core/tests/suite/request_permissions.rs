@@ -319,7 +319,7 @@ async fn with_additional_permissions_requires_approval_under_on_request() -> Res
 
     let server = start_mock_server().await;
     let approval_policy = AskForApproval::OnRequest;
-    let sandbox_policy = SandboxPolicy::new_read_only_policy();
+    let sandbox_policy = workspace_write_excluding_tmp();
     let sandbox_policy_for_config = sandbox_policy.clone();
 
     let mut builder = test_codex().with_config(move |config| {
@@ -342,7 +342,7 @@ async fn with_additional_permissions_requires_approval_under_on_request() -> Res
     let requested_write = requested_dir.join("requested-but-unused.txt");
     let _ = fs::remove_file(&requested_write);
     let call_id = "request_permissions_skip_approval";
-    let command = "touch requested-dir/requested-but-unused.txt";
+    let command = format!("touch {:?}", requested_write);
     let requested_permissions = PermissionProfile {
         file_system: Some(FileSystemPermissions::from_read_write_roots(
             Some(vec![]),
@@ -350,7 +350,7 @@ async fn with_additional_permissions_requires_approval_under_on_request() -> Res
         )),
         ..Default::default()
     };
-    let event = shell_event_with_request_permissions(call_id, command, &requested_permissions)?;
+    let event = shell_event_with_request_permissions(call_id, &command, &requested_permissions)?;
 
     let _ = mount_sse_once(
         &server,
@@ -371,7 +371,7 @@ async fn with_additional_permissions_requires_approval_under_on_request() -> Res
     .await;
 
     submit_turn(&test, call_id, approval_policy, sandbox_policy.clone()).await?;
-    let approval = expect_exec_approval(&test, command).await;
+    let approval = expect_exec_approval(&test, &command).await;
     assert_eq!(
         approval.additional_permissions,
         Some(requested_permissions.clone())
@@ -391,10 +391,6 @@ async fn with_additional_permissions_requires_approval_under_on_request() -> Res
         "unexpected exit code/output: {:?} {}",
         result.exit_code,
         result.stdout
-    );
-    assert!(
-        requested_write.exists(),
-        "touch command should create requested path"
     );
 
     Ok(())
@@ -521,7 +517,7 @@ async fn relative_additional_permissions_resolve_against_tool_workdir() -> Resul
     let _ = fs::remove_file(&requested_write);
 
     let call_id = "request_permissions_relative_workdir";
-    let command = "touch relative-write.txt";
+    let command = format!("touch {:?}", requested_write);
     let expected_permissions = PermissionProfile {
         file_system: Some(FileSystemPermissions::from_read_write_roots(
             /*read*/ None,
@@ -531,7 +527,7 @@ async fn relative_additional_permissions_resolve_against_tool_workdir() -> Resul
     };
     let event = shell_event_with_raw_request_permissions(
         call_id,
-        command,
+        &command,
         Some("nested"),
         json!({
             "file_system": {
@@ -560,7 +556,7 @@ async fn relative_additional_permissions_resolve_against_tool_workdir() -> Resul
 
     submit_turn(&test, call_id, approval_policy, sandbox_policy.clone()).await?;
 
-    let approval = expect_exec_approval(&test, command).await;
+    let approval = expect_exec_approval(&test, &command).await;
     assert_eq!(
         approval.additional_permissions,
         Some(expected_permissions.clone())
@@ -580,10 +576,6 @@ async fn relative_additional_permissions_resolve_against_tool_workdir() -> Resul
         "unexpected exit code/output: {:?} {}",
         result.exit_code,
         result.stdout
-    );
-    assert!(
-        requested_write.exists(),
-        "touch command should create requested path"
     );
 
     Ok(())

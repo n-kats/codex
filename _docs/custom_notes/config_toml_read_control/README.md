@@ -54,9 +54,32 @@
 - これを持ち回らないと、`resume` / `new` のたびに user config の参照先がデフォルトへ戻り、`custom.user_shell.no_inject` が false と判定される。
 - 回帰防止として `tui/src/custom_config_loader_tests.rs` に、`LoaderOverrides.user_config_path` と `disable_user_config` が標準 TUI の loader 経路で維持されることを確認するテストを追加した。
 
+## 追記（2026-04-24）
+
+- 本家へ戻した再実装では、custom ブランチにあった config 読み込み制御のテストを整理して、次の custom 専用テストを追加した。
+  - `codex-rs/cli/src/custom_tests.rs`
+    - `--config` が root からグローバルに解釈されること
+    - `--config` と `--no-config` が衝突すること
+    - `build_loader_overrides` が `disable_user_config` / `disable_project_config` / `user_config_path` を正しく組み立てること
+  - `codex-rs/exec/src/custom_tests.rs`
+    - `codex-exec` の root CLI でも `--config` が解釈されること
+    - `--config` と `--no-config` が衝突すること
+  - `codex-rs/core/src/config_loader/tests.rs`
+    - `LoaderOverrides.user_config_path` で任意の config.toml を読めること
+    - `LoaderOverrides.disable_project_config` で project layer を抑止できること
+- 検証:
+  - `cargo check`
+  - `cargo test -p codex-cli custom__config_toml_read_control`
+  - `cargo test -p codex-exec custom__config_toml_read_control`
+  - `cargo test -p codex-core user_config_path_override_loads_alternate_file`
+  - `cargo test -p codex-core disable_project_config_omits_project_layers`
+
 ## 関連ファイル一覧
 
 - `codex-rs/cli/src/main.rs`
 - `codex-rs/exec/src/lib.rs`
 - `codex-rs/cli/src/mcp_cmd.rs`
 - `codex-rs/mcp-server/src/lib.rs`
+- `codex-rs/cli/src/custom_tests.rs`
+- `codex-rs/exec/src/custom_tests.rs`
+- `codex-rs/core/src/config_loader/tests.rs`

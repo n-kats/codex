@@ -32,6 +32,23 @@
   - bwrap（bubblewrap）環境での検査/観測の限界により、approval→elicitation のトリガが安定して再現できないため `test-almost` から除外。
 - `system_bwrap_warning_skips_supported_system_bwrap`
   - fake bwrap の実行可否が実行環境の noexec / 実行権限の影響を受けやすく、supported 判定の安定性が環境依存になるため `test-almost` から除外。
+- `exec-server/tests/file_system.rs` の bwrap 依存ケース群
+  - `sandboxed_file_system_helper_finds_bwrap_on_preserved_path`
+  - `file_system_sandboxed_read_allows_readable_root`
+  - `file_system_sandboxed_write_rejects_unwritable_path`
+  - `file_system_sandboxed_write_allows_explicit_alias_roots`
+  - `file_system_sandboxed_write_allows_additional_write_root`
+  - `file_system_sandboxed_read_rejects_symlink_escape`
+  - `file_system_sandboxed_read_rejects_symlink_parent_dotdot_escape`
+  - `file_system_sandboxed_write_rejects_symlink_escape`
+  - `file_system_create_directory_rejects_symlink_escape`
+  - `file_system_read_directory_rejects_symlink_escape`
+  - `file_system_copy_rejects_symlink_escape_destination`
+  - `file_system_remove_removes_symlink_not_target`
+  - `file_system_copy_preserves_symlink_source`
+  - `file_system_remove_rejects_symlink_escape`
+  - `file_system_copy_rejects_symlink_escape_source`
+  - `make almost` では環境依存の sandbox 前提を避けるため除外する。
 - `chatwidget::tests::approval_modal_exec_no_reason`
 - `chatwidget::tests::approval_modal_exec`
 - `chatwidget::tests::chatwidget_markdown_code_blocks_vt100_snapshot`
