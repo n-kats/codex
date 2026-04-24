@@ -112,6 +112,7 @@ mod clipboard_copy;
 mod clipboard_paste;
 mod collaboration_modes;
 mod color;
+mod custom_prompts;
 pub(crate) mod custom_terminal;
 pub use custom_terminal::Terminal;
 mod cwd_prompt;
@@ -825,6 +826,7 @@ pub async fn run_main(
     };
 
     let additional_dirs = cli.add_dir.clone();
+    let project_doc_paths = cli.agents_md.clone();
 
     let overrides = ConfigOverrides {
         model,
@@ -840,6 +842,7 @@ pub async fn run_main(
         codex_self_exe: arg0_paths.codex_self_exe.clone(),
         codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe.clone(),
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
+        project_doc_paths,
         show_raw_agent_reasoning: cli.oss.then_some(true),
         additional_writable_roots: additional_dirs,
         ..Default::default()

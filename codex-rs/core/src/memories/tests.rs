@@ -14,12 +14,46 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tempfile::tempdir;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn memory_root_uses_shared_global_path() {
     let codex_home = AbsolutePathBuf::current_dir().expect("cwd").join("codex");
     assert_eq!(memory_root(&codex_home), codex_home.join("memories"));
+}
+
+#[test]
+fn memory_root_prefers_codex_memories_home_env() {
+    let _guard = ENV_LOCK.lock().expect("lock env mutation");
+    let tempdir = tempdir().expect("tempdir");
+    let override_root = tempdir.path().join("custom-memories");
+    let expected = AbsolutePathBuf::from_absolute_path(&override_root).expect("absolute env");
+    let previous = std::env::var_os("CODEX_MEMORIES_HOME");
+    // Safety: this test serializes env mutation with a global mutex.
+    unsafe {
+        std::env::set_var("CODEX_MEMORIES_HOME", &override_root);
+    }
+
+    let codex_home = AbsolutePathBuf::current_dir().expect("cwd").join("codex");
+    assert_eq!(memory_root(&codex_home), expected);
+
+    match previous {
+        Some(value) => {
+            // Safety: this test serializes env mutation with a global mutex.
+            unsafe {
+                std::env::set_var("CODEX_MEMORIES_HOME", value);
+            }
+        }
+        None => {
+            // Safety: this test serializes env mutation with a global mutex.
+            unsafe {
+                std::env::remove_var("CODEX_MEMORIES_HOME");
+            }
+        }
+    }
 }
 
 #[test]

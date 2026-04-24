@@ -16,6 +16,7 @@
   `rollout_summaries/`、`MEMORY.md`、`memory_summary.md` など）の保存先を
   `<PATH>` に変更します。
 - 同等の環境変数 `CODEX_MEMORIES_HOME` でも指定できます。
+- CLI 起動直後に `CODEX_MEMORIES_HOME` を bootstrap するため、起動時に読み込まれる memories 関連処理にも反映されます。
 - `sandbox_mode="workspace-write"` の writable roots に、`<PATH>` が自動で追加されます。
 - デフォルトはこれまで通り `$CODEX_HOME/memories` です。
 
@@ -37,6 +38,7 @@
   `--codex-home`（または `CODEX_SQLITE_HOME` など）も合わせて分離が必要です。
 - 既定では `!` のコマンドと出力はモデルコンテキストに注入され、ローカル履歴にも保存されます。
   秘密情報が混ざる可能性がある場合は `custom.user_shell.no_inject=true` を推奨します。
+- `CODEX_MEMORIES_HOME` が空文字の場合は未設定として扱います。
 
 ## 動作確認（手動）
 
@@ -53,7 +55,8 @@
 
 ## 関連ファイル
 
-- `codex-rs/arg0/src/lib.rs`（`--codex-memory` を早期に `CODEX_MEMORIES_HOME` へ反映）
-- `codex-rs/cli/src/main.rs`（ヘルプ/CLI で `--codex-memory` を露出）
-- `codex-rs/core/src/config/mod.rs`（`CODEX_MEMORIES_HOME` を解決し、sandbox writable roots へ反映）
+- `codex-rs/cli/src/main.rs`（ヘルプ/CLI で `--codex-memory` を露出し、起動直後に `CODEX_MEMORIES_HOME` を bootstrap）
+- `codex-rs/cli/src/custom_tests.rs`（CLI/bootstrap の回帰テスト）
+- `codex-rs/core/src/memories/mod.rs`（`CODEX_MEMORIES_HOME` を解決し、memories root を切り替える）
+- `codex-rs/core/src/memories/control.rs`（`clear_memory_root_contents` が新しい root を使う）
 - `codex-rs/core/src/memories/phase2.rs`（consolidation サブエージェントの `cwd` / writable roots）

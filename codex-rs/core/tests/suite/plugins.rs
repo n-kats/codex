@@ -151,11 +151,12 @@ async fn build_plugin_test_codex(
     let mut builder = test_codex()
         .with_home(codex_home)
         .with_auth(CodexAuth::from_api_key("Test API Key"));
-    Ok(builder
-        .build(server)
-        .await
-        .expect("create new conversation")
-        .codex)
+    let test = if std::env::var_os(remote_env_env_var()).is_some() {
+        builder.build_remote_aware(server).await?
+    } else {
+        builder.build(server).await?
+    };
+    Ok(test.codex)
 }
 
 async fn build_analytics_plugin_test_codex(
@@ -170,11 +171,12 @@ async fn build_analytics_plugin_test_codex(
         .with_config(move |config| {
             config.chatgpt_base_url = chatgpt_base_url;
         });
-    Ok(builder
-        .build(server)
-        .await
-        .expect("create new conversation")
-        .codex)
+    let test = if std::env::var_os(remote_env_env_var()).is_some() {
+        builder.build_remote_aware(server).await?
+    } else {
+        builder.build(server).await?
+    };
+    Ok(test.codex)
 }
 
 async fn build_apps_enabled_plugin_test_codex(
@@ -192,11 +194,12 @@ async fn build_apps_enabled_plugin_test_codex(
                 .expect("test config should allow feature update");
             config.chatgpt_base_url = chatgpt_base_url;
         });
-    Ok(builder
-        .build(server)
-        .await
-        .expect("create new conversation")
-        .codex)
+    let test = if std::env::var_os(remote_env_env_var()).is_some() {
+        builder.build_remote_aware(server).await?
+    } else {
+        builder.build(server).await?
+    };
+    Ok(test.codex)
 }
 
 fn tool_names(body: &serde_json::Value) -> Vec<String> {

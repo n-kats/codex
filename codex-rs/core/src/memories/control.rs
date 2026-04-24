@@ -1,9 +1,16 @@
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::path::Path;
 
+use crate::memories::memory_root;
+
 pub async fn clear_memory_roots_contents(codex_home: &Path) -> std::io::Result<()> {
+    let codex_home = AbsolutePathBuf::from_absolute_path(codex_home)?;
+    let memories_root = memory_root(&codex_home);
     for memory_root in [
-        codex_home.join("memories"),
-        codex_home.join("memories_extensions"),
+        memories_root.as_path().to_path_buf(),
+        memories_root
+            .as_path()
+            .with_file_name("memories_extensions"),
     ] {
         clear_memory_root_contents(memory_root.as_path()).await?;
     }

@@ -7,7 +7,8 @@
 ## 変更内容
 
 - `codex --codex-home PATH` を追加し、`CODEX_HOME=PATH` と同等の意味で扱う。
-- プロセス起動直後（Tokio runtime 作成前）に引数を軽量パースして `CODEX_HOME` を設定し、必要であればディレクトリ作成を試みる。
+- プロセス起動直後、CLI の本処理に入る前に引数を軽量パースして `CODEX_HOME` を設定する。
+- 相対パスはカレントディレクトリ基準で解決してから環境変数へ入れる。
 
 ## 対象範囲
 
@@ -17,18 +18,17 @@
 ## 注意点
 
 - `--codex-home` は「引数で `CODEX_HOME` をセットする」方式のため、子プロセスにも同じ `CODEX_HOME` が引き継がれる。
-- `.env` の読み込みも `--codex-home` に追従する（起動直後に反映するため）。
+- `--codex-home` は `--` より前でのみ認識する。`--` 以降の値は bootstrap の対象外。
 
 ## 動作確認
 
 - `make verify-codex-home-cli-flag`（`CODEX_HOME=<リポジトリ配下>/_cache/codex_home_debug` で実行される）
-  - Lint: `cd codex-rs && just fix -p codex-arg0 && just fix -p codex-cli`
-  - Test: `cd codex-rs && cargo test -p codex-arg0 && cargo test -p codex-cli`
+  - Lint: `cd codex-rs && just fix -p codex-cli`
+  - Test: `cd codex-rs && cargo test -p codex-cli`
 
 ## 関連ファイル
 
 - `codex-rs/cli/src/main.rs`
-- `codex-rs/cli/src/mcp_cmd.rs`
-- `codex-rs/arg0/src/lib.rs`
+- `codex-rs/cli/src/custom_tests.rs`
 - `docs/config.md`
 - `README.md`

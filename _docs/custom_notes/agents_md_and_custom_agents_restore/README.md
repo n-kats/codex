@@ -12,6 +12,10 @@
 - TUI `/custom-agents` を「非対応メッセージ」から実処理へ復元。
   - `clear/off/none/auto/default` は auto-discovery に戻す
   - パス指定時は存在/種別チェック後に `OverrideTurnContext` で反映
+- session 側で `project_doc_paths` を更新したとき、`user_instructions` を再生成して次ターンへ反映する。
+- `project_doc_paths` に存在しないパスやディレクトリが含まれる場合は `BadRequest` として拒否し、既存の設定を維持する。
+- `project_doc_paths` を更新したあと、再計算用の config 側でも `cwd` を現在の session cwd に揃えてから `user_instructions` を再生成する。
+- `project_doc_paths` を更新したときは reference context をクリアし、次ターンで新しい project docs を full context として再注入できるようにする。
 
 ## 追記（2026-02-27 回帰修正）
 
@@ -50,6 +54,10 @@
 
 - core 側で `project_doc_paths` が削除されていたため、TUI だけ修正しても有効化されなかった。
 - `SessionSettingsUpdate` で `user_instructions` を更新する経路を復元し、`OverrideTurnContext` から再計算結果を適用することで解消。
+- `project_doc_paths` の再計算で `user_instructions(None)` を使うと自動探索が落ちるケースがあったため、local filesystem を使うように修正した。
+- `/custom-agents clear` は TUI では空の `project_doc_paths` を送るだけなので、core 側では `project_doc_paths` の空化を確認する形で回帰を抑えた。
+- `project_doc_paths` 更新時に再計算対象の config が古い cwd を保持していると、相対パスが解決できず `user_instructions` が `None` になったため、`cwd` の同期を追加した。
+- `project_doc_paths` 更新で baseline を残すと次ターンの full context 再注入が止まるため、reference context を明示的にクリアするようにした。
 
 ## 関連ファイル一覧
 
@@ -62,3 +70,8 @@
 - `codex-rs/core/src/config/mod.rs`
 - `codex-rs/core/src/project_doc.rs`
 - `codex-rs/core/src/codex.rs`
+- `codex-rs/core/src/session/mod.rs`
+- `codex-rs/core/src/session/session.rs`
+- `codex-rs/core/src/session/tests.rs`
+- `codex-rs/tui/src/chatwidget/slash_dispatch.rs`
+- `codex-rs/tui/src/chatwidget/tests/slash_commands.rs`

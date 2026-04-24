@@ -1,5 +1,6 @@
 use super::*;
 use pretty_assertions::assert_eq;
+use std::path::PathBuf;
 
 fn turn_complete_event(turn_id: &str, last_agent_message: Option<&str>) -> TurnCompleteEvent {
     serde_json::from_value(serde_json::json!({
@@ -163,6 +164,43 @@ async fn queued_slash_review_with_args_restores_for_edit() {
         chat.bottom_pane.composer_text(),
         "/review check regressions"
     );
+}
+
+#[tokio::test]
+async fn queued_slash_custom_agents_with_args_updates_project_doc_paths() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    queue_composer_text_with_tab(&mut chat, "/custom-agents docs/custom.md");
+
+    match op_rx.try_recv() {
+        Ok(Op::OverrideTurnContext {
+            project_doc_paths: Some(paths),
+            ..
+        }) => {
+            assert_eq!(paths, vec![PathBuf::from("docs/custom.md")]);
+        }
+        other => panic!("expected custom agents override op, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn queued_slash_custom_agents_clear_restores_auto_discovery() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    queue_composer_text_with_tab(&mut chat, "/custom-agents clear");
+
+    match op_rx.try_recv() {
+        Ok(Op::OverrideTurnContext {
+            project_doc_paths: Some(paths),
+            ..
+        }) => {
+            assert!(
+                paths.is_empty(),
+                "expected /custom-agents clear to send no paths"
+            );
+        }
+        other => panic!("expected custom agents clear op, got {other:?}"),
+    }
 }
 
 #[tokio::test]

@@ -590,6 +590,7 @@ async fn snapshot_rollback_followup_turn_trims_context_updates() -> Result<()> {
                 },
             }),
             personality: None,
+            project_doc_paths: None,
         })
         .await?;
 

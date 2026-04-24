@@ -181,26 +181,34 @@ use super::skill_popup::MentionItem;
 use super::skill_popup::SkillPopup;
 use super::slash_commands;
 use super::slash_commands::BuiltinCommandFlags;
-use crate::bottom_pane::paste_burst::FlushResult;
-use crate::bottom_pane::prompt_args::parse_slash_name;
-use crate::render::Insets;
-use crate::render::RectExt;
-use crate::render::renderable::Renderable;
-use crate::slash_command::SlashCommand;
-use crate::style::user_message_style;
-use codex_protocol::models::local_image_label_text;
-use codex_protocol::user_input::ByteRange;
-use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
-use codex_protocol::user_input::TextElement;
-
-mod history_search;
-
-use self::history_search::HistorySearchSession;
 use crate::app_event::AppEvent;
 use crate::app_event::ConnectorsSnapshot;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::LocalImageAttachment;
 use crate::bottom_pane::MentionBinding;
+use crate::bottom_pane::paste_burst::FlushResult;
+use crate::bottom_pane::prompt_args::PromptSelectionAction;
+use crate::bottom_pane::prompt_args::PromptSelectionMode;
+use crate::bottom_pane::prompt_args::expand_custom_prompt;
+use crate::bottom_pane::prompt_args::parse_slash_name;
+use crate::bottom_pane::prompt_args::prompt_selection_action;
+use crate::custom_prompts::CustomPrompt;
+use crate::custom_prompts::PROMPTS_CMD_PREFIX;
+use crate::render::Insets;
+use crate::render::RectExt;
+use crate::render::renderable::Renderable;
+use crate::slash_command::SlashCommand;
+use crate::style::user_message_style;
+
+use codex_protocol::models::local_image_label_text;
+use codex_protocol::user_input::ByteRange;
+use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
+use codex_protocol::user_input::TextElement;
+use codex_utils_fuzzy_match::fuzzy_match;
+
+mod history_search;
+
+use self::history_search::HistorySearchSession;
 use crate::bottom_pane::textarea::TextArea;
 use crate::bottom_pane::textarea::TextAreaState;
 use crate::clipboard_paste::normalize_pasted_path;
@@ -362,6 +370,7 @@ pub(crate) struct ChatComposer {
     #[cfg(not(target_os = "linux"))]
     next_element_id: u64,
     context_window_used_tokens: Option<i64>,
+    custom_prompts: Vec<CustomPrompt>,
     skills: Option<Vec<SkillMetadata>>,
     plugins: Option<Vec<PluginCapabilitySummary>>,
     connectors_snapshot: Option<ConnectorsSnapshot>,
@@ -507,6 +516,7 @@ impl ChatComposer {
             #[cfg(not(target_os = "linux"))]
             next_element_id: 0,
             context_window_used_tokens: None,
+            custom_prompts: Vec::new(),
             skills: None,
             plugins: None,
             connectors_snapshot: None,
@@ -553,6 +563,13 @@ impl ChatComposer {
     pub fn set_skill_mentions(&mut self, skills: Option<Vec<SkillMetadata>>) {
         self.skills = skills;
         self.sync_popups();
+    }
+
+    pub fn set_custom_prompts(&mut self, prompts: Vec<CustomPrompt>) {
+        self.custom_prompts = prompts.clone();
+        if let ActivePopup::Command(popup) = &mut self.active_popup {
+            popup.set_prompts(prompts);
+        }
     }
 
     pub fn set_plugin_mentions(&mut self, plugins: Option<Vec<PluginCapabilitySummary>>) {
@@ -1497,28 +1514,46 @@ impl ChatComposer {
                 // before applying completion.
                 let first_line = self.textarea.text().lines().next().unwrap_or("");
                 popup.on_composer_text_change(first_line.to_string());
-                let selected_cmd = popup.selected_item().map(|sel| {
-                    let CommandItem::Builtin(cmd) = sel;
-                    cmd
-                });
-                if let Some(cmd) = selected_cmd {
-                    if cmd == SlashCommand::Skills {
-                        self.stage_selected_slash_command_history(cmd);
-                        self.textarea.set_text_clearing_elements("");
-                        self.is_bash_mode = false;
-                        return (InputResult::Command(cmd), true);
-                    }
+                if let Some(sel) = popup.selected_item() {
+                    match sel {
+                        CommandItem::Builtin(cmd) => {
+                            if cmd == SlashCommand::Skills {
+                                self.stage_selected_slash_command_history(cmd);
+                                self.textarea.set_text_clearing_elements("");
+                                self.is_bash_mode = false;
+                                return (InputResult::Command(cmd), true);
+                            }
 
-                    let selected_command_text = format!("/{}", cmd.command());
-                    let starts_with_cmd =
-                        first_line.trim_start().starts_with(&selected_command_text);
-                    if !starts_with_cmd {
-                        self.textarea
-                            .set_text_clearing_elements(&format!("/{} ", cmd.command()));
-                        if !self.textarea.text().is_empty() {
-                            self.textarea.set_cursor(self.textarea.text().len());
+                            let selected_command_text = format!("/{}", cmd.command());
+                            let starts_with_cmd =
+                                first_line.trim_start().starts_with(&selected_command_text);
+                            if !starts_with_cmd {
+                                self.textarea
+                                    .set_text_clearing_elements(&format!("/{} ", cmd.command()));
+                                if !self.textarea.text().is_empty() {
+                                    self.textarea.set_cursor(self.textarea.text().len());
+                                }
+                                return (InputResult::None, true);
+                            }
                         }
-                        return (InputResult::None, true);
+                        CommandItem::UserPrompt(idx) => {
+                            if let Some(prompt) = popup.prompt(idx) {
+                                match prompt_selection_action(
+                                    prompt,
+                                    first_line,
+                                    PromptSelectionMode::Completion,
+                                    &self.textarea.text_elements(),
+                                ) {
+                                    PromptSelectionAction::Insert { text, cursor } => {
+                                        let target = cursor.unwrap_or(text.len());
+                                        self.textarea.set_text_clearing_elements(&text);
+                                        self.textarea.set_cursor(target);
+                                        return (InputResult::None, true);
+                                    }
+                                    PromptSelectionAction::Submit { .. } => {}
+                                }
+                            }
+                        }
                     }
                 }
                 if self.is_task_running {
@@ -1535,21 +1570,38 @@ impl ChatComposer {
                 // while the slash-command popup is active.
                 let first_line = self.textarea.text().lines().next().unwrap_or("");
                 popup.on_composer_text_change(first_line.to_string());
-                let selected_cmd = popup.selected_item().map(|sel| {
-                    let CommandItem::Builtin(cmd) = sel;
-                    cmd
-                });
-                if let Some(cmd) = selected_cmd {
-                    let starts_with_cmd = first_line
-                        .trim_start()
-                        .starts_with(&format!("/{}", cmd.command()));
-                    if !starts_with_cmd {
-                        self.textarea
-                            .set_text_clearing_elements(&format!("/{} ", cmd.command()));
-                        self.is_bash_mode = false;
-                    }
-                    if !self.textarea.text().is_empty() {
-                        self.textarea.set_cursor(self.textarea.text().len());
+                if let Some(sel) = popup.selected_item() {
+                    match sel {
+                        CommandItem::Builtin(cmd) => {
+                            let starts_with_cmd = first_line
+                                .trim_start()
+                                .starts_with(&format!("/{}", cmd.command()));
+                            if !starts_with_cmd {
+                                self.textarea
+                                    .set_text_clearing_elements(&format!("/{} ", cmd.command()));
+                                self.is_bash_mode = false;
+                            }
+                            if !self.textarea.text().is_empty() {
+                                self.textarea.set_cursor(self.textarea.text().len());
+                            }
+                        }
+                        CommandItem::UserPrompt(idx) => {
+                            if let Some(prompt) = popup.prompt(idx) {
+                                match prompt_selection_action(
+                                    prompt,
+                                    first_line,
+                                    PromptSelectionMode::Completion,
+                                    &self.textarea.text_elements(),
+                                ) {
+                                    PromptSelectionAction::Insert { text, cursor } => {
+                                        self.textarea.set_text_clearing_elements(&text);
+                                        self.textarea
+                                            .set_cursor(cursor.unwrap_or_else(|| text.len()));
+                                    }
+                                    PromptSelectionAction::Submit { .. } => {}
+                                }
+                            }
+                        }
                     }
                 }
                 (InputResult::None, true)
@@ -1560,11 +1612,50 @@ impl ChatComposer {
                 ..
             } => {
                 if let Some(sel) = popup.selected_item() {
-                    let CommandItem::Builtin(cmd) = sel;
-                    self.stage_selected_slash_command_history(cmd);
-                    self.textarea.set_text_clearing_elements("");
-                    self.is_bash_mode = false;
-                    return (InputResult::Command(cmd), true);
+                    match sel {
+                        CommandItem::Builtin(cmd) => {
+                            self.stage_selected_slash_command_history(cmd);
+                            self.textarea.set_text_clearing_elements("");
+                            self.is_bash_mode = false;
+                            return (InputResult::Command(cmd), true);
+                        }
+                        CommandItem::UserPrompt(idx) => {
+                            if let Some(prompt) = popup.prompt(idx) {
+                                let first_line = self.textarea.text().lines().next().unwrap_or("");
+                                match prompt_selection_action(
+                                    prompt,
+                                    first_line,
+                                    PromptSelectionMode::Submit,
+                                    &self.textarea.text_elements(),
+                                ) {
+                                    PromptSelectionAction::Submit {
+                                        text,
+                                        text_elements,
+                                    } => {
+                                        self.prune_attached_images_for_submission(
+                                            &text,
+                                            &text_elements,
+                                        );
+                                        self.textarea.set_text_clearing_elements("");
+                                        return (
+                                            InputResult::Submitted {
+                                                text,
+                                                text_elements,
+                                            },
+                                            true,
+                                        );
+                                    }
+                                    PromptSelectionAction::Insert { text, cursor } => {
+                                        let target = cursor.unwrap_or(text.len());
+                                        self.textarea.set_text_clearing_elements(&text);
+                                        self.textarea.set_cursor(target);
+                                        return (InputResult::None, true);
+                                    }
+                                }
+                            }
+                            return (InputResult::None, true);
+                        }
+                    }
                 }
                 // Fallback to default newline handling if no command selected.
                 self.handle_key_event_without_popup(key_event)
@@ -2362,7 +2453,15 @@ impl ChatComposer {
                 let is_builtin =
                     slash_commands::find_builtin_command(name, self.builtin_command_flags())
                         .is_some();
-                if !is_builtin {
+                let is_known_prompt = name
+                    .strip_prefix(&format!("{PROMPTS_CMD_PREFIX}:"))
+                    .map(|prompt_name| {
+                        self.custom_prompts
+                            .iter()
+                            .any(|prompt| prompt.name == prompt_name)
+                    })
+                    .unwrap_or(false);
+                if !is_builtin && !is_known_prompt {
                     let message = format!(
                         r#"Unrecognized command '/{name}'. Type "/" for a list of supported commands."#
                     );
@@ -2379,6 +2478,31 @@ impl ChatComposer {
                     self.textarea.set_cursor(original_input.len());
                     return None;
                 }
+            }
+        }
+
+        if self.slash_commands_enabled() {
+            let expanded_prompt =
+                match expand_custom_prompt(&text, &text_elements, &self.custom_prompts) {
+                    Ok(expanded) => expanded,
+                    Err(err) => {
+                        self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            history_cell::new_error_event(err.user_message()),
+                        )));
+                        self.set_text_content_with_mention_bindings(
+                            original_input.clone(),
+                            original_text_elements,
+                            original_local_image_paths,
+                            original_mention_bindings,
+                        );
+                        self.pending_pastes.clone_from(&original_pending_pastes);
+                        self.textarea.set_cursor(original_input.len());
+                        return None;
+                    }
+                };
+            if let Some(expanded) = expanded_prompt {
+                text = expanded.text;
+                text_elements = expanded.text_elements;
             }
         }
 
@@ -3386,7 +3510,18 @@ impl ChatComposer {
     }
 
     fn is_known_slash_name(&self, name: &str) -> bool {
-        slash_commands::find_builtin_command(name, self.builtin_command_flags()).is_some()
+        if slash_commands::find_builtin_command(name, self.builtin_command_flags()).is_some() {
+            return true;
+        }
+        if let Some(rest) = name.strip_prefix(PROMPTS_CMD_PREFIX)
+            && let Some(prompt_name) = rest.strip_prefix(':')
+        {
+            return self
+                .custom_prompts
+                .iter()
+                .any(|prompt| prompt.name == prompt_name);
+        }
+        false
     }
 
     /// If the cursor is currently within a slash command on the first line,
@@ -3428,7 +3563,12 @@ impl ChatComposer {
             return rest_after_name.is_empty();
         }
 
-        slash_commands::has_builtin_prefix(name, self.builtin_command_flags())
+        if slash_commands::has_builtin_prefix(name, self.builtin_command_flags()) {
+            return true;
+        }
+        self.custom_prompts.iter().any(|prompt| {
+            fuzzy_match(&format!("{PROMPTS_CMD_PREFIX}:{}", prompt.name), name).is_some()
+        })
     }
 
     /// Synchronize `self.command_popup` with the current text in the
@@ -3478,17 +3618,20 @@ impl ChatComposer {
                     let personality_command_enabled = self.personality_command_enabled;
                     let realtime_conversation_enabled = self.realtime_conversation_enabled;
                     let audio_device_selection_enabled = self.audio_device_selection_enabled;
-                    let mut command_popup = CommandPopup::new(CommandPopupFlags {
-                        collaboration_modes_enabled,
-                        connectors_enabled,
-                        plugins_command_enabled,
-                        fast_command_enabled,
-                        personality_command_enabled,
-                        realtime_conversation_enabled,
-                        audio_device_selection_enabled,
-                        windows_degraded_sandbox_active: self.windows_degraded_sandbox_active,
-                        side_conversation_active: self.side_conversation_active,
-                    });
+                    let mut command_popup = CommandPopup::new(
+                        self.custom_prompts.clone(),
+                        CommandPopupFlags {
+                            collaboration_modes_enabled,
+                            connectors_enabled,
+                            plugins_command_enabled,
+                            fast_command_enabled,
+                            personality_command_enabled,
+                            realtime_conversation_enabled,
+                            audio_device_selection_enabled,
+                            windows_degraded_sandbox_active: self.windows_degraded_sandbox_active,
+                            side_conversation_active: self.side_conversation_active,
+                        },
+                    );
                     command_popup.on_composer_text_change(first_line.to_string());
                     self.active_popup = ActivePopup::Command(command_popup);
                 }
@@ -6611,6 +6754,9 @@ mod tests {
                 Some(CommandItem::Builtin(cmd)) => {
                     assert_eq!(cmd.command(), "model")
                 }
+                Some(CommandItem::UserPrompt(_)) => {
+                    panic!("unexpected custom prompt selected for '/mo'")
+                }
                 None => panic!("no selected command for '/mo'"),
             },
             _ => panic!("slash popup not active after typing '/mo'"),
@@ -6663,6 +6809,9 @@ mod tests {
             ActivePopup::Command(popup) => match popup.selected_item() {
                 Some(CommandItem::Builtin(cmd)) => {
                     assert_eq!(cmd.command(), "resume")
+                }
+                Some(CommandItem::UserPrompt(_)) => {
+                    panic!("unexpected custom prompt selected for '/res'")
                 }
                 None => panic!("no selected command for '/res'"),
             },
@@ -6851,6 +7000,78 @@ mod tests {
             }
         }
         assert!(found_error, "expected error history cell to be sent");
+    }
+
+    #[test]
+    fn custom_prompt_submission_expands_content() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            /*has_input_focus*/ true,
+            sender,
+            /*enhanced_keys_supported*/ false,
+            "Ask Codex to do anything".to_string(),
+            /*disable_paste_burst*/ false,
+        );
+        composer.set_custom_prompts(vec![CustomPrompt {
+            name: "greet".to_string(),
+            path: "/tmp/greet.md".to_string().into(),
+            content: "Hello, world!".to_string(),
+            description: Some("Greeting prompt".to_string()),
+            argument_hint: None,
+        }]);
+        composer
+            .textarea
+            .set_text_clearing_elements("/prompts:greet");
+
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(matches!(
+            result,
+            InputResult::Submitted { text, .. } if text == "Hello, world!"
+        ));
+        assert!(composer.textarea.is_empty());
+    }
+
+    #[test]
+    fn custom_prompt_completion_inserts_named_arg_template() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new(
+            /*has_input_focus*/ true,
+            sender,
+            /*enhanced_keys_supported*/ false,
+            "Ask Codex to do anything".to_string(),
+            /*disable_paste_burst*/ false,
+        );
+        composer.set_custom_prompts(vec![CustomPrompt {
+            name: "review".to_string(),
+            path: "/tmp/review.md".to_string().into(),
+            content: "Review $USER".to_string(),
+            description: Some("Review prompt".to_string()),
+            argument_hint: None,
+        }]);
+
+        type_chars_humanlike(
+            &mut composer,
+            &['/', 'p', 'r', 'o', 'm', 'p', 't', 's', ':'],
+        );
+        type_chars_humanlike(&mut composer, &['r', 'e', 'v', 'i', 'e', 'w']);
+
+        let (result, _needs_redraw) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+
+        assert_eq!(result, InputResult::None);
+        assert_eq!("/prompts:review {USER}", composer.textarea.text());
     }
 
     #[test]

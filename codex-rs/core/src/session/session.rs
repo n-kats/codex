@@ -216,6 +216,35 @@ impl SessionConfiguration {
                     &next_configuration.cwd,
                 );
         }
+        if let Some(project_doc_paths) = &updates.project_doc_paths {
+            for path in project_doc_paths {
+                let resolved_path = if path.is_absolute() {
+                    path.clone()
+                } else {
+                    next_configuration.cwd.as_path().join(path)
+                };
+                let metadata = std::fs::metadata(&resolved_path).map_err(|_| {
+                    ConstraintError::InvalidValue {
+                        field_name: "invalid /custom-agents path",
+                        candidate: path.display().to_string(),
+                        allowed: "an existing file".to_string(),
+                        requirement_source: codex_config::RequirementSource::Unknown,
+                    }
+                })?;
+                if !metadata.is_file() {
+                    return Err(ConstraintError::InvalidValue {
+                        field_name: "invalid /custom-agents path",
+                        candidate: path.display().to_string(),
+                        allowed: "a file".to_string(),
+                        requirement_source: codex_config::RequirementSource::Unknown,
+                    });
+                }
+            }
+            let mut config = (*next_configuration.original_config_do_not_use).clone();
+            config.cwd = next_configuration.cwd.clone();
+            config.project_doc_paths = project_doc_paths.clone();
+            next_configuration.original_config_do_not_use = Arc::new(config);
+        }
         if let Some(app_server_client_name) = updates.app_server_client_name.clone() {
             next_configuration.app_server_client_name = Some(app_server_client_name);
         }
@@ -239,6 +268,7 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) service_tier: Option<Option<ServiceTier>>,
     pub(crate) final_output_json_schema: Option<Option<Value>>,
     pub(crate) personality: Option<Personality>,
+    pub(crate) project_doc_paths: Option<Vec<PathBuf>>,
     pub(crate) app_server_client_name: Option<String>,
     pub(crate) app_server_client_version: Option<String>,
 }

@@ -59,6 +59,15 @@ pub struct SharedCliOptions {
     /// Additional directories that should be writable alongside the primary workspace.
     #[arg(long = "add-dir", value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
     pub add_dir: Vec<PathBuf>,
+
+    /// Additional AGENTS.md documents to prefer over auto-discovery.
+    #[arg(
+        long = "agents-md",
+        value_name = "FILE",
+        value_hint = clap::ValueHint::FilePath,
+        num_args = 1..
+    )]
+    pub agents_md: Vec<PathBuf>,
 }
 
 impl SharedCliOptions {
@@ -77,6 +86,7 @@ impl SharedCliOptions {
             dangerously_bypass_approvals_and_sandbox,
             cwd,
             add_dir,
+            agents_md,
         } = self;
         let Self {
             images: root_images,
@@ -89,6 +99,7 @@ impl SharedCliOptions {
             dangerously_bypass_approvals_and_sandbox: root_dangerously_bypass_approvals_and_sandbox,
             cwd: root_cwd,
             add_dir: root_add_dir,
+            agents_md: root_agents_md,
         } = root;
 
         if model.is_none() {
@@ -124,6 +135,11 @@ impl SharedCliOptions {
             merged_add_dir.append(add_dir);
             *add_dir = merged_add_dir;
         }
+        if !root_agents_md.is_empty() {
+            let mut merged_agents_md = root_agents_md.clone();
+            merged_agents_md.append(agents_md);
+            *agents_md = merged_agents_md;
+        }
     }
 
     pub fn apply_subcommand_overrides(&mut self, subcommand: Self) {
@@ -141,6 +157,7 @@ impl SharedCliOptions {
             dangerously_bypass_approvals_and_sandbox,
             cwd,
             add_dir,
+            agents_md,
         } = subcommand;
 
         if let Some(model) = model {
@@ -169,6 +186,9 @@ impl SharedCliOptions {
         }
         if !add_dir.is_empty() {
             self.add_dir.extend(add_dir);
+        }
+        if !agents_md.is_empty() {
+            self.agents_md.extend(agents_md);
         }
     }
 }

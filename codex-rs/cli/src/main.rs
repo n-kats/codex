@@ -87,6 +87,14 @@ struct MultitoolCli {
     #[clap(flatten)]
     pub config_overrides: CliConfigOverrides,
 
+    /// Override the Codex home directory used for config, logs, and cached state.
+    #[clap(long = "codex-home", value_name = "PATH", global = true)]
+    pub codex_home: Option<PathBuf>,
+
+    /// Override the memories root used for memory artifacts.
+    #[clap(long = "codex-memory", value_name = "PATH", global = true)]
+    pub codex_memory: Option<PathBuf>,
+
     /// Load the user config layer from an arbitrary `config.toml` file instead of
     /// `$CODEX_HOME/config.toml`.
     #[clap(
@@ -692,10 +700,63 @@ fn stage_str(stage: Stage) -> &'static str {
 }
 
 fn main() -> anyhow::Result<()> {
+    bootstrap_home_overrides_from_args();
     arg0_dispatch_or_else(|arg0_paths: Arg0DispatchPaths| async move {
         cli_main(arg0_paths).await?;
         Ok(())
     })
+}
+
+fn bootstrap_home_overrides_from_args() {
+    bootstrap_home_overrides_from_iter(std::env::args_os().skip(1));
+}
+
+fn bootstrap_home_overrides_from_iter<I>(args: I)
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "--" {
+            break;
+        }
+
+        if let Some(path) = arg
+            .to_str()
+            .and_then(|arg| arg.strip_prefix("--codex-home="))
+        {
+            set_env_path("CODEX_HOME", PathBuf::from(path));
+            continue;
+        }
+        if let Some(path) = arg
+            .to_str()
+            .and_then(|arg| arg.strip_prefix("--codex-memory="))
+        {
+            set_env_path("CODEX_MEMORIES_HOME", PathBuf::from(path));
+            continue;
+        }
+
+        if arg == "--codex-home" {
+            if let Some(path) = args.next() {
+                set_env_path("CODEX_HOME", PathBuf::from(path));
+            }
+            continue;
+        }
+        if arg == "--codex-memory" {
+            if let Some(path) = args.next() {
+                set_env_path("CODEX_MEMORIES_HOME", PathBuf::from(path));
+            }
+            continue;
+        }
+    }
+}
+
+fn set_env_path(key: &str, raw_path: PathBuf) {
+    let path = resolve_path_from_cwd(raw_path);
+    // Safety: called at process startup before any worker threads are spawned.
+    unsafe {
+        std::env::set_var(key, path);
+    }
 }
 
 async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
@@ -703,6 +764,8 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         config_overrides: mut root_config_overrides,
         config_toml_file,
         no_config,
+        codex_home: _,
+        codex_memory: _,
         feature_toggles,
         remote,
         mut interactive,
@@ -1698,6 +1761,8 @@ mod tests {
             remote: _,
             config_toml_file: _,
             no_config: _,
+            codex_home: _,
+            codex_memory: _,
         } = cli;
 
         let Subcommand::Resume(ResumeCommand {
@@ -1733,6 +1798,8 @@ mod tests {
             remote: _,
             config_toml_file: _,
             no_config: _,
+            codex_home: _,
+            codex_memory: _,
         } = cli;
 
         let Subcommand::Fork(ForkCommand {
@@ -1992,6 +2059,16 @@ mod tests {
         assert!(interactive.resume_picker);
         assert!(!interactive.resume_last);
         assert_eq!(interactive.resume_session_id, None);
+    }
+
+    #[test]
+    fn agents_md_is_preserved_for_interactive_resume() {
+        let cli =
+            MultitoolCli::try_parse_from(["codex", "--agents-md", "/tmp/AGENTS.md"]).expect("parse");
+        assert_eq!(
+            cli.interactive.agents_md,
+            vec![PathBuf::from("/tmp/AGENTS.md")]
+        );
     }
 
     #[test]

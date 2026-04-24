@@ -30,6 +30,7 @@ pub enum SlashCommand {
     Fork,
     Init,
     Compact,
+    CustomAgents,
     Plan,
     Collab,
     Agent,
@@ -75,6 +76,7 @@ impl SlashCommand {
             SlashCommand::Feedback => "send logs to maintainers",
             SlashCommand::New => "start a new chat during a conversation",
             SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
+            SlashCommand::CustomAgents => "choose which AGENTS.md documents to prefer",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
             SlashCommand::Review => "review my current changes and find issues",
             SlashCommand::Rename => "rename the current thread",
@@ -142,6 +144,7 @@ impl SlashCommand {
                 | SlashCommand::Side
                 | SlashCommand::Resume
                 | SlashCommand::SandboxReadRoot
+                | SlashCommand::CustomAgents
         )
     }
 
@@ -160,6 +163,7 @@ impl SlashCommand {
             | SlashCommand::Resume
             | SlashCommand::Fork
             | SlashCommand::Init
+            | SlashCommand::CustomAgents
             | SlashCommand::Compact
             // | SlashCommand::Undo
             | SlashCommand::Model

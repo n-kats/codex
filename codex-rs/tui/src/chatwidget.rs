@@ -57,6 +57,7 @@ use crate::bottom_pane::StatusSurfacePreviewData;
 use crate::bottom_pane::StatusSurfacePreviewItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::bottom_pane::TerminalTitleSetupView;
+use crate::custom_prompts::discover_custom_prompts;
 use crate::legacy_core::DEFAULT_AGENTS_MD_FILENAME;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::Constrained;
@@ -2175,6 +2176,10 @@ impl ChatWidget {
         self.sync_fast_command_enabled();
         self.sync_personality_command_enabled();
         self.sync_plugins_command_enabled();
+        self.bottom_pane.set_custom_prompts(discover_custom_prompts(
+            self.config.codex_home.as_path(),
+            self.config.cwd.as_path(),
+        ));
         self.refresh_plugin_mentions();
         if display == SessionConfiguredDisplay::Normal {
             let startup_tooltip_override = self.startup_tooltip_override.take();
@@ -7987,6 +7992,7 @@ impl ChatWidget {
                     /*service_tier*/ None,
                     /*collaboration_mode*/ None,
                     /*personality*/ None,
+                    /*project_doc_paths*/ None,
                 )
                 .into_core(),
             ));
@@ -8211,6 +8217,7 @@ impl ChatWidget {
                             /*service_tier*/ None,
                             /*collaboration_mode*/ None,
                             Some(personality),
+                            /*project_doc_paths*/ None,
                         )
                         .into_core(),
                     ));
@@ -9198,6 +9205,7 @@ impl ChatWidget {
                     /*service_tier*/ None,
                     /*collaboration_mode*/ None,
                     /*personality*/ None,
+                    /*project_doc_paths*/ None,
                 )
                 .into_core(),
             ));
@@ -10019,6 +10027,7 @@ impl ChatWidget {
                 Some(service_tier),
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
+                /*project_doc_paths*/ None,
             )
             .into_core(),
         ));

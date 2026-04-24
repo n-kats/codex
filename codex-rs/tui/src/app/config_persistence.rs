@@ -330,6 +330,7 @@ impl App {
                 /*service_tier*/ None,
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
+                /*project_doc_paths*/ None,
             );
             let replay_state_op =
                 ThreadEventStore::op_can_change_pending_replay_state(&op).then(|| op.clone());
@@ -358,6 +359,7 @@ impl App {
                         /*service_tier*/ None,
                         /*collaboration_mode*/ None,
                         /*personality*/ None,
+                        /*project_doc_paths*/ None,
                     )
                     .into_core(),
                 ));

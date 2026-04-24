@@ -18,7 +18,7 @@ async fn get_user_instructions(config: &Config) -> Option<String> {
 
 async fn agents_md_paths(config: &Config) -> std::io::Result<Vec<AbsolutePathBuf>> {
     AgentsMdManager::new(config)
-        .agents_md_paths(LOCAL_FS.as_ref())
+        .discover_project_doc_paths(LOCAL_FS.as_ref())
         .await
 }
 
@@ -424,6 +424,27 @@ async fn agents_md_preferred_over_fallbacks() {
             .to_string_lossy()
             .eq(DEFAULT_AGENTS_MD_FILENAME)
     );
+}
+
+#[tokio::test]
+async fn explicit_project_doc_paths_override_auto_discovery() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    fs::write(tmp.path().join("AGENTS.md"), "auto").unwrap();
+    fs::create_dir_all(tmp.path().join("docs")).unwrap();
+    fs::write(tmp.path().join("docs/custom.md"), "explicit").unwrap();
+
+    let mut cfg = make_config(&tmp, /*limit*/ 4096, /*instructions*/ None).await;
+    cfg.project_doc_paths = vec![PathBuf::from("docs/custom.md")];
+
+    let res = get_user_instructions(&cfg)
+        .await
+        .expect("explicit project doc expected");
+
+    assert_eq!(res, "explicit");
+
+    let discovery = agents_md_paths(&cfg).await.expect("discover paths");
+    assert_eq!(discovery.len(), 1);
+    assert_eq!(discovery[0], tmp.path().join("docs/custom.md").abs());
 }
 
 #[tokio::test]

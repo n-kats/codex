@@ -250,6 +250,7 @@ pub async fn run_main(
         dangerously_bypass_approvals_and_sandbox,
         cwd,
         add_dir,
+        agents_md,
     } = shared;
 
     let (_stdout_with_ansi, stderr_with_ansi) = match color {
@@ -403,6 +404,7 @@ pub async fn run_main(
         js_repl_node_path: None,
         js_repl_node_module_dirs: None,
         zsh_path: None,
+        project_doc_paths: agents_md,
         base_instructions: None,
         developer_instructions: None,
         personality: None,

@@ -173,7 +173,7 @@ impl<'a> AgentsMdManager<'a> {
         let mut paths = Self::load_global_instructions(Some(&self.config.codex_home))
             .map(|loaded| vec![loaded.path])
             .unwrap_or_default();
-        match self.agents_md_paths(fs).await {
+        match self.discover_project_doc_paths(fs).await {
             Ok(agents_md_paths) => paths.extend(agents_md_paths),
             Err(err) => {
                 tracing::warn!(error = %err, "failed to discover AGENTS.md docs for instruction sources");
@@ -195,7 +195,7 @@ impl<'a> AgentsMdManager<'a> {
             return Ok(None);
         }
 
-        let paths = self.agents_md_paths(fs).await?;
+        let paths = self.discover_project_doc_paths(fs).await?;
         if paths.is_empty() {
             return Ok(None);
         }
@@ -252,12 +252,16 @@ impl<'a> AgentsMdManager<'a> {
     /// contents. The list is ordered from project root to the current working
     /// directory (inclusive). Symlinks are allowed. When `project_doc_max_bytes`
     /// is zero, returns an empty list.
-    async fn agents_md_paths(
+    async fn discover_project_doc_paths(
         &self,
         fs: &dyn ExecutorFileSystem,
     ) -> io::Result<Vec<AbsolutePathBuf>> {
         if self.config.project_doc_max_bytes == 0 {
             return Ok(Vec::new());
+        }
+
+        if !self.config.project_doc_paths.is_empty() {
+            return self.resolve_explicit_project_doc_paths();
         }
 
         let mut dir = self.config.cwd.clone();
@@ -342,6 +346,19 @@ impl<'a> AgentsMdManager<'a> {
         }
 
         Ok(found)
+    }
+
+    fn resolve_explicit_project_doc_paths(&self) -> io::Result<Vec<AbsolutePathBuf>> {
+        let mut resolved = Vec::with_capacity(self.config.project_doc_paths.len());
+        for path in &self.config.project_doc_paths {
+            let absolute = if path.is_absolute() {
+                AbsolutePathBuf::from_absolute_path(path.clone())?
+            } else {
+                self.config.cwd.join(path)
+            };
+            resolved.push(absolute);
+        }
+        Ok(resolved)
     }
 
     fn candidate_filenames(&self) -> Vec<&str> {

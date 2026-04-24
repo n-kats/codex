@@ -103,7 +103,18 @@ use std::path::Path;
 use std::path::PathBuf;
 
 pub fn memory_root(codex_home: &AbsolutePathBuf) -> AbsolutePathBuf {
+    if let Some(memory_root) = resolve_memory_root_env() {
+        return memory_root;
+    }
     codex_home.join("memories")
+}
+
+fn resolve_memory_root_env() -> Option<AbsolutePathBuf> {
+    let raw = std::env::var_os("CODEX_MEMORIES_HOME")?;
+    if raw.is_empty() {
+        return None;
+    }
+    AbsolutePathBuf::relative_to_current_dir(PathBuf::from(raw)).ok()
 }
 
 fn rollout_summaries_dir(root: &Path) -> PathBuf {

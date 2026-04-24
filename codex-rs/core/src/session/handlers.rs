@@ -169,6 +169,7 @@ pub(super) async fn user_input_or_turn_inner(
                     service_tier,
                     final_output_json_schema: Some(final_output_json_schema),
                     personality,
+                    project_doc_paths: None,
                     app_server_client_name: None,
                     app_server_client_version: None,
                 },
@@ -219,6 +220,7 @@ pub(super) async fn user_input_or_turn_inner(
                     service_tier,
                     final_output_json_schema: Some(final_output_json_schema),
                     personality,
+                    project_doc_paths: None,
                     app_server_client_name: None,
                     app_server_client_version: None,
                 },
@@ -235,6 +237,7 @@ pub(super) async fn user_input_or_turn_inner(
             items,
             SessionSettingsUpdate {
                 final_output_json_schema: Some(final_output_json_schema),
+                project_doc_paths: None,
                 ..Default::default()
             },
             responsesapi_client_metadata,
@@ -1121,6 +1124,7 @@ pub(super) async fn submission_loop(
                     service_tier,
                     collaboration_mode,
                     personality,
+                    project_doc_paths,
                 } => {
                     let collaboration_mode = if let Some(collab_mode) = collaboration_mode {
                         collab_mode
@@ -1146,6 +1150,7 @@ pub(super) async fn submission_loop(
                             reasoning_summary: summary,
                             service_tier,
                             personality,
+                            project_doc_paths,
                             ..Default::default()
                         },
                     )
