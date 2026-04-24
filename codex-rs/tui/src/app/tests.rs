@@ -1558,6 +1558,10 @@ async fn update_memory_settings_updates_current_thread_memory_mode() -> Result<(
     )
     .await
     .expect("state db should initialize");
+    state_db
+        .mark_backfill_complete(/*last_watermark*/ None)
+        .await
+        .expect("backfill should complete");
     let memory_mode = state_db
         .get_thread_memory_mode(thread_id)
         .await

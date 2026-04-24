@@ -285,6 +285,9 @@ verify-additional-prompt-dirs-env: cache-dir docker-build
 
 verify-exec-command-default-login: build-linux-sandbox docker-build
 	$(call run_test_logged,verify_exec_command_default_login,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-app-server --test all suite::v2::turn_start::command_execution_notifications_include_process_id)
+	$(call run_test_logged,verify_exec_command_default_login_derive_exec_args,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell_tests::derive_exec_args)
+	$(call run_test_logged,verify_exec_command_default_login_shell_startup_files,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib custom__シェル起動ファイル__)
+	$(call run_test_logged,verify_exec_command_default_login_cli_flag,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-cli --bin codex custom__shell_startup_files_cli_flag__)
 
 verify-linux-default-shell: cache-dir docker-build
 	$(call run_test_logged,verify_linux_shell_detect_zsh,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell::tests::test_current_shell_detects_zsh)

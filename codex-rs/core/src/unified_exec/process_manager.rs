@@ -16,6 +16,8 @@ use crate::exec_env::create_env;
 use crate::exec_policy::ExecApprovalRequest;
 use crate::sandboxing::ExecRequest;
 use crate::sandboxing::ExecServerEnvConfig;
+use crate::shell_detect::detect_shell_type;
+use crate::shell_startup_files::apply_shell_startup_files_env;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
@@ -56,6 +58,7 @@ use codex_protocol::error::SandboxErr;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
+use std::path::PathBuf;
 
 const UNIFIED_EXEC_ENV: [(&str, &str); 10] = [
     ("NO_COLOR", "1"),
@@ -778,6 +781,13 @@ impl UnifiedExecProcessManager {
             CODEX_THREAD_ID_ENV_VAR.to_string(),
             context.session.conversation_id.to_string(),
         );
+        if let Some(shell_type) = request
+            .command
+            .first()
+            .and_then(|program| detect_shell_type(&PathBuf::from(program)))
+        {
+            apply_shell_startup_files_env(&mut env, shell_type);
+        }
         let env = apply_unified_exec_env(env);
         let exec_server_env_config = ExecServerEnvConfig {
             policy: exec_env_policy_from_shell_policy(&context.turn.shell_environment_policy),

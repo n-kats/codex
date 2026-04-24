@@ -1,4 +1,4 @@
-# シェル初期化ファイルの制御（zsh dotfiles を隔離する）
+# Linux での shell startup files 制御（zsh dotfiles を隔離する）
 
 ## 背景（問題）
 
@@ -20,12 +20,14 @@
 
 - `CODEX_SHELL_STARTUP_FILES=clean` を指定すると、起動時のユーザー dotfiles を**可能な範囲で**読み込まないようにする。
 - 現状は zsh に対して実装しており、子プロセスの環境変数 `ZDOTDIR` を空ディレクトリに向けることで、`zsh -l`（login）自体は維持しつつ、ユーザーの `~/.z*` を隔離する。
+- `--shell-startup-files clean` も同じ設定を起動前に反映する。
 
 ### 対象
 
 - `shell_command`（モデルが呼ぶツール）
 - `exec_command`（PTY 実行）
 - `!` のユーザーコマンド
+- `shell_snapshot`
 
 ## 動作確認（手元環境で実行）
 
@@ -36,7 +38,9 @@
 ## 関連ファイル
 
 - `codex-rs/core/src/shell_startup_files.rs`
+- `codex-rs/core/src/shell_snapshot.rs`
 - `codex-rs/core/src/tools/handlers/shell.rs`
-- `codex-rs/core/src/unified_exec/session_manager.rs`
+- `codex-rs/core/src/unified_exec/process_manager.rs`
 - `codex-rs/core/src/tasks/user_shell.rs`
+- `codex-rs/cli/src/main.rs`
 - `Makefile`

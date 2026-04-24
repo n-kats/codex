@@ -35,6 +35,20 @@ fn custom__codex_memory_cli_flag__flag_is_global() {
 }
 
 #[test]
+fn custom__shell_startup_files_cli_flag__flag_is_global() {
+    let cli = MultitoolCli::try_parse_from(["codex", "exec", "--shell-startup-files", "clean"])
+        .expect("parse should succeed");
+    assert_eq!(cli.shell_startup_files.as_deref(), Some("clean"));
+}
+
+#[test]
+fn custom__shell_startup_files_cli_flag__equals_form_is_global() {
+    let cli = MultitoolCli::try_parse_from(["codex", "--shell-startup-files=clean"])
+        .expect("parse should succeed");
+    assert_eq!(cli.shell_startup_files.as_deref(), Some("clean"));
+}
+
+#[test]
 fn custom__agents_md_restore__flag_is_global() {
     let cli = MultitoolCli::try_parse_from(["codex", "--agents-md", "/tmp/AGENTS.md"])
         .expect("parse should succeed");
@@ -105,6 +119,51 @@ fn custom__codex_memory_cli_flag__bootstrap_sets_code_memory_env() {
 }
 
 #[test]
+fn custom__shell_startup_files_cli_flag__bootstrap_sets_shell_startup_files_env() {
+    let _guard = ENV_LOCK.lock().expect("lock env mutation");
+    let previous = std::env::var_os("CODEX_SHELL_STARTUP_FILES");
+    bootstrap_home_overrides_from_iter([
+        OsString::from("codex"),
+        OsString::from("--shell-startup-files"),
+        OsString::from("clean"),
+    ]);
+    assert_eq!(
+        std::env::var_os("CODEX_SHELL_STARTUP_FILES"),
+        Some(OsString::from("clean"))
+    );
+    match previous {
+        Some(value) => unsafe {
+            std::env::set_var("CODEX_SHELL_STARTUP_FILES", value);
+        },
+        None => unsafe {
+            std::env::remove_var("CODEX_SHELL_STARTUP_FILES");
+        },
+    }
+}
+
+#[test]
+fn custom__shell_startup_files_cli_flag__bootstrap_sets_shell_startup_files_env_from_equals_form() {
+    let _guard = ENV_LOCK.lock().expect("lock env mutation");
+    let previous = std::env::var_os("CODEX_SHELL_STARTUP_FILES");
+    bootstrap_home_overrides_from_iter([
+        OsString::from("codex"),
+        OsString::from("--shell-startup-files=clean"),
+    ]);
+    assert_eq!(
+        std::env::var_os("CODEX_SHELL_STARTUP_FILES"),
+        Some(OsString::from("clean"))
+    );
+    match previous {
+        Some(value) => unsafe {
+            std::env::set_var("CODEX_SHELL_STARTUP_FILES", value);
+        },
+        None => unsafe {
+            std::env::remove_var("CODEX_SHELL_STARTUP_FILES");
+        },
+    }
+}
+
+#[test]
 fn custom__config_toml_read_control__config_toml_file_conflicts_with_no_config() {
     let err = MultitoolCli::try_parse_from(["codex", "--config", "alt.toml", "--no-config"])
         .expect_err("parse should fail");
@@ -142,6 +201,10 @@ fn custom__config_toml_read_control__helpに表示される() {
     assert!(
         help.contains("--codex-memory"),
         "expected help to contain --codex-memory, got:\n{help}"
+    );
+    assert!(
+        help.contains("--shell-startup-files"),
+        "expected help to contain --shell-startup-files, got:\n{help}"
     );
     assert!(
         help.contains("--no-config"),

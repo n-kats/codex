@@ -12,6 +12,7 @@ use crate::function_tool::FunctionCallError;
 use crate::maybe_emit_implicit_skill_invocation;
 use crate::session::turn_context::TurnContext;
 use crate::shell::Shell;
+use crate::shell_startup_files::apply_shell_startup_files_env;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
@@ -92,15 +93,19 @@ struct RunExecLikeArgs {
 impl ShellHandler {
     fn to_exec_params(
         params: &ShellToolCallParams,
+        session: &crate::session::session::Session,
         turn_context: &TurnContext,
         thread_id: ThreadId,
     ) -> ExecParams {
+        let shell = session.user_shell();
+        let mut env = create_env(&turn_context.shell_environment_policy, Some(thread_id));
+        apply_shell_startup_files_env(&mut env, shell.shell_type.clone());
         ExecParams {
             command: params.command.clone(),
             cwd: turn_context.resolve_path(params.workdir.clone()),
             expiration: params.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
-            env: create_env(&turn_context.shell_environment_policy, Some(thread_id)),
+            env,
             network: turn_context.network.clone(),
             sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
             windows_sandbox_level: turn_context.windows_sandbox_level,
@@ -149,13 +154,15 @@ impl ShellCommandHandler {
         let shell = session.user_shell();
         let use_login_shell = Self::resolve_use_login_shell(params.login, allow_login_shell)?;
         let command = Self::base_command(shell.as_ref(), &params.command, use_login_shell);
+        let mut env = create_env(&turn_context.shell_environment_policy, Some(thread_id));
+        apply_shell_startup_files_env(&mut env, shell.shell_type.clone());
 
         Ok(ExecParams {
             command,
             cwd: turn_context.resolve_path(params.workdir.clone()),
             expiration: params.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
-            env: create_env(&turn_context.shell_environment_policy, Some(thread_id)),
+            env,
             network: turn_context.network.clone(),
             sandbox_permissions: params.sandbox_permissions.unwrap_or_default(),
             windows_sandbox_level: turn_context.windows_sandbox_level,
@@ -244,8 +251,12 @@ impl ToolHandler for ShellHandler {
                 let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
                 let params: ShellToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
                 let prefix_rule = params.prefix_rule.clone();
-                let exec_params =
-                    Self::to_exec_params(&params, turn.as_ref(), session.conversation_id);
+                let exec_params = Self::to_exec_params(
+                    &params,
+                    session.as_ref(),
+                    turn.as_ref(),
+                    session.conversation_id,
+                );
                 Self::run_exec_like(RunExecLikeArgs {
                     tool_name: tool_name.display(),
                     exec_params,
@@ -262,8 +273,12 @@ impl ToolHandler for ShellHandler {
                 .await
             }
             ToolPayload::LocalShell { params } => {
-                let exec_params =
-                    Self::to_exec_params(&params, turn.as_ref(), session.conversation_id);
+                let exec_params = Self::to_exec_params(
+                    &params,
+                    session.as_ref(),
+                    turn.as_ref(),
+                    session.conversation_id,
+                );
                 Self::run_exec_like(RunExecLikeArgs {
                     tool_name: tool_name.display(),
                     exec_params,
@@ -423,6 +438,10 @@ impl ShellHandler {
         if !dependency_env.is_empty() {
             exec_params.env.extend(dependency_env.clone());
         }
+        apply_shell_startup_files_env(
+            &mut exec_params.env,
+            session.user_shell().shell_type.clone(),
+        );
 
         let mut explicit_env_overrides = turn.shell_environment_policy.r#set.clone();
         for key in dependency_env.keys() {

@@ -95,6 +95,14 @@ struct MultitoolCli {
     #[clap(long = "codex-memory", value_name = "PATH", global = true)]
     pub codex_memory: Option<PathBuf>,
 
+    /// Control whether Codex reads shell startup files (equivalent to `CODEX_SHELL_STARTUP_FILES`).
+    ///
+    /// Values:
+    /// - `default`: allow normal startup file behavior
+    /// - `clean`: attempt to avoid user dotfiles where possible
+    #[clap(long = "shell-startup-files", value_name = "MODE", global = true)]
+    pub shell_startup_files: Option<String>,
+
     /// Load the user config layer from an arbitrary `config.toml` file instead of
     /// `$CODEX_HOME/config.toml`.
     #[clap(
@@ -735,6 +743,13 @@ where
             set_env_path("CODEX_MEMORIES_HOME", PathBuf::from(path));
             continue;
         }
+        if let Some(mode) = arg
+            .to_str()
+            .and_then(|arg| arg.strip_prefix("--shell-startup-files="))
+        {
+            set_env_str("CODEX_SHELL_STARTUP_FILES", std::ffi::OsString::from(mode));
+            continue;
+        }
 
         if arg == "--codex-home" {
             if let Some(path) = args.next() {
@@ -745,6 +760,12 @@ where
         if arg == "--codex-memory" {
             if let Some(path) = args.next() {
                 set_env_path("CODEX_MEMORIES_HOME", PathBuf::from(path));
+            }
+            continue;
+        }
+        if arg == "--shell-startup-files" {
+            if let Some(mode) = args.next() {
+                set_env_str("CODEX_SHELL_STARTUP_FILES", mode);
             }
             continue;
         }
@@ -759,6 +780,13 @@ fn set_env_path(key: &str, raw_path: PathBuf) {
     }
 }
 
+fn set_env_str(key: &str, value: std::ffi::OsString) {
+    // Safety: called at process startup before any worker threads are spawned.
+    unsafe {
+        std::env::set_var(key, value);
+    }
+}
+
 async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     let MultitoolCli {
         config_overrides: mut root_config_overrides,
@@ -766,6 +794,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         no_config,
         codex_home: _,
         codex_memory: _,
+        shell_startup_files: _,
         feature_toggles,
         remote,
         mut interactive,
@@ -1763,6 +1792,7 @@ mod tests {
             no_config: _,
             codex_home: _,
             codex_memory: _,
+            shell_startup_files: _,
         } = cli;
 
         let Subcommand::Resume(ResumeCommand {
@@ -1800,6 +1830,7 @@ mod tests {
             no_config: _,
             codex_home: _,
             codex_memory: _,
+            shell_startup_files: _,
         } = cli;
 
         let Subcommand::Fork(ForkCommand {
@@ -2063,8 +2094,8 @@ mod tests {
 
     #[test]
     fn agents_md_is_preserved_for_interactive_resume() {
-        let cli =
-            MultitoolCli::try_parse_from(["codex", "--agents-md", "/tmp/AGENTS.md"]).expect("parse");
+        let cli = MultitoolCli::try_parse_from(["codex", "--agents-md", "/tmp/AGENTS.md"])
+            .expect("parse");
         assert_eq!(
             cli.interactive.agents_md,
             vec![PathBuf::from("/tmp/AGENTS.md")]
