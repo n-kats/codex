@@ -124,9 +124,16 @@ pub(crate) async fn execute_user_shell_command(
     // We do not source rc files or otherwise reformat the script.
     let use_login_shell = true;
     let session_shell = session.user_shell();
+    let user_shell_environment_policy = turn_context
+        .user_shell_environment_policy()
+        .unwrap_or_else(|err| {
+            error!("failed to resolve user shell environment policy: {err}");
+            turn_context.shell_environment_policy.clone()
+        });
+    let user_shell_no_inject = turn_context.user_shell_no_inject().unwrap_or(false);
     let display_command = session_shell.derive_exec_args(&command, use_login_shell);
     let mut exec_env_map = create_env(
-        &turn_context.shell_environment_policy,
+        &user_shell_environment_policy,
         Some(session.conversation_id),
     );
     apply_shell_startup_files_env(&mut exec_env_map, session_shell.shell_type.clone());
@@ -134,7 +141,7 @@ pub(crate) async fn execute_user_shell_command(
         &display_command,
         session_shell.as_ref(),
         &turn_context.cwd,
-        &turn_context.shell_environment_policy.r#set,
+        &user_shell_environment_policy.r#set,
         &exec_env_map,
     );
 
@@ -184,6 +191,7 @@ pub(crate) async fn execute_user_shell_command(
         network_sandbox_policy: NetworkSandboxPolicy::from(&sandbox_policy),
         windows_sandbox_filesystem_overrides: None,
         arg0: None,
+        run_as: None,
     };
 
     let stdout_stream = Some(StdoutStream {
@@ -213,6 +221,7 @@ pub(crate) async fn execute_user_shell_command(
                 &raw_command,
                 &exec_output,
                 mode,
+                user_shell_no_inject,
             )
             .await;
             session
@@ -269,8 +278,15 @@ pub(crate) async fn execute_user_shell_command(
                 )
                 .await;
 
-            persist_user_shell_output(&session, turn_context.as_ref(), &raw_command, &output, mode)
-                .await;
+            persist_user_shell_output(
+                &session,
+                turn_context.as_ref(),
+                &raw_command,
+                &output,
+                mode,
+                user_shell_no_inject,
+            )
+            .await;
         }
         Ok(Err(err)) => {
             error!("user shell command failed: {err:?}");
@@ -314,6 +330,7 @@ pub(crate) async fn execute_user_shell_command(
                 &raw_command,
                 &exec_output,
                 mode,
+                user_shell_no_inject,
             )
             .await;
         }
@@ -326,7 +343,12 @@ async fn persist_user_shell_output(
     raw_command: &str,
     exec_output: &ExecToolCallOutput,
     mode: UserShellCommandMode,
+    no_inject: bool,
 ) {
+    if no_inject {
+        return;
+    }
+
     let output_item = user_shell_command_record_item(raw_command, exec_output, turn_context);
 
     if mode == UserShellCommandMode::StandaloneTurn {

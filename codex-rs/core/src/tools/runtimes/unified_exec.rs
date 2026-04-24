@@ -266,6 +266,10 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             let mut exec_env = attempt
                 .env_for(command, options, req.network.as_ref())
                 .map_err(|err| ToolError::Codex(err.into()))?;
+            exec_env.run_as = ctx
+                .turn
+                .custom_exec_run_as()
+                .map_err(|err| ToolError::Codex(err.into()))?;
             exec_env.exec_server_env_config = req.exec_server_env_config.clone();
             match zsh_fork_backend::maybe_prepare_unified_exec(
                 req,
@@ -323,6 +327,10 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
         };
         let mut exec_env = attempt
             .env_for(command, options, req.network.as_ref())
+            .map_err(|err| ToolError::Codex(err.into()))?;
+        exec_env.run_as = ctx
+            .turn
+            .custom_exec_run_as()
             .map_err(|err| ToolError::Codex(err.into()))?;
         exec_env.exec_server_env_config = req.exec_server_env_config.clone();
         let Some(environment) = ctx.turn.environment.as_ref() else {

@@ -74,6 +74,7 @@ fn test_exec_request(
         file_system_sandbox_policy,
         network_sandbox_policy,
         arg0,
+        None,
     )
 }
 

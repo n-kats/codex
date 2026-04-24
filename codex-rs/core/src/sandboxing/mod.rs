@@ -15,6 +15,7 @@ use crate::exec::execute_exec_request;
 #[cfg(target_os = "macos")]
 use crate::spawn::CODEX_SANDBOX_ENV_VAR;
 use crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
+use crate::spawn::RunAsUser;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::exec_output::ExecToolCallOutput;
@@ -57,6 +58,7 @@ pub struct ExecRequest {
     pub network_sandbox_policy: NetworkSandboxPolicy,
     pub(crate) windows_sandbox_filesystem_overrides: Option<WindowsSandboxFilesystemOverrides>,
     pub arg0: Option<String>,
+    pub run_as: Option<RunAsUser>,
 }
 
 impl ExecRequest {
@@ -75,6 +77,7 @@ impl ExecRequest {
         file_system_sandbox_policy: FileSystemSandboxPolicy,
         network_sandbox_policy: NetworkSandboxPolicy,
         arg0: Option<String>,
+        run_as: Option<RunAsUser>,
     ) -> Self {
         let windows_sandbox_policy_cwd = cwd.clone();
         Self {
@@ -94,6 +97,7 @@ impl ExecRequest {
             network_sandbox_policy,
             windows_sandbox_filesystem_overrides: None,
             arg0,
+            run_as,
         }
     }
 
@@ -146,6 +150,7 @@ impl ExecRequest {
             network_sandbox_policy,
             windows_sandbox_filesystem_overrides: None,
             arg0,
+            run_as: None,
         }
     }
 }

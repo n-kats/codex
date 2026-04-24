@@ -320,14 +320,35 @@ async fn turn_start_emits_thread_scoped_warning_notification_for_trimmed_skills(
     )
     .await??;
 
-    let notification = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_notification_message("warning"),
-    )
-    .await??;
-    let params = notification.params.expect("warning params");
-    let warning: WarningNotification =
-        serde_json::from_value(params).expect("deserialize warning notification");
+    let warning = loop {
+        let notification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_notification_message("warning"),
+        )
+        .await??;
+        let params = notification.params.clone().expect("warning params");
+        let warning: WarningNotification =
+            serde_json::from_value(params).expect("deserialize warning notification");
+        if warning.thread_id.as_deref() != Some(thread.id.as_str()) {
+            continue;
+        }
+        if warning
+            .message
+            .contains("custom.user_shell.no_inject is false")
+            || warning
+                .message
+                .contains("custom.exec.* resolves to the current user")
+        {
+            continue;
+        }
+        if !warning
+            .message
+            .contains("Exceeded skills context budget of 2%")
+        {
+            continue;
+        }
+        break warning;
+    };
     assert_eq!(warning.thread_id.as_deref(), Some(thread.id.as_str()));
     assert_eq!(
         warning.message,

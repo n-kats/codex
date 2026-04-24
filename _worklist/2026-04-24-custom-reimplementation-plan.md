@@ -30,6 +30,16 @@
 5. `command_exec_worker_user` / `user_shell_environment_policy_split` / `user_shell_no_inject`
    - コマンド実行の権限分離と `!` の扱いをまとめて戻す。
    - 相互依存が強いので別々に引かない。
+   - 過去実装の実体を確認済み:
+     - `custom.exec.worker_user` / `worker_uid` / `worker_gid` を config で解決
+     - `RunAsUser { uid, gid, supplementary_gids }` を spawn に渡す
+     - `spawn.rs` の `pre_exec` で `setgroups` → `setgid` → `setuid`
+     - `assistant` 用と `!` 用で `ShellEnvironmentPolicy` を分ける
+     - `!` の注入/保存は `user_shell` の境界で止める
+   - 今の codebase への当て方:
+     - まず config/schema と単体テストを戻す
+     - その後、spawn の共通入口に uid/gid 切替を寄せる
+     - `!` は権限分離の対象外にして、env policy と no_inject だけ分ける
 
 6. `tui-enter-newline-ctrl-enter-send`
    - ユーザー入力の基本挙動を戻す。
@@ -62,3 +72,36 @@
 - その後に「TUI・remote」を戻す。
 - 最後に「テスト・運用補助」を固める。
 
+## 5番のテスト棚卸しメモ
+
+old custom ブランチで確認した、今回の塊に関係するテストは以下。
+
+### `core/src/config/config_tests.rs`
+
+- `custom__user_shell_no_inject__tomlから読み込める`
+- `custom__user_shell_no_inject__false明示時はstartup_warningを出す`
+- `custom__user_shell_no_inject__未設定でもstartup_warningを出す`
+- `custom__exec_worker_user__workerがinvokerと同じならstartup_warningを出す`
+- `custom__codex_memory__CODEX_MEMORIES_HOME値を解決できる`
+
+### `core/tests/suite/custom_exec_command_worker_user.rs`
+
+- `custom__exec_worker_user__exec_command_tty_false_runs_as_worker_user`
+- `custom__exec_worker_user__shell_runs_as_worker_user`
+
+### `core/tests/suite/custom_user_shell_cmd.rs`
+
+- `custom__exec_worker_user__exec_worker_user設定時もinvokerで実行される`
+- `custom__user_shell_no_inject__bang結果をローカル記録しない`
+
+### current 側で追加した補完テスト
+
+- `core/tests/suite/shell_command.rs`
+  - `shell_command_uses_custom_assistant_shell_environment_policy`
+- `core/tests/suite/user_shell_cmd.rs`
+  - `custom__user_shell_environment_policy__bang_uses_custom_user_policy`
+
+### 現状
+
+- 上の old custom テストは current 側へすべて移植済み。
+- 追加の runtime E2E で、assistant/user の env policy split も実際の実行結果で確認済み。

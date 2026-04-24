@@ -1031,7 +1031,16 @@ impl JsReplManager {
             .await
             .map_err(|err| err.to_string())?;
 
-        let mut env = create_env(&turn.shell_environment_policy, thread_id);
+        let assistant_shell_environment_policy = turn
+            .assistant_shell_environment_policy()
+            .unwrap_or_else(|err| {
+                tracing::warn!(
+                    error = %err,
+                    "failed to resolve assistant shell environment policy; falling back to current shell policy"
+                );
+                turn.shell_environment_policy.clone()
+            });
+        let mut env = create_env(&assistant_shell_environment_policy, thread_id);
         if !dependency_env.is_empty() {
             env.extend(dependency_env.clone());
         }

@@ -52,9 +52,13 @@ no_inject = true
 
 ## 現在の実装メモ
 
-- `core/src/tasks/user_shell.rs` の `persist_user_shell_output()` が `turn_context.config.user_shell_no_inject` を最初に見て、`true` の場合はモデル注入とローカル履歴保存を止める。
+- `core/src/config/mod.rs` の `Config::user_shell_no_inject()` で `custom.user_shell.no_inject` を解決し、`Config` に保持した `custom` を参照している。
+- `core/src/tasks/user_shell.rs` の `persist_user_shell_output()` が `turn_context.user_shell_no_inject()` を最初に見て、`true` の場合はモデル注入とローカル履歴保存を止める。
 - `ExecCommandBegin` / `ExecCommandEnd` は通常どおり流し、`no_inject` は保存だけを切り替える。
 - そのため、`!` の表示は維持しつつ、履歴混入だけを抑える方針を保っている。
+- 起動時 warning は `custom.user_shell.no_inject = false`（未設定の既定 `false` を含む）で出す。
+- 回帰テストとして、`core/src/config/config_tests.rs` に warning 解決テストを追加し、`core/tests/suite/custom_user_shell_cmd.rs` に `no_inject` の履歴非保存テストを追加した。
+- `custom.exec.worker_user` と組み合わせたときも、`!` の挙動は invoker 側で維持されることを `core/tests/suite/user_shell_cmd.rs` で確認している。
 
 ## 関連ファイル一覧
 
@@ -63,5 +67,5 @@ no_inject = true
 - `codex-rs/core/src/tasks/user_shell.rs`
 - `codex-rs/core/src/user_shell_command.rs`
 - `codex-rs/core/config.schema.json`
-- `codex-rs/core/src/config/custom_tests.rs`
-- `codex-rs/core/tests/suite/custom_user_shell_cmd.rs`
+- `codex-rs/core/src/config/config_tests.rs`
+- `codex-rs/core/tests/suite/custom_tests.rs`

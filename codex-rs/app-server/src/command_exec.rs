@@ -748,6 +748,7 @@ mod tests {
             FileSystemSandboxPolicy::from(&sandbox_policy),
             NetworkSandboxPolicy::from(&sandbox_policy),
             /*arg0*/ None,
+            /*run_as*/ None,
         )
     }
 
@@ -860,6 +861,7 @@ mod tests {
                     FileSystemSandboxPolicy::from(&sandbox_policy),
                     NetworkSandboxPolicy::from(&sandbox_policy),
                     /*arg0*/ None,
+                    /*run_as*/ None,
                 ),
                 started_network_proxy: None,
                 tty: false,

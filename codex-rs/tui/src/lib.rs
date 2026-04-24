@@ -2379,14 +2379,12 @@ trust_level = "untrusted"
             config.startup_warnings.push(w);
         }
 
-        assert_eq!(
-            config.startup_warnings.len(),
-            1,
-            "warning from final config's invalid theme should be present"
-        );
         assert!(
-            config.startup_warnings[0].contains("bogus-theme"),
-            "warning should reference the final config's theme name"
+            config
+                .startup_warnings
+                .iter()
+                .any(|warning| warning.contains("bogus-theme")),
+            "warning from final config's invalid theme should be present"
         );
         Ok(())
     }

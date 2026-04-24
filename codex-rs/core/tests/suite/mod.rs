@@ -40,6 +40,10 @@ mod collaboration_instructions;
 mod compact;
 mod compact_remote;
 mod compact_resume_fork;
+#[cfg(not(target_os = "windows"))]
+mod custom_exec_command_worker_user;
+#[cfg(not(target_os = "windows"))]
+mod custom_user_shell_cmd;
 mod deprecation_notice;
 mod exec;
 mod exec_policy;

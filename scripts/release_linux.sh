@@ -126,50 +126,70 @@ sha_line="$(cat "$sha_file")"
 git_rev="$("${git_safe[@]}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 echo "==> Writing ${note_file}"
-{
-  printf '%s\n' \
-    '# custom_codex リリース（Linux）' \
-    '' \
-    "- バージョン: ${full_version}" \
-    "- ベース: ${base_version}" \
-    "- ファイル: ${name}.tar.gz" \
-    "- 日付（JST）: ${date_jst_compact}" \
-    "- コミット: ${git_rev}" \
-    "- strip 済み: ${strip_used}" \
-    '' \
-    '## 使い方' \
-    '' \
-    '1) ダウンロードした `tar.gz` と `sha256` を同じフォルダに置く' \
-    '' \
-    '2) ハッシュ検証:' \
-    '' \
-    '```bash' \
-    "sha256sum -c ${name}.tar.gz.sha256" \
-    '```' \
-    '' \
-    '期待される sha256:' \
-    '' \
-    '```' \
-    "${sha_line}" \
-    '```' \
-    '' \
-    '3) 展開して実行:' \
-    '' \
-    '```bash' \
-    "tar -xzf ${name}.tar.gz" \
-    './codex --help' \
-    '```' \
-    '' \
-    '## 付属ファイルについて' \
-    '' \
-    '- この tarball には `LICENSE` と `NOTICE` を同梱しています。' \
-    '- 署名ファイル（`.asc`）は **付属しません**（sha256 のみ）。' \
-    '' \
-    '## GitHub Releases に置くファイル' \
-    '' \
-    "- ${name}.tar.gz" \
-    "- ${name}.tar.gz.sha256"
-} >"$note_file"
+cat >"$note_file" <<EOF
+# custom_codex リリース（Linux）
+
+- バージョン: ${full_version}
+- ベース: ${base_version}
+- ファイル: ${name}.tar.gz
+- 日付（JST）: ${date_jst_compact}
+- コミット: ${git_rev}
+- strip 済み: ${strip_used}
+
+## 使い方
+
+1) ダウンロードした `tar.gz` と `sha256` を同じフォルダに置く
+
+2) ハッシュ検証:
+
+\`\`\`bash
+sha256sum -c ${name}.tar.gz.sha256
+\`\`\`
+
+期待される sha256:
+
+\`\`\`
+${sha_line}
+\`\`\`
+
+3) 展開して実行:
+
+\`\`\`bash
+tar -xzf ${name}.tar.gz
+./codex --help
+\`\`\`
+
+## 注意（custom.exec.worker_user を使う場合）
+
+`custom.exec.worker_user` に設定するユーザー名を `worker_user` とします。  
+worker user 実行には `setuid/setgid` 権限が必要なので、以下のどちらかの方法を設定してください。
+
+### 方法1: setcap 方式
+`codex` 実体バイナリに capability を付与します。
+
+\`\`\`bash
+sudo setcap cap_setuid,cap_setgid=ep {codexバイナリのパス}
+getcap {codexバイナリのパス}
+\`\`\`
+
+### 方法2: sudo 方式
+`setcap` が使えない環境では、`sudo` フォールバックを使えます。  
+その場合は、`sudo -n -u "#UID" -g "#GID" -- env -i ...` が実行できるように `sudoers` を設定してください。
+
+\`\`\`bash
+youruser ALL=({worker_user}:{worker_user}) NOPASSWD: ALL
+\`\`\`
+
+## 付属ファイルについて
+
+- この tarball には `LICENSE` と `NOTICE` を同梱しています。
+- 署名ファイル（`.asc`）は **付属しません**（sha256 のみ）。
+
+## GitHub Releases に置くファイル
+
+- ${name}.tar.gz
+- ${name}.tar.gz.sha256
+EOF
 
 echo "==> Done"
 echo "Artifacts:"

@@ -1,4 +1,5 @@
 use super::*;
+use crate::spawn::RunAsUser;
 use codex_model_provider::SharedModelProvider;
 use codex_model_provider::create_model_provider;
 use codex_protocol::protocol::TurnEnvironmentSelection;
@@ -93,6 +94,24 @@ impl TurnContext {
             &self.file_system_sandbox_policy,
             self.network_sandbox_policy,
         )
+    }
+
+    pub(crate) fn assistant_shell_environment_policy(
+        &self,
+    ) -> std::io::Result<ShellEnvironmentPolicy> {
+        self.config.assistant_shell_environment_policy()
+    }
+
+    pub(crate) fn user_shell_environment_policy(&self) -> std::io::Result<ShellEnvironmentPolicy> {
+        self.config.user_shell_environment_policy()
+    }
+
+    pub(crate) fn user_shell_no_inject(&self) -> std::io::Result<bool> {
+        self.config.user_shell_no_inject()
+    }
+
+    pub(crate) fn custom_exec_run_as(&self) -> std::io::Result<Option<RunAsUser>> {
+        self.config.custom_exec_run_as()
     }
 
     pub(crate) fn model_context_window(&self) -> Option<i64> {
@@ -465,7 +484,15 @@ impl Session {
             network_sandbox_policy: session_configuration.network_sandbox_policy,
             network,
             windows_sandbox_level: session_configuration.windows_sandbox_level,
-            shell_environment_policy: per_turn_config.permissions.shell_environment_policy.clone(),
+            shell_environment_policy: per_turn_config
+                .assistant_shell_environment_policy()
+                .unwrap_or_else(|err| {
+                    tracing::warn!(
+                        error = %err,
+                        "failed to resolve assistant shell environment policy; falling back to current shell policy"
+                    );
+                    per_turn_config.permissions.shell_environment_policy.clone()
+                }),
             tools_config,
             features: per_turn_config.features.clone(),
             ghost_snapshot: per_turn_config.ghost_snapshot.clone(),

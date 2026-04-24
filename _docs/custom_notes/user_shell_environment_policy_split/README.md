@@ -15,6 +15,15 @@
   - モデル起動側: `custom.assistant_shell_environment_policy` があればそれを使用し、なければ従来どおり `shell_environment_policy` を使用する。
   - `!` 側: `custom.user_shell_environment_policy` があればそれを使用し、なければモデル起動側（上で解決した policy）を使用する。
 
+## 現在の実装メモ
+
+- `core/src/config/mod.rs` に `assistant_shell_environment_policy()` / `user_shell_environment_policy()` を追加し、`Config` に保持した `custom` を元に解決している。
+- `core/src/session/turn_context.rs` では turn-context 経由で両 policy を参照できるようにしている。
+- `core/src/tools/handlers/shell.rs`、`core/src/tools/runtimes/shell.rs`、`core/src/tools/runtimes/unified_exec.rs`、`core/src/tools/js_repl/mod.rs`、`core/src/unified_exec/process_manager.rs` では assistant policy を使って env を構築している。
+- `core/src/tasks/user_shell.rs` は user policy を使って `!` の env を構築している。
+- `custom.exec.worker_user` の warning テストと一緒に、`custom.user_shell_environment_policy_overrides_user_shell_env` の既存テストで split が壊れていないことを確認している。
+- 追加で `core/tests/suite/shell_command.rs` と `core/tests/suite/user_shell_cmd.rs` に runtime の E2E を置き、`shell_command` が assistant policy を、`!` が user policy を使うことを確認している。
+
 ## 対象範囲 / 非対象
 
 - 対象: `!`（UserShell）とモデル起動コマンドの env 構築。
@@ -39,11 +48,11 @@ set = { HOME = "/home/ubuntu" }
 
 ## 動作確認
 
-- `cd codex-rs && cargo test -p codex-core --lib config::custom_user_shell_environment_policy_overrides_user_shell_env`
+- `MCP` 経由で `codex-core` の `custom_user_shell_environment_policy_overrides_user_shell_env` を実行して確認
+- `MCP` 経由で `codex-core` の `custom_user_shell_no_inject_is_resolved` / `custom_exec_accepts_uid_gid_pair` / `custom_exec_requires_uid_and_gid_together` を併せて確認
 
 ## 関連ファイル
 
 - `codex-rs/core/src/config/mod.rs`
 - `codex-rs/core/src/codex.rs`
 - `codex-rs/core/src/tasks/user_shell.rs`
-

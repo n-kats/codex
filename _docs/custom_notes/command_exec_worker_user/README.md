@@ -61,13 +61,13 @@
   - 対策は運用で決める（ホスト側の所有/グループ調整、共有グループ、もしくは作業ツリーをコンテナ内に閉じる等）。
 - `custom.exec.*` が「起動ユーザー（invoker）と同じ uid」に解決されている場合、権限分離は実質的に無効になる。
   - この場合は起動時に warning を出す（`!` は常に invoker で実行されるため、モデル起動コマンドも同じユーザーだと境界がない）。
-- `custom.exec.worker_user` を使う場合、実行時には worker ユーザーの supplementary groups（補助グループ）も child process に設定する（`sudo -u` 相当の期待に寄せる）。
+- `custom.exec.worker_user` を使う場合、実行時には worker ユーザーの supplementary groups（補助グループ）も child process に設定する。
   - そのため「worker を共有グループに追加して `chmod 710` で“通過だけ”許可する」といった運用が成立する。
   - 一方、`custom.exec.worker_uid/gid` だけでユーザー名が分からない場合は supplementary groups を解決できない（= 設定しない）ため、必要なら primary GID を共有グループに合わせる（`worker_gid`）か、パス側の権限を運用で調整する。
-- ホスト（非 root）で `custom.exec.worker_user` を使う場合、Codex が child process 側で `setgroups/setgid/setuid` を行う必要があるため、運用上は以下のいずれかが必要になる。
+- ホスト（非 root）で `custom.exec.worker_user` を使う場合、Codex はまず child process 側で `setgroups/setgid/setuid` を試し、これが許可されない環境では `sudo -n -u "#UID" -g "#GID" -- env -i ...` にフォールバックする。
   - `codex` 実体バイナリに file capability を付与（例: `setcap cap_setuid,cap_setgid=ep $(which codex)`）
   - systemd の `AmbientCapabilities=` 等で起動時に capabilities を付与（ファイルに `setcap` したくない場合）
-  - `setcap` が使えない環境（例: rootless Docker の overlayfs など）では、`sudo -n -u "#UID" -g "#GID" -- env -i ...` へのフォールバックで動かせる（`sudoers` の許可が必要 / 必要に応じて `/tmp/codex-argv0/<argv0>` の symlink 経由で argv0 を維持する）
+  - `setcap` が使えない環境では、`sudoers` の許可でパスワードなし `sudo` を使えると worker-user 実行を維持できる。
   - root で起動する（推奨しない）
 - `.env` 等の secrets は作業ツリー（AI が触るディレクトリ）に置かないことが最も確実。
   - シンボリックリンクで secrets を指す運用は、`chmod -R` 等の誤操作や参照境界が複雑化しやすい点に注意する。
@@ -81,8 +81,8 @@
 - `make test-core` で既存のコマンド実行系テストが通ること
 - `custom.exec.worker_uid/gid` を設定して、`shell` / `shell_command` / `exec_command`（unified exec）で spawn が worker UID/GID になること
   - 例: `id -u` / `id -g` を実行して期待値になること
-- `exec_command` は worker user 指定時に `sudo -n -u "#UID" -g "#GID"` で worker に切り替えるため、invoker がパスワードなしでその `sudo` を実行できる必要がある（満たせない場合は `exec_command` が失敗してよい）
-  - 起動直後（turn 作成時）に `sudo -n ... id -u` の事前確認を行い、満たせない場合は早めに Warning を出す（後から `exec_command` で落ちるのを避ける）
+- `exec_command` は worker user 指定時に child process の `uid/gid` を落として実行し、`setuid/setgid` が許可されない環境では `sudo` にフォールバックする。
+  - 起動直後（turn 作成時）に `id -u` / `id -g` で worker の解決結果を確認し、満たせない場合は早めに Warning を出す（後から `exec_command` で落ちるのを避ける）
 - Docker bind mount あり/なしで worker 実行が機能すること（必要なら UID/GID をホスト側に合わせる）
 
 ## 設定例（推奨）
@@ -108,14 +108,18 @@ include_only = [
 
 - worker ユーザー指定が「ツールごと」になっていると抜け道が生じやすいので、spawn 直前の共通箇所に集約する。
 - worker の `HOME` / `CODEX_HOME` を invoker と混ぜると、意図せずトークン/キャッシュが共有される。
-- `codex-rs/core/src/spawn.rs` では upstream 追従をしやすくするため、worker user 固有の処理を `apply_run_as_pre_exec()` / `try_spawn_with_run_as_sudo()` に寄せ、通常 spawn の流れと分離して保つ。
+- `codex-rs/core/src/spawn.rs` と `codex-rs/utils/pty/src/pipe.rs` では、worker user 固有の処理を child process の `pre_exec` に寄せ、失敗時は `sudo` フォールバックへ切り替える形にしている。
 
 ## 現在の実装メモ
 
-- `custom.exec.worker_user` は `core/src/config/mod.rs` で解決し、`exec_run_as` として各 runtime に渡している。
-- `shell` / `unified_exec` / `apply_patch` の guardian review 経路では、`review_id` を通して approval の識別子を落とさないようにしている。
-- guardian 向け `cwd` は `AbsolutePathBuf` に正規化し、spawn / approval の型境界で `PathBuf` と混ざらないようにしている。
-- `unix_escalation.rs` では `ExecToolCallOutput` を core 側型に揃え、sandbox 判定も core 側の `is_likely_sandbox_denied()` と同じ型で行っている。
+- `custom.exec.worker_user` / `worker_uid` / `worker_gid` は `core/src/config/mod.rs` で解決し、`Config::custom_exec_run_as()` として各 runtime に渡している。
+- `core/src/spawn.rs` の `SpawnChildRequest` に `run_as` を追加し、`setgroups` → `setgid` → `setuid` を spawn 直前で適用している。
+- `shell` / `shell_command` / `exec_command` / `unified_exec` の各経路で `run_as` を埋めるようにしている。
+- `shell_environment_policy.inherit = "all"` と `custom.exec` の併用は、`custom.exec` が設定された状態での env 漏えいを防ぐために `InvalidInput` にしている。
+- `custom.exec.worker_user` の supplementary groups は Unix で `getgrouplist` から解決し、`worker_user` が現在のログインユーザーでも実行ユーザーとしてのグループ境界を保つようにしている。
+- 起動時には `custom.exec.*` が invoker と同じユーザーへ解決される場合に warning を出す。
+- 回帰テストとして、`core/src/config/config_tests.rs` に warning 解決テストを追加し、`core/tests/suite/custom_exec_command_worker_user.rs` に `exec_command` / `shell` が worker uid/gid で動く E2E テストを追加した。
+- さらに `core/tests/suite/user_shell_cmd.rs` で、`!` が worker user の設定に影響されず invoker 側のまま動くことを確認している。
 
 ## 関連ファイル（実装時に追記）
 
@@ -125,7 +129,9 @@ include_only = [
 - `codex-rs/core/src/config/mod.rs`
 - `codex-rs/core/src/spawn.rs`
 - `codex-rs/core/src/sandboxing/mod.rs`
-- `codex-rs/core/src/tools/runtimes/mod.rs`
 - `codex-rs/core/src/tools/runtimes/shell.rs`
 - `codex-rs/core/src/tools/runtimes/unified_exec.rs`
-- `codex-rs/core/src/unified_exec/session_manager.rs`
+- `codex-rs/core/src/tasks/user_shell.rs`
+- `codex-rs/core/src/exec.rs`
+- `codex-rs/core/src/landlock.rs`
+- `codex-rs/core/src/config/config_tests.rs`

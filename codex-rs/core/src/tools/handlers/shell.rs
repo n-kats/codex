@@ -98,7 +98,16 @@ impl ShellHandler {
         thread_id: ThreadId,
     ) -> ExecParams {
         let shell = session.user_shell();
-        let mut env = create_env(&turn_context.shell_environment_policy, Some(thread_id));
+        let assistant_shell_environment_policy = turn_context
+            .assistant_shell_environment_policy()
+            .unwrap_or_else(|err| {
+                tracing::warn!(
+                    error = %err,
+                    "failed to resolve assistant shell environment policy; falling back to current shell policy"
+                );
+                turn_context.shell_environment_policy.clone()
+            });
+        let mut env = create_env(&assistant_shell_environment_policy, Some(thread_id));
         apply_shell_startup_files_env(&mut env, shell.shell_type.clone());
         ExecParams {
             command: params.command.clone(),
@@ -154,7 +163,16 @@ impl ShellCommandHandler {
         let shell = session.user_shell();
         let use_login_shell = Self::resolve_use_login_shell(params.login, allow_login_shell)?;
         let command = Self::base_command(shell.as_ref(), &params.command, use_login_shell);
-        let mut env = create_env(&turn_context.shell_environment_policy, Some(thread_id));
+        let assistant_shell_environment_policy = turn_context
+            .assistant_shell_environment_policy()
+            .unwrap_or_else(|err| {
+                tracing::warn!(
+                    error = %err,
+                    "failed to resolve assistant shell environment policy; falling back to current shell policy"
+                );
+                turn_context.shell_environment_policy.clone()
+            });
+        let mut env = create_env(&assistant_shell_environment_policy, Some(thread_id));
         apply_shell_startup_files_env(&mut env, shell.shell_type.clone());
 
         Ok(ExecParams {
@@ -443,7 +461,16 @@ impl ShellHandler {
             session.user_shell().shell_type.clone(),
         );
 
-        let mut explicit_env_overrides = turn.shell_environment_policy.r#set.clone();
+        let assistant_shell_environment_policy = turn
+            .assistant_shell_environment_policy()
+            .unwrap_or_else(|err| {
+                tracing::warn!(
+                    error = %err,
+                    "failed to resolve assistant shell environment policy; falling back to current shell policy"
+                );
+                turn.shell_environment_policy.clone()
+            });
+        let mut explicit_env_overrides = assistant_shell_environment_policy.r#set.clone();
         for key in dependency_env.keys() {
             if let Some(value) = exec_params.env.get(key) {
                 explicit_env_overrides.insert(key.clone(), value.clone());
