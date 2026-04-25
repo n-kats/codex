@@ -28,10 +28,11 @@ sign = true
 content = true
 ```
 
-- `core` で `custom.theme.diff` を読み取り、`Config` に RGB として保持。
-- `tui` の diff renderer にグローバル上書きパレットを追加し、起動時に `Config` から反映。
-- `enabled = false` で diff 色付け全体を無効化できる。
-- `line_bg` / `gutter` / `sign` / `content` で部分的に無効化できる。
+- `config.toml` の `custom.theme.diff` を読み取り、TUI 起動時に diff renderer へ反映。
+- `tui` の diff renderer にグローバル上書きパレットを追加し、起動時に反映。
+- `enabled = false` で custom diff 上書きを無効化できる。
+- `line_bg` / `gutter` / `sign` / `content` で custom 上書きの適用範囲を切り替えられる。
+- `add_line_bg` / `del_line_bg` は `#RRGGBB` / `RRGGBB` を受け付ける。
 
 ## 対象範囲（非対象も）
 
@@ -44,15 +45,14 @@ content = true
 ## 注意点（環境差・既知の制約）
 
 - 色指定は `#RRGGBB`（`RRGGBB` も可）の 6 桁 hex のみ。
-- 不正な値は config 読み込みエラーになる。
-- 現在は diff 色付け（背景・ガター・記号・非syntax本文）の on/off を制御可能。
+- 不正な値は startup warning で無視され、既定の diff 配色にフォールバックする。
 - `content = false` は diff 固有スタイルを外す。syntax highlight 自体は別機能。
 
 ## 動作確認手順（手動・テスト・スナップショット）
 
 - 手元環境で実施:
   - `cd codex-rs && cargo test -p codex-core custom_theme_diff`
-  - `cd codex-rs && cargo test -p codex-tui diff_palette_override`
+  - `cd codex-rs && cargo test -p codex-tui custom_diff_theme_override`
 - 手動確認:
   - 上記 `custom.theme.diff` を設定して TUI を起動し、差分表示の背景色が変わることを確認。
   - `enabled = false` で差分の色付けが無効になることを確認。
@@ -60,7 +60,7 @@ content = true
 
 ## つまずきと対処（警告や失敗の修正）
 
-- TUI 側だけで処理すると設定バリデーションが遅れるため、`core` で hex を検証して `Config` に解決済み値を渡す構成にした。
+- TUI 起動時に raw config を解決しているため、hex の検証は起動時 warning として返すようにした。
 
 ## 関連ファイル一覧
 

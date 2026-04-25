@@ -13,6 +13,7 @@ use codex_config::config_toml::AgentsToml;
 use codex_config::config_toml::AutoReviewToml;
 use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::CustomConfigToml;
+use codex_config::config_toml::CustomThemeDiffToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
@@ -1798,6 +1799,37 @@ fn tui_theme_defaults_to_none() {
 "#;
     let parsed = toml::from_str::<ConfigToml>(cfg).expect("TOML deserialization should succeed");
     assert_eq!(parsed.tui.as_ref().and_then(|t| t.theme.as_deref()), None);
+}
+
+#[test]
+fn custom_theme_diff_deserializes_from_toml() {
+    let cfg = r##"
+[custom.theme.diff]
+enabled = true
+line_bg = false
+gutter = true
+sign = false
+content = true
+add_line_bg = "#102030"
+del_line_bg = "#402010"
+"##;
+    let parsed = toml::from_str::<ConfigToml>(cfg).expect("TOML deserialization should succeed");
+    assert_eq!(
+        parsed
+            .custom
+            .theme
+            .as_ref()
+            .and_then(|theme| theme.diff.as_ref()),
+        Some(&CustomThemeDiffToml {
+            enabled: Some(true),
+            line_bg: Some(false),
+            gutter: Some(true),
+            sign: Some(false),
+            content: Some(true),
+            add_line_bg: Some("#102030".to_string()),
+            del_line_bg: Some("#402010".to_string()),
+        })
+    );
 }
 
 #[test]

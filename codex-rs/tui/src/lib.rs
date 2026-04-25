@@ -1386,6 +1386,15 @@ async fn run_ratatui_app(
     ) {
         config.startup_warnings.push(w);
     }
+    if let Some(w) = crate::diff_render::set_custom_diff_theme_override(
+        config
+            .custom
+            .theme
+            .as_ref()
+            .and_then(|theme| theme.diff.as_ref()),
+    ) {
+        config.startup_warnings.push(w);
+    }
 
     set_default_client_residency_requirement(config.enforce_residency.value());
     let active_profile = config.active_profile.clone();

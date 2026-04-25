@@ -103,45 +103,66 @@ fn write_plugin_app_plugin(home: &TempDir) {
     .expect("write plugin app config");
 }
 
-fn remote_aware_stdio_server_bin() -> Result<String> {
+fn remote_aware_stdio_server_bin(home: &TempDir) -> Result<String> {
     let bin = stdio_server_bin()?;
-    let Some(container_name) = std::env::var_os(remote_env_env_var()) else {
-        return Ok(bin);
-    };
-    let container_name = container_name
-        .into_string()
-        .map_err(|value| anyhow::anyhow!("remote env container name must be utf-8: {value:?}"))?;
+    let wrapper_dir = home.path().join(".tmp");
+    fs::create_dir_all(&wrapper_dir).context("create plugin stdio wrapper dir")?;
     let unique_suffix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let remote_path = format!(
-        "/tmp/codex-remote-env/test_stdio_server-{}-{unique_suffix}",
+    let wrapper_path = wrapper_dir.join(format!(
+        "test_stdio_server_wrapper-{}-{unique_suffix}.sh",
         std::process::id()
-    );
-    let container_target = format!("{container_name}:{remote_path}");
-    let copy_output = StdCommand::new("docker")
-        .arg("cp")
-        .arg(&bin)
-        .arg(&container_target)
-        .output()
-        .with_context(|| format!("copy {bin} to remote MCP test env"))?;
-    ensure!(
-        copy_output.status.success(),
-        "docker cp test_stdio_server failed: stdout={} stderr={}",
-        String::from_utf8_lossy(&copy_output.stdout).trim(),
-        String::from_utf8_lossy(&copy_output.stderr).trim()
-    );
+    ));
+    let host_bin = bin.replace('\"', "\\\"");
+    let remote_bin = if let Some(container_name) = std::env::var_os(remote_env_env_var()) {
+        let container_name = container_name.into_string().map_err(|value| {
+            anyhow::anyhow!("remote env container name must be utf-8: {value:?}")
+        })?;
+        let remote_path = format!(
+            "/tmp/codex-remote-env/test_stdio_server-{}-{unique_suffix}",
+            std::process::id()
+        );
+        let container_target = format!("{container_name}:{remote_path}");
+        let copy_output = StdCommand::new("docker")
+            .arg("cp")
+            .arg(&bin)
+            .arg(&container_target)
+            .output()
+            .with_context(|| format!("copy {bin} to remote MCP test env"))?;
+        ensure!(
+            copy_output.status.success(),
+            "docker cp test_stdio_server failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&copy_output.stdout).trim(),
+            String::from_utf8_lossy(&copy_output.stderr).trim()
+        );
 
-    let chmod_output = StdCommand::new("docker")
-        .args(["exec", &container_name, "chmod", "+x", remote_path.as_str()])
-        .output()
-        .context("mark remote test_stdio_server executable")?;
-    ensure!(
-        chmod_output.status.success(),
-        "docker chmod test_stdio_server failed: stdout={} stderr={}",
-        String::from_utf8_lossy(&chmod_output.stdout).trim(),
-        String::from_utf8_lossy(&chmod_output.stderr).trim()
-    );
+        let chmod_output = StdCommand::new("docker")
+            .args(["exec", &container_name, "chmod", "+x", remote_path.as_str()])
+            .output()
+            .context("mark remote test_stdio_server executable")?;
+        ensure!(
+            chmod_output.status.success(),
+            "docker chmod test_stdio_server failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&chmod_output.stdout).trim(),
+            String::from_utf8_lossy(&chmod_output.stderr).trim()
+        );
+        Some(remote_path.replace('\"', "\\\""))
+    } else {
+        None
+    }
+    .unwrap_or_else(|| host_bin.clone());
 
-    Ok(remote_path)
+    let script = format!(
+        "#!/bin/sh\nif [ -x \"{remote_bin}\" ]; then\n  exec \"{remote_bin}\" \"$@\"\nfi\nexec \"{host_bin}\" \"$@\"\n"
+    );
+    fs::write(&wrapper_path, script).context("write plugin stdio wrapper")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&wrapper_path)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&wrapper_path, perms).context("chmod plugin stdio wrapper")?;
+    }
+    Ok(wrapper_path.to_string_lossy().into_owned())
 }
 
 async fn build_plugin_test_codex(
@@ -186,7 +207,7 @@ async fn build_apps_enabled_plugin_test_codex(
                 .expect("test config should allow feature update");
             config.chatgpt_base_url = chatgpt_base_url;
         });
-    let test = builder.build_remote_aware(server).await?;
+    let test = builder.build(server).await?;
     Ok(test.codex)
 }
 
@@ -333,7 +354,7 @@ async fn explicit_plugin_mentions_inject_plugin_guidance() -> Result<()> {
     .await;
 
     let codex_home = Arc::new(TempDir::new()?);
-    let rmcp_test_server_bin = match remote_aware_stdio_server_bin() {
+    let rmcp_test_server_bin = match remote_aware_stdio_server_bin(codex_home.as_ref()) {
         Ok(bin) => bin,
         Err(err) => {
             eprintln!("test_stdio_server binary not available, skipping test: {err}");
@@ -510,7 +531,7 @@ async fn plugin_mcp_tools_are_listed() -> Result<()> {
             .join(".tmp/app-server-remote-plugin-sync-v1"),
         "",
     )?;
-    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin(codex_home.as_ref())?;
     write_plugin_mcp_plugin(codex_home.as_ref(), &rmcp_test_server_bin);
     let codex = build_plugin_test_codex(&server, codex_home).await?;
     let startup_complete = wait_for_mcp_startup_complete(&codex).await?;

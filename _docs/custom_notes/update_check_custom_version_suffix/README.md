@@ -21,7 +21,10 @@
   - `+`（build metadata）は無視
 - `current`:
   - `-` または `+` 以降を捨てて `MAJOR.MINOR.PATCH` を抽出する
-  - `1.2.3-custom-...` / `1.2.3+custom...` のようなカスタム suffix を許容する
+- `1.2.3-custom-...` / `1.2.3+custom...` のようなカスタム suffix を許容する
+
+実装では、`parse_strict_version()` と `parse_current_version()` を分け、
+`latest` 側は strict、`current` 側は suffix 許容で比較する。
 
 ## 対象範囲
 
@@ -35,7 +38,9 @@
 
 ## テスト
 
-- 実装の単体テスト: `codex-rs/tui/src/updates.rs` 内の `custom_suffix_versions_are_comparable_against_plain_semver`
+- 実装の単体テスト:
+  - `codex-rs/tui/src/updates.rs` 内の `custom_suffix_versions_are_comparable_against_plain_semver`
+  - `codex-rs/tui/src/updates.rs` 内の `prerelease_version_is_not_considered_newer`
 - 手元の検証（ターゲット）: `make test-tui`
 
 ## 関連ファイル

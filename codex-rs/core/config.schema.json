@@ -687,6 +687,14 @@
             "worker_user": null
           }
         },
+        "theme": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomThemeToml"
+            }
+          ],
+          "default": null
+        },
         "user_shell": {
           "allOf": [
             {
@@ -718,6 +726,42 @@
         },
         "worker_user": {
           "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeDiffToml": {
+      "additionalProperties": false,
+      "properties": {
+        "add_line_bg": {
+          "type": "string"
+        },
+        "content": {
+          "type": "boolean"
+        },
+        "del_line_bg": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "gutter": {
+          "type": "boolean"
+        },
+        "line_bg": {
+          "type": "boolean"
+        },
+        "sign": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeToml": {
+      "additionalProperties": false,
+      "properties": {
+        "diff": {
+          "$ref": "#/definitions/CustomThemeDiffToml"
         }
       },
       "type": "object"
@@ -2523,6 +2567,7 @@
           "worker_uid": null,
           "worker_user": null
         },
+        "theme": null,
         "user_shell": {
           "no_inject": null
         },
