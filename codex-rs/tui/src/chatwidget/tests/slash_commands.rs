@@ -14,8 +14,7 @@ fn submit_composer_text(chat: &mut ChatWidget, text: &str) {
     chat.bottom_pane
         .set_composer_text(text.to_string(), Vec::new(), Vec::new());
     chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 }
 
 fn queue_composer_text_with_tab(chat: &mut ChatWidget, text: &str) {
@@ -48,7 +47,7 @@ async fn slash_compact_eagerly_queues_follow_up_before_turn_start() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert!(chat.pending_steers.is_empty());
     assert_eq!(chat.queued_user_messages.len(), 1);
@@ -415,7 +414,7 @@ async fn queued_slash_menu_selection_drains_next_input() {
         "expected permissions menu to open; popup:\n{popup}"
     );
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(
@@ -458,7 +457,7 @@ async fn queued_bare_rename_drains_next_input_after_name_update() {
     assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
 
     chat.handle_paste("Queued rename".to_string());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
@@ -712,7 +711,7 @@ async fn slash_rename_prefills_existing_thread_name() {
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert_chatwidget_snapshot!("slash_rename_prefilled_prompt", popup);
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     assert_matches!(
         rx.try_recv(),
@@ -730,7 +729,7 @@ async fn slash_rename_without_existing_thread_name_starts_empty() {
     assert!(popup.contains("Name thread"));
     assert!(popup.contains("Type a name and press Enter"));
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
 }
@@ -1335,7 +1334,7 @@ async fn slash_resume_with_arg_requests_named_session() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_matches!(
         rx.try_recv(),
@@ -1524,7 +1523,7 @@ async fn user_turn_carries_service_tier_after_fast_toggle() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
@@ -1619,7 +1618,7 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {

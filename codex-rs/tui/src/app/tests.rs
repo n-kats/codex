@@ -991,7 +991,7 @@ async fn replay_thread_snapshot_restores_pending_pastes_for_submit() {
     assert_eq!(app.chat_widget.composer_text_with_pending(), large);
 
     app.chat_widget
-        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_user_turn_op(&mut new_op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(
@@ -1054,7 +1054,7 @@ async fn replay_thread_snapshot_restores_collaboration_mode_for_draft_submit() {
         /*resume_restored_queue*/ true,
     );
     app.chat_widget
-        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_user_turn_op(&mut new_op_rx) {
         Op::UserTurn {
@@ -1162,7 +1162,7 @@ async fn replayed_interrupted_turn_restores_queued_input_to_composer() {
     app.chat_widget
         .apply_external_edit("queued follow-up".to_string());
     app.chat_widget
-        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     let input_state = app
         .chat_widget
         .capture_thread_input_state()
@@ -4319,7 +4319,7 @@ async fn backtrack_resubmit_preserves_data_image_urls_in_user_turn() {
     });
 
     app.chat_widget
-        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let mut saw_rollback = false;
     let mut submitted_items: Option<Vec<UserInput>> = None;

@@ -1032,7 +1032,7 @@ async fn bang_shell_enter_while_task_running_submits_run_user_shell_command() {
 
     chat.bottom_pane
         .set_composer_text("!echo hi".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match op_rx.try_recv() {
         Ok(Op::RunUserShellCommand { command }) => assert_eq!(command, "echo hi"),
@@ -1064,7 +1064,7 @@ async fn user_message_during_user_shell_command_is_queued_not_steered() {
     assert!(chat.only_user_shell_commands_running());
     chat.bottom_pane
         .set_composer_text("hi".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
     assert_eq!(chat.queued_user_message_texts(), vec!["hi".to_string()]);

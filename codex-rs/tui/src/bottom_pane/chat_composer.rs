@@ -38,8 +38,9 @@
 //!
 //! # Submission and Prompt Expansion
 //!
-//! `Enter` submits immediately. `Tab` requests queuing while a task is running; if no task is
-//! running, `Tab` submits just like Enter so input is never dropped.
+//! `Enter` inserts a newline. `Ctrl+Enter` submits immediately, and `Ctrl+J` is a fallback
+//! submit key for terminals that do not report `Ctrl+Enter` distinctly. `Tab` requests queuing
+//! while a task is running; if no task is running, `Tab` submits so input is never dropped.
 //! `Tab` does not submit when entering a `!` shell command.
 //!
 //! On submit/queue paths, the composer:
@@ -1610,6 +1611,16 @@ impl ChatComposer {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
                 ..
+            }
+            | KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }
+            | KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
             } => {
                 if let Some(sel) = popup.selected_item() {
                     match sel {
@@ -1657,7 +1668,7 @@ impl ChatComposer {
                         }
                     }
                 }
-                // Fallback to default newline handling if no command selected.
+                // Fallback to default input handling if no command selected.
                 self.handle_key_event_without_popup(key_event)
             }
             input => self.handle_input_basic(input),
@@ -1821,6 +1832,16 @@ impl ChatComposer {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
                 ..
+            }
+            | KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }
+            | KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::CONTROL,
+                ..
             } => {
                 let Some(sel) = popup.selected_match() else {
                     self.active_popup = ActivePopup::None;
@@ -1938,6 +1959,16 @@ impl ChatComposer {
             | KeyEvent {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
+                ..
+            }
+            | KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }
+            | KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::CONTROL,
                 ..
             } => {
                 if let Some(mention) = popup.selected_mention() {
@@ -2589,15 +2620,15 @@ impl ChatComposer {
         // If the first line is a bare built-in slash command (no args),
         // dispatch it even when the slash popup isn't visible. This preserves
         // the workflow: type a prefix ("/di"), press Tab to complete to
-        // "/diff ", then press Enter/Ctrl+Shift+Q to run it. Tab moves the cursor beyond
+        // "/diff ", then press Ctrl+Enter/Ctrl+J to run it. Tab moves the cursor beyond
         // the '/name' token and our caret-based heuristic hides the popup,
-        // but Enter/Ctrl+Shift+Q should still dispatch the command rather than submit
+        // but Ctrl+Enter/Ctrl+J should still dispatch the command rather than submit
         // literal text.
         if let Some(result) = self.try_dispatch_bare_slash_command() {
             return (result, true);
         }
 
-        // If we're in a paste-like burst capture, treat Enter/Ctrl+Shift+Q as part of the burst
+        // If we're in a paste-like burst capture, treat submit keys as part of the burst
         // and accumulate it rather than submitting or inserting immediately.
         // Do not treat as paste inside a slash-command context.
         let in_slash_context = self.slash_commands_enabled()
@@ -2618,7 +2649,7 @@ impl ChatComposer {
             return (InputResult::None, true);
         }
 
-        // During a paste-like burst, treat Enter/Ctrl+Shift+Q as a newline instead of submit.
+        // During a paste-like burst, treat submit keys as a newline instead of submit.
         if !in_slash_context
             && !self.disable_paste_burst
             && self
@@ -3021,6 +3052,16 @@ impl ChatComposer {
             KeyEvent {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
+                ..
+            } => self.handle_input_basic(key_event),
+            KeyEvent {
+                code: KeyCode::Enter,
+                modifiers: KeyModifiers::CONTROL,
+                ..
+            }
+            | KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::CONTROL,
                 ..
             } => self.handle_submission(/*should_queue*/ false),
             input => self.handle_input_basic(input),
@@ -5185,7 +5226,7 @@ mod tests {
         assert_eq!(composer.textarea.element_payloads(), vec![placeholder]);
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted {
                 text,
@@ -6008,7 +6049,7 @@ mod tests {
         assert!(matches!(composer.active_popup, ActivePopup::File(_)));
 
         let (result, consumed) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(consumed);
         match result {
             InputResult::Submitted { text, .. } => assert_eq!(text, input),
@@ -6041,7 +6082,7 @@ mod tests {
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('あ'), KeyModifiers::NONE));
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted { text, .. } => assert_eq!(text, "1あ"),
             _ => panic!("expected Submitted"),
@@ -6096,7 +6137,7 @@ mod tests {
 
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('你'), KeyModifiers::NONE));
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('好'), KeyModifiers::NONE));
-        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
         let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
 
@@ -6130,7 +6171,7 @@ mod tests {
         for ch in ['你', '　', '好'] {
             let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
         }
-        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         for ch in ['h', 'i'] {
             let _ = composer.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
         }
@@ -6269,7 +6310,7 @@ mod tests {
             .begin_with_retro_grabbed(String::new(), Instant::now());
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(matches!(result, InputResult::Command(SlashCommand::Diff)));
     }
 
@@ -6365,7 +6406,7 @@ mod tests {
         assert!(composer.pending_pastes.is_empty());
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted { text, .. } => assert_eq!(text, "hello"),
             _ => panic!("expected Submitted"),
@@ -6391,7 +6432,7 @@ mod tests {
         // Ensure composer is empty and press Enter.
         assert!(composer.textarea.text().is_empty());
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         match result {
             InputResult::None => {}
@@ -6427,7 +6468,7 @@ mod tests {
         assert_eq!(composer.pending_pastes[0].1, large);
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted { text, .. } => assert_eq!(text, large),
             _ => panic!("expected Submitted"),
@@ -6455,7 +6496,7 @@ mod tests {
         composer.textarea.set_text_clearing_elements(&input);
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert!(matches!(
             result,
@@ -6483,7 +6524,7 @@ mod tests {
         composer.textarea.set_text_clearing_elements(&input);
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(InputResult::None, result);
         assert_eq!(composer.textarea.text(), input);
@@ -6525,7 +6566,7 @@ mod tests {
         composer.textarea.set_text_clearing_elements(&input);
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(InputResult::None, result);
         assert_eq!(composer.textarea.text(), input);
@@ -6865,7 +6906,7 @@ mod tests {
 
         // Press Enter to dispatch the selected command.
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         // When a slash command is dispatched, the composer should return a
         // Command result (not submit literal text) and clear its textarea.
@@ -6912,7 +6953,7 @@ mod tests {
 
         composer.textarea.insert_str("hello");
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(matches!(result, InputResult::Submitted { .. }));
         assert!(composer.textarea.is_empty());
 
@@ -6945,7 +6986,7 @@ mod tests {
 
         composer.textarea.insert_str("/diff");
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Command(cmd) => {
                 assert_eq!(cmd.command(), "diff");
@@ -6980,7 +7021,7 @@ mod tests {
             .set_text_clearing_elements("/review these changes");
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(InputResult::None, result);
         assert_eq!("/review these changes", composer.textarea.text());
@@ -7029,7 +7070,7 @@ mod tests {
             .set_text_clearing_elements("/prompts:greet");
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert!(matches!(
             result,
@@ -7298,7 +7339,7 @@ mod tests {
 
         // Press Enter: should dispatch the command, not submit literal text.
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Command(cmd) => assert_eq!(cmd.command(), "diff"),
             InputResult::CommandWithArgs(_, _, _) => {
@@ -7462,7 +7503,7 @@ mod tests {
         type_chars_humanlike(&mut composer, &['!', '/', 'd', 'i', 'f', 'f']);
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert!(matches!(
             result,
@@ -7489,7 +7530,7 @@ mod tests {
         type_chars_humanlike(&mut composer, &['/', 'm', 'e', 'n', 't', 'i', 'o', 'n']);
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         match result {
             InputResult::Command(cmd) => {
@@ -7533,7 +7574,7 @@ mod tests {
         composer.attach_image(PathBuf::from("/tmp/plan.png"));
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         match result {
             InputResult::CommandWithArgs(cmd, args, text_elements) => {
@@ -7591,7 +7632,7 @@ mod tests {
         assert_eq!(elements[0].placeholder(&text), Some(placeholder.as_str()));
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         match result {
             InputResult::Submitted {
@@ -7678,7 +7719,7 @@ mod tests {
 
         // Submit and verify final expansion
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         if let InputResult::Submitted { text, .. } = result {
             assert_eq!(text, format!("{} and {}", test_cases[0].0, test_cases[2].0));
         } else {
@@ -7906,7 +7947,7 @@ mod tests {
         composer.attach_image(path.clone());
         composer.handle_paste(" hi".into());
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted {
                 text,
@@ -7953,7 +7994,7 @@ mod tests {
         );
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(matches!(result, InputResult::Submitted { .. }));
         assert_eq!(
             composer.take_recent_submission_mention_bindings(),
@@ -7979,7 +8020,7 @@ mod tests {
         composer.attach_image(path.clone());
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(matches!(result, InputResult::Submitted { .. }));
 
         let _ = composer.take_remote_image_urls();
@@ -8042,12 +8083,12 @@ mod tests {
 
         type_chars_humanlike(&mut composer, &['f', 'i', 'r', 's', 't']);
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(matches!(result, InputResult::Submitted { .. }));
 
         type_chars_humanlike(&mut composer, &['s', 'e', 'c', 'o', 'n', 'd']);
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(matches!(result, InputResult::Submitted { .. }));
 
         let (_result, _needs_redraw) =
@@ -8089,12 +8130,12 @@ mod tests {
 
         type_chars_humanlike(&mut composer, &['f', 'i', 'r', 's', 't']);
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(matches!(result, InputResult::Submitted { .. }));
 
         type_chars_humanlike(&mut composer, &['!', 'g', 'i', 't']);
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(matches!(result, InputResult::Submitted { .. }));
 
         let (_result, _needs_redraw) =
@@ -8151,7 +8192,7 @@ mod tests {
         composer.attach_image(path.clone());
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted {
                 text,
@@ -8194,7 +8235,7 @@ mod tests {
         composer.attach_image(path.clone());
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted {
                 text,
@@ -8237,7 +8278,7 @@ mod tests {
         composer.attach_image(path.clone());
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted {
                 text,
@@ -8285,7 +8326,7 @@ mod tests {
             .clone();
 
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         assert!(matches!(result, InputResult::None));
         assert_eq!(composer.pending_pastes.len(), 1);
         assert_eq!(composer.textarea.text(), format!("/unknown {placeholder}"));
@@ -8293,7 +8334,7 @@ mod tests {
         composer.textarea.set_cursor(/*pos*/ 0);
         composer.textarea.insert_str(" ");
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted {
                 text,
@@ -8321,7 +8362,7 @@ mod tests {
         let path = PathBuf::from("/tmp/image2.png");
         composer.attach_image(path.clone());
         let (result, _) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
         match result {
             InputResult::Submitted {
                 text,
@@ -8639,7 +8680,7 @@ mod tests {
             .set_text_clearing_elements("/Users/example/project/src/main.rs");
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         if let InputResult::Submitted { text, .. } = result {
             assert_eq!(text, "/Users/example/project/src/main.rs");
@@ -8675,7 +8716,7 @@ mod tests {
             .set_text_clearing_elements(" /this-looks-like-a-command");
 
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         if let InputResult::Submitted { text, .. } = result {
             assert_eq!(text, "/this-looks-like-a-command");
@@ -8923,7 +8964,7 @@ mod tests {
 
         composer.set_text_content("/diff".to_string(), Vec::new(), Vec::new());
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(result, InputResult::Command(SlashCommand::Diff));
         composer.record_pending_slash_command_history();
@@ -8948,7 +8989,7 @@ mod tests {
 
         composer.set_text_content("/di".to_string(), Vec::new(), Vec::new());
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         assert_eq!(result, InputResult::Command(SlashCommand::Diff));
         composer.record_pending_slash_command_history();
@@ -8975,7 +9016,7 @@ mod tests {
         composer.set_text_content("/plan investigate this".to_string(), Vec::new(), Vec::new());
         composer.active_popup = ActivePopup::None;
         let (result, _needs_redraw) =
-            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
         match result {
             InputResult::CommandWithArgs(cmd, args, text_elements) => {

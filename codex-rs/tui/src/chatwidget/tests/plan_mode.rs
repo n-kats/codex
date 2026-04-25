@@ -599,7 +599,7 @@ async fn submit_user_message_blocks_when_thread_model_is_unavailable() {
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
 
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_no_submit_op(&mut op_rx);
     let rendered = drain_insert_history(&mut rx)
@@ -844,7 +844,7 @@ async fn plan_implementation_popup_skips_when_steer_follows_proposed_plan() {
     );
     chat.bottom_pane
         .set_composer_text("Please continue.".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(
@@ -884,7 +884,7 @@ async fn plan_implementation_popup_shows_after_new_plan_follows_steer() {
     );
     chat.bottom_pane
         .set_composer_text("Please revise.".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(
@@ -1126,7 +1126,7 @@ async fn enter_submits_when_plan_stream_is_not_active() {
 
     chat.bottom_pane
         .set_composer_text("submitted immediately".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert!(chat.queued_user_messages.is_empty());
     match next_submit_op(&mut op_rx) {
@@ -1239,7 +1239,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode:
@@ -1257,7 +1257,7 @@ async fn collab_slash_command_opens_picker_and_updates_mode() {
 
     chat.bottom_pane
         .set_composer_text("follow up".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode:
@@ -1323,7 +1323,7 @@ async fn plan_slash_command_with_args_submits_prompt_in_plan_mode() {
 
     chat.bottom_pane
         .set_composer_text("/plan build the plan".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -1435,7 +1435,7 @@ async fn collab_mode_is_sent_after_enabling() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode:
@@ -1459,7 +1459,7 @@ async fn collab_mode_applies_default_preset() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             collaboration_mode:
@@ -1489,7 +1489,7 @@ async fn user_turn_includes_personality_from_config() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             personality: Some(Personality::Friendly),

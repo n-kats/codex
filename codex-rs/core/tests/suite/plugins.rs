@@ -103,7 +103,7 @@ fn write_plugin_app_plugin(home: &TempDir) {
     .expect("write plugin app config");
 }
 
-fn remote_aware_stdio_server_bin(shared_root: &std::path::Path) -> Result<String> {
+fn remote_aware_stdio_server_bin() -> Result<String> {
     let bin = stdio_server_bin()?;
     let Some(container_name) = std::env::var_os(remote_env_env_var()) else {
         return Ok(bin);
@@ -112,20 +112,10 @@ fn remote_aware_stdio_server_bin(shared_root: &std::path::Path) -> Result<String
         .into_string()
         .map_err(|value| anyhow::anyhow!("remote env container name must be utf-8: {value:?}"))?;
     let unique_suffix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let remote_dir = shared_root.join(".tmp");
-    fs::create_dir_all(&remote_dir).with_context(|| {
-        format!(
-            "create remote stdio server directory at {}",
-            remote_dir.display()
-        )
-    })?;
-    let remote_path = remote_dir
-        .join(format!(
-            "test_stdio_server-{}-{unique_suffix}",
-            std::process::id()
-        ))
-        .to_string_lossy()
-        .to_string();
+    let remote_path = format!(
+        "/tmp/codex-remote-env/test_stdio_server-{}-{unique_suffix}",
+        std::process::id()
+    );
     let container_target = format!("{container_name}:{remote_path}");
     let copy_output = StdCommand::new("docker")
         .arg("cp")
@@ -343,7 +333,7 @@ async fn explicit_plugin_mentions_inject_plugin_guidance() -> Result<()> {
     .await;
 
     let codex_home = Arc::new(TempDir::new()?);
-    let rmcp_test_server_bin = match remote_aware_stdio_server_bin(codex_home.as_ref().path()) {
+    let rmcp_test_server_bin = match remote_aware_stdio_server_bin() {
         Ok(bin) => bin,
         Err(err) => {
             eprintln!("test_stdio_server binary not available, skipping test: {err}");
@@ -520,7 +510,7 @@ async fn plugin_mcp_tools_are_listed() -> Result<()> {
             .join(".tmp/app-server-remote-plugin-sync-v1"),
         "",
     )?;
-    let rmcp_test_server_bin = remote_aware_stdio_server_bin(codex_home.as_ref().path())?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin()?;
     write_plugin_mcp_plugin(codex_home.as_ref(), &rmcp_test_server_bin);
     let codex = build_plugin_test_codex(&server, codex_home).await?;
     let startup_complete = wait_for_mcp_startup_complete(&codex).await?;
