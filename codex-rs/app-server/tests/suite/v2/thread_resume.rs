@@ -706,6 +706,7 @@ stream_max_retries = 0
                 branch: Some(Some("feature/pr-branch".to_string())),
                 origin_url: None,
             }),
+            project_doc_paths: None,
         })
         .await?;
     timeout(

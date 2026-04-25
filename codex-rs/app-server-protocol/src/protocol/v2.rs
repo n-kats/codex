@@ -3661,6 +3661,10 @@ pub struct ThreadMetadataUpdateParams {
     /// provide a string to replace the stored value.
     #[ts(optional = nullable)]
     pub git_info: Option<ThreadMetadataGitInfoUpdateParams>,
+    /// Override the instruction source files used by the active thread.
+    /// Omit to leave the active thread's instruction sources unchanged.
+    #[ts(optional = nullable)]
+    pub project_doc_paths: Option<Vec<PathBuf>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

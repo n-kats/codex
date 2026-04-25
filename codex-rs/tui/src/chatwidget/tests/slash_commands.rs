@@ -203,6 +203,57 @@ async fn queued_slash_custom_agents_clear_restores_auto_discovery() {
 }
 
 #[tokio::test]
+async fn queued_slash_custom_agents_emits_visible_log_with_resolved_path() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let docs_dir = chat.config.cwd.join("docs");
+    std::fs::create_dir_all(docs_dir.as_path()).expect("create docs dir");
+    let resolved_doc = docs_dir.join("custom.md");
+    std::fs::write(resolved_doc.as_path(), "custom instructions").expect("write custom agents doc");
+
+    queue_composer_text_with_tab(&mut chat, "/custom-agents docs/custom.md");
+
+    match op_rx.try_recv() {
+        Ok(Op::OverrideTurnContext {
+            project_doc_paths: Some(paths),
+            ..
+        }) => {
+            assert_eq!(paths, vec![PathBuf::from("docs/custom.md")]);
+        }
+        other => panic!("expected custom agents override op, got {other:?}"),
+    }
+
+    let rendered = match rx.try_recv() {
+        Ok(AppEvent::InsertHistoryCell(cell)) => {
+            lines_to_single_string(&cell.display_lines(/*width*/ 80))
+        }
+        other => panic!("expected /custom-agents to emit a visible history cell, got {other:?}"),
+    };
+    assert!(
+        rendered.contains("custom-agents applied:"),
+        "unexpected /custom-agents history cell: {rendered}"
+    );
+    assert!(
+        rendered.contains(&resolved_doc.display().to_string()),
+        "expected /custom-agents history cell to show the resolved instruction source path, got {rendered}"
+    );
+
+    chat.handle_codex_event(Event {
+        id: "custom-agents-warning".into(),
+        msg: EventMsg::Warning(WarningEvent {
+            message: format!(
+                "custom-agents loaded 1 instruction source(s): {}",
+                resolved_doc.display()
+            ),
+        }),
+    });
+
+    assert!(
+        rx.try_recv().is_err(),
+        "expected backend custom-agents warning to be suppressed after the visible log"
+    );
+}
+
+#[tokio::test]
 async fn queued_bang_shell_dispatches_after_active_turn() {
     let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());

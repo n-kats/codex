@@ -9,6 +9,7 @@
 - `codex` CLI の `--agents-md` を interactive / exec の双方で `ConfigOverrides.project_doc_paths` に渡す配線を復元。
 - `Config` / `ConfigOverrides` に `project_doc_paths` を復元し、`discover_project_doc_paths()` で明示指定を優先する挙動を復元。
 - `Op::OverrideTurnContext` の `project_doc_paths` を core 側で再処理し、`get_user_instructions()` を再計算してセッション設定へ反映。
+- TUI の `/custom-agents` から app-server の `thread/metadata/update` を経由して、loaded thread の live context も更新する。
 - TUI `/custom-agents` を「非対応メッセージ」から実処理へ復元。
   - `clear/off/none/auto/default` は auto-discovery に戻す
   - パス指定時は存在/種別チェック後に `OverrideTurnContext` で反映
@@ -58,6 +59,9 @@
 - `/custom-agents clear` は TUI では空の `project_doc_paths` を送るだけなので、core 側では `project_doc_paths` の空化を確認する形で回帰を抑えた。
 - `project_doc_paths` 更新時に再計算対象の config が古い cwd を保持していると、相対パスが解決できず `user_instructions` が `None` になったため、`cwd` の同期を追加した。
 - `project_doc_paths` 更新で baseline を残すと次ターンの full context 再注入が止まるため、reference context を明示的にクリアするようにした。
+- `/custom-agents` の適用結果は、TUI の history に `custom-agents applied: ...` として出し、実際に読み込まれた instruction source を cwd 基準で解決したパスで見せる。backend の warning `custom-agents loaded ...` は重複表示しない。
+- `/custom-agents` の内容が次 turn の model-visible context に入るかは、`thread/metadata/update` を通した app-server E2E で検証する。具体的には、AGENTS.md の内容が最初の turn で見え、`/custom-agents` 後の次 turn では置き換わることを確認する。
+- startup warnings は bootstrap の `config_warnings` へ二重に流さず、session 側の通知で一度だけ見せるようにした。
 
 ## 関連ファイル一覧
 

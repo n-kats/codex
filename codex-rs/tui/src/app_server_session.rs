@@ -52,6 +52,8 @@ use codex_app_server_protocol::ThreadLoadedListResponse;
 use codex_app_server_protocol::ThreadMemoryMode;
 use codex_app_server_protocol::ThreadMemoryModeSetParams;
 use codex_app_server_protocol::ThreadMemoryModeSetResponse;
+use codex_app_server_protocol::ThreadMetadataUpdateParams;
+use codex_app_server_protocol::ThreadMetadataUpdateResponse;
 use codex_app_server_protocol::ThreadReadParams;
 use codex_app_server_protocol::ThreadReadResponse;
 use codex_app_server_protocol::ThreadRealtimeAppendAudioParams;
@@ -652,6 +654,27 @@ impl AppServerSession {
             })
             .await
             .wrap_err("thread/memoryMode/set failed in TUI")?;
+        Ok(())
+    }
+
+    pub(crate) async fn thread_metadata_update_project_doc_paths(
+        &mut self,
+        thread_id: ThreadId,
+        project_doc_paths: Vec<PathBuf>,
+    ) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: ThreadMetadataUpdateResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadMetadataUpdate {
+                request_id,
+                params: ThreadMetadataUpdateParams {
+                    thread_id: thread_id.to_string(),
+                    git_info: None,
+                    project_doc_paths: Some(project_doc_paths),
+                },
+            })
+            .await
+            .wrap_err("thread/metadata/update failed in TUI")?;
         Ok(())
     }
 

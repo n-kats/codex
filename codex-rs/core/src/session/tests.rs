@@ -86,6 +86,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::ConversationAudioParams;
 use codex_protocol::protocol::CreditsSnapshot;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GranularApprovalConfig;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
@@ -109,6 +110,7 @@ use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::UserMessageEvent;
 use codex_protocol::protocol::W3cTraceContext;
+use codex_protocol::protocol::WarningEvent;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::context_snapshot;
@@ -3072,6 +3074,145 @@ async fn session_update_settings_rebuilds_user_instructions_for_project_doc_path
         state.session_configuration.user_instructions.clone()
     };
     assert_eq!(user_instructions.as_deref(), Some("custom instructions"));
+
+    let next_turn = session.new_default_turn().await;
+    assert_eq!(
+        next_turn.user_instructions.as_deref(),
+        Some("custom instructions")
+    );
+}
+
+#[tokio::test]
+async fn session_update_settings_reinjects_project_doc_paths_into_initial_context() {
+    let (session, turn_context) = make_session_and_context().await;
+    let workspace = tempfile::tempdir().expect("create temp dir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("custom.md"), "custom instructions")
+        .expect("write custom agents doc");
+
+    session
+        .record_context_updates_and_set_reference_context_item(&turn_context)
+        .await;
+    let initial_history = session.clone_history().await;
+    let initial_context = session.build_initial_context(&turn_context).await;
+    assert_eq!(initial_history.raw_items().to_vec(), initial_context);
+
+    session
+        .update_settings(SessionSettingsUpdate {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: Some(vec![PathBuf::from("docs/custom.md")]),
+            ..Default::default()
+        })
+        .await
+        .expect("project doc path update should succeed");
+
+    let next_turn = session.new_default_turn().await;
+    session
+        .record_context_updates_and_set_reference_context_item(&next_turn)
+        .await;
+
+    let history = session.clone_history().await;
+    let history_texts = user_input_texts(history.raw_items());
+    assert!(
+        history_texts
+            .iter()
+            .any(|text| text.contains("custom instructions")),
+        "expected /custom-agents docs to be reinjected into the model-visible context, got {history_texts:?}"
+    );
+    assert_eq!(
+        history.raw_items().to_vec(),
+        [
+            initial_context,
+            session.build_initial_context(&next_turn).await
+        ]
+        .concat()
+    );
+}
+
+#[tokio::test]
+async fn override_turn_context_reports_loaded_instruction_sources() {
+    let (session, _turn_context, rx) = make_session_and_context_with_rx().await;
+    let workspace = tempfile::tempdir().expect("create temp dir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    let custom_doc = docs_dir.join("custom.md");
+    std::fs::write(&custom_doc, "custom instructions").expect("write custom agents doc");
+    let custom_doc_path = custom_doc.display().to_string();
+
+    crate::session::handlers::override_turn_context(
+        session.as_ref(),
+        "test-submission".to_string(),
+        SessionSettingsUpdate {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: Some(vec![PathBuf::from("docs/custom.md")]),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let evt = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("loaded-sources warning should arrive")
+        .expect("loaded-sources warning should be readable");
+    assert!(matches!(
+        evt.msg,
+        EventMsg::Warning(WarningEvent { message })
+            if message.contains("custom-agents loaded")
+                && message.contains(&custom_doc_path)
+    ));
+}
+
+#[tokio::test]
+async fn override_turn_context_reinjects_custom_agents_into_next_turn_context() {
+    let (session, turn_context, rx) = make_session_and_context_with_rx().await;
+    let workspace = tempfile::tempdir().expect("create temp dir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("custom.md"), "custom instructions")
+        .expect("write custom agents doc");
+
+    crate::session::handlers::override_turn_context(
+        session.as_ref(),
+        "test-submission".to_string(),
+        SessionSettingsUpdate {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: Some(vec![PathBuf::from("docs/custom.md")]),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let evt = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("loaded-sources warning should arrive")
+        .expect("loaded-sources warning should be readable");
+    assert!(matches!(
+        evt.msg,
+        EventMsg::Warning(WarningEvent { message })
+            if message.contains("custom-agents loaded")
+                && message.contains("docs/custom.md")
+    ));
+
+    let next_turn = session.new_default_turn().await;
+    let initial_context = session.build_initial_context(&next_turn).await;
+    let user_texts = user_input_texts(&initial_context);
+    assert!(
+        user_texts
+            .iter()
+            .any(|text| text.contains("custom instructions")),
+        "expected /custom-agents docs to be injected into the next model-visible context, got {user_texts:?}"
+    );
+
+    session
+        .record_context_updates_and_set_reference_context_item(&next_turn)
+        .await;
+    let history = session.clone_history().await;
+    assert_eq!(history.raw_items().to_vec(), initial_context);
+    assert!(
+        turn_context.user_instructions.is_none(),
+        "the test setup should start without custom user instructions"
+    );
 }
 
 #[tokio::test]

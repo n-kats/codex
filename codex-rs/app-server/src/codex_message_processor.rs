@@ -3292,6 +3292,7 @@ impl CodexMessageProcessor {
         let ThreadMetadataUpdateParams {
             thread_id,
             git_info,
+            project_doc_paths,
         } = params;
 
         let thread_uuid = match ThreadId::from_string(&thread_id) {
@@ -3303,30 +3304,8 @@ impl CodexMessageProcessor {
             }
         };
 
-        let Some(ThreadMetadataGitInfoUpdateParams {
-            sha,
-            branch,
-            origin_url,
-        }) = git_info
-        else {
-            self.send_invalid_request_error(
-                request_id,
-                "gitInfo must include at least one field".to_string(),
-            )
-            .await;
-            return;
-        };
-
-        if sha.is_none() && branch.is_none() && origin_url.is_none() {
-            self.send_invalid_request_error(
-                request_id,
-                "gitInfo must include at least one field".to_string(),
-            )
-            .await;
-            return;
-        }
-
         let loaded_thread = self.thread_manager.get_thread(thread_uuid).await.ok();
+
         let mut state_db_ctx = loaded_thread.as_ref().and_then(|thread| thread.state_db());
         if state_db_ctx.is_none() {
             state_db_ctx = get_state_db(&self.config).await;
@@ -3348,81 +3327,148 @@ impl CodexMessageProcessor {
             return;
         }
 
-        let git_sha = match sha {
-            Some(Some(sha)) => {
-                let sha = sha.trim().to_string();
-                if sha.is_empty() {
-                    self.send_invalid_request_error(
-                        request_id,
-                        "gitInfo.sha must not be empty".to_string(),
-                    )
-                    .await;
-                    return;
-                }
-                Some(Some(sha))
-            }
-            Some(None) => Some(None),
-            None => None,
-        };
-        let git_branch = match branch {
-            Some(Some(branch)) => {
-                let branch = branch.trim().to_string();
-                if branch.is_empty() {
-                    self.send_invalid_request_error(
-                        request_id,
-                        "gitInfo.branch must not be empty".to_string(),
-                    )
-                    .await;
-                    return;
-                }
-                Some(Some(branch))
-            }
-            Some(None) => Some(None),
-            None => None,
-        };
-        let git_origin_url = match origin_url {
-            Some(Some(origin_url)) => {
-                let origin_url = origin_url.trim().to_string();
-                if origin_url.is_empty() {
-                    self.send_invalid_request_error(
-                        request_id,
-                        "gitInfo.originUrl must not be empty".to_string(),
-                    )
-                    .await;
-                    return;
-                }
-                Some(Some(origin_url))
-            }
-            Some(None) => Some(None),
-            None => None,
-        };
-
-        let updated = match state_db_ctx
-            .update_thread_git_info(
-                thread_uuid,
-                git_sha.as_ref().map(|value| value.as_deref()),
-                git_branch.as_ref().map(|value| value.as_deref()),
-                git_origin_url.as_ref().map(|value| value.as_deref()),
+        if git_info.is_none() && project_doc_paths.is_none() {
+            self.send_invalid_request_error(
+                request_id,
+                "thread/metadata/update must include gitInfo or projectDocPaths".to_string(),
             )
-            .await
+            .await;
+            return;
+        }
+
+        if let Some(ThreadMetadataGitInfoUpdateParams {
+            sha,
+            branch,
+            origin_url,
+        }) = git_info
         {
-            Ok(updated) => updated,
-            Err(err) => {
-                self.send_internal_error(
+            if sha.is_none() && branch.is_none() && origin_url.is_none() {
+                self.send_invalid_request_error(
                     request_id,
-                    format!("failed to update thread metadata for {thread_uuid}: {err}"),
+                    "gitInfo must include at least one field".to_string(),
                 )
                 .await;
                 return;
             }
-        };
-        if !updated {
-            self.send_internal_error(
-                request_id,
-                format!("thread metadata disappeared before update completed: {thread_uuid}"),
-            )
-            .await;
-            return;
+
+            let git_sha = match sha {
+                Some(Some(sha)) => {
+                    let sha = sha.trim().to_string();
+                    if sha.is_empty() {
+                        self.send_invalid_request_error(
+                            request_id,
+                            "gitInfo.sha must not be empty".to_string(),
+                        )
+                        .await;
+                        return;
+                    }
+                    Some(Some(sha))
+                }
+                Some(None) => Some(None),
+                None => None,
+            };
+            let git_branch = match branch {
+                Some(Some(branch)) => {
+                    let branch = branch.trim().to_string();
+                    if branch.is_empty() {
+                        self.send_invalid_request_error(
+                            request_id,
+                            "gitInfo.branch must not be empty".to_string(),
+                        )
+                        .await;
+                        return;
+                    }
+                    Some(Some(branch))
+                }
+                Some(None) => Some(None),
+                None => None,
+            };
+            let git_origin_url = match origin_url {
+                Some(Some(origin_url)) => {
+                    let origin_url = origin_url.trim().to_string();
+                    if origin_url.is_empty() {
+                        self.send_invalid_request_error(
+                            request_id,
+                            "gitInfo.originUrl must not be empty".to_string(),
+                        )
+                        .await;
+                        return;
+                    }
+                    Some(Some(origin_url))
+                }
+                Some(None) => Some(None),
+                None => None,
+            };
+
+            let updated = match state_db_ctx
+                .update_thread_git_info(
+                    thread_uuid,
+                    git_sha.as_ref().map(|value| value.as_deref()),
+                    git_branch.as_ref().map(|value| value.as_deref()),
+                    git_origin_url.as_ref().map(|value| value.as_deref()),
+                )
+                .await
+            {
+                Ok(updated) => updated,
+                Err(err) => {
+                    self.send_internal_error(
+                        request_id,
+                        format!("failed to update thread metadata for {thread_uuid}: {err}"),
+                    )
+                    .await;
+                    return;
+                }
+            };
+            if !updated {
+                self.send_internal_error(
+                    request_id,
+                    format!("thread metadata disappeared before update completed: {thread_uuid}"),
+                )
+                .await;
+                return;
+            }
+        }
+
+        if let Some(project_doc_paths) = project_doc_paths {
+            let Some(loaded_thread) = loaded_thread.as_ref() else {
+                self.send_invalid_request_error(
+                    request_id,
+                    format!(
+                        "thread {thread_uuid} must be loaded before metadata updates can patch live context"
+                    ),
+                )
+                .await;
+                return;
+            };
+            if let Err(err) = self
+                .submit_core_op(
+                    &request_id,
+                    loaded_thread.as_ref(),
+                    Op::OverrideTurnContext {
+                        cwd: None,
+                        approval_policy: None,
+                        approvals_reviewer: None,
+                        sandbox_policy: None,
+                        permission_profile: None,
+                        windows_sandbox_level: None,
+                        model: None,
+                        effort: None,
+                        summary: None,
+                        service_tier: None,
+                        collaboration_mode: None,
+                        personality: None,
+                        project_doc_paths: Some(project_doc_paths),
+                    },
+                )
+                .await
+            {
+                self.send_internal_error(
+                    request_id,
+                    format!("failed to update custom agent documents for {thread_uuid}: {err}"),
+                )
+                .await;
+                return;
+            }
         }
 
         let Some(summary) =

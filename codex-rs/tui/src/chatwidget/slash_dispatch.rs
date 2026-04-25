@@ -30,6 +30,32 @@ const SIDE_REVIEW_UNAVAILABLE_MESSAGE: &str =
 const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str = "Press Esc to return to the main thread first.";
 
 impl ChatWidget {
+    fn custom_agents_loaded_message(
+        cwd: &codex_utils_absolute_path::AbsolutePathBuf,
+        project_doc_paths: &[PathBuf],
+    ) -> String {
+        if project_doc_paths.is_empty() {
+            "custom-agents applied: restored auto-discovery".to_string()
+        } else {
+            let loaded_paths = project_doc_paths
+                .iter()
+                .map(|path| {
+                    let resolved: PathBuf = if path.is_absolute() {
+                        path.clone()
+                    } else {
+                        cwd.join(path).to_path_buf()
+                    };
+                    std::fs::canonicalize(resolved.as_path())
+                        .unwrap_or(resolved)
+                        .display()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("custom-agents applied: {loaded_paths}")
+        }
+    }
+
     /// Dispatch a bare slash command and record its staged local-history entry.
     ///
     /// The composer stages history before returning `InputResult::Command`; this wrapper commits
@@ -99,6 +125,7 @@ impl ChatWidget {
 
     fn show_custom_agents_prompt(&mut self) {
         let tx = self.app_event_tx.clone();
+        let cwd = self.config.cwd.clone();
         let current_paths = if self.config.project_doc_paths.is_empty() {
             String::new()
         } else {
@@ -119,6 +146,10 @@ impl ChatWidget {
             Box::new(move |text: String| {
                 match Self::parse_custom_agents_paths(&text) {
                     Ok(project_doc_paths) => {
+                        let message = Self::custom_agents_loaded_message(&cwd, &project_doc_paths);
+                        tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            history_cell::new_info_event(message, None),
+                        )));
                         tx.send(AppEvent::CodexOp(
                             AppCommand::override_turn_context(
                                 /*cwd*/ None,
@@ -686,6 +717,13 @@ impl ChatWidget {
             SlashCommand::CustomAgents if !trimmed.is_empty() => {
                 match Self::parse_custom_agents_paths(&args) {
                     Ok(project_doc_paths) => {
+                        let message = Self::custom_agents_loaded_message(
+                            &self.config.cwd,
+                            &project_doc_paths,
+                        );
+                        self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            history_cell::new_info_event(message, None),
+                        )));
                         self.submit_op(AppCommand::override_turn_context(
                             /*cwd*/ None,
                             /*approval_policy*/ None,

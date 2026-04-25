@@ -12,8 +12,8 @@
 
 `scripts/release_linux.sh` で次を行う:
 
-- `base_version`（`x.y.z`）を `fork-origin/main` から推定
-  - ローカルに存在するタグのうち、最新の安定 `rust-vX.Y.Z` を採用（ブランチ探索はしない）
+- `base_version`（`x.y.z`）をローカルにある安定 `rust-vX.Y.Z` タグから導出する
+  - 最新の安定タグを採用する（ブランチ探索はしない）
   - `rust-v0.0.*` のような snapshot 系タグや `-alpha/-beta` 等は採用しない
   - 安定タグが導出できない場合は **エラーで停止**（ローカルタグへのフォールバックはしない）
 - `full_version = {base_version}-custom-{yyyy-mm-dd}` を生成
@@ -22,7 +22,7 @@
 
 ## 注意点
 
-- `fork-origin` のタグをローカルに反映していない場合、事前に `make fetch` を実行する（安定タグが無い/履歴が浅いと release は失敗する）。
+- 安定タグが無い、または履歴が浅くてタグを取得できない場合は release は失敗する。必要なら事前に `make fetch` を実行する。
 - `x.y.z-custom-...` のような suffix を付けると、TUI の更新チェックはそのままだと比較不能になるため、この fork では suffix を含む current version も比較できるようにしている（詳細: `_docs/custom_notes/update_check_custom_version_suffix/README.md`）。
 
 ## 関連ファイル

@@ -18,6 +18,9 @@ use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStatus;
+use codex_app_server_protocol::TurnStartParams;
+use codex_app_server_protocol::TurnStartResponse;
+use codex_app_server_protocol::UserInput as V2UserInput;
 use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_git_utils::GitSha;
 use codex_protocol::ThreadId;
@@ -28,11 +31,34 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::timeout;
 
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+fn request_user_instruction_groups(request: &wiremock::Request) -> Vec<Vec<String>> {
+    let body: Value = serde_json::from_slice(&request.body)
+        .expect("expected /responses request body to be valid JSON");
+    let input = body
+        .get("input")
+        .and_then(Value::as_array)
+        .expect("expected /responses request body to contain input");
+    input
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("message"))
+        .filter(|item| item.get("role").and_then(Value::as_str) == Some("user"))
+        .filter_map(|item| item.get("content").and_then(Value::as_array))
+        .map(|content| {
+            content
+                .iter()
+                .filter(|span| span.get("type").and_then(Value::as_str) == Some("input_text"))
+                .filter_map(|span| span.get("text").and_then(Value::as_str).map(str::to_owned))
+                .collect::<Vec<String>>()
+        })
+        .collect()
+}
 
 #[tokio::test]
 async fn thread_metadata_update_patches_git_branch_and_returns_updated_thread() -> Result<()> {
@@ -64,6 +90,7 @@ async fn thread_metadata_update_patches_git_branch_and_returns_updated_thread() 
                 branch: Some(Some("feature/sidebar-pr".to_string())),
                 origin_url: None,
             }),
+            project_doc_paths: None,
         })
         .await?;
     let update_resp: JSONRPCResponse = timeout(
@@ -125,6 +152,154 @@ async fn thread_metadata_update_patches_git_branch_and_returns_updated_thread() 
 }
 
 #[tokio::test]
+async fn thread_metadata_update_replaces_agents_md_in_next_turn_request() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let repo_root = TempDir::new()?;
+    std::fs::write(repo_root.path().join(".git"), "gitdir: /path/to/git/dir\n")?;
+    std::fs::write(
+        repo_root.path().join("AGENTS.md"),
+        "# AGENTS.md instructions for /workspace\n\nold instructions\n",
+    )?;
+    let docs_root = repo_root.path().join("docs");
+    std::fs::create_dir_all(&docs_root)?;
+    std::fs::write(
+        docs_root.join("custom.md"),
+        "# custom agents\n\ncustom instructions\n",
+    )?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            cwd: Some(repo_root.path().to_string_lossy().to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+
+    let first_turn_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "before update".to_string(),
+                text_elements: vec![],
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let first_turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(first_turn_id)),
+    )
+    .await??;
+    let _ = to_response::<TurnStartResponse>(first_turn_resp)?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let requests_before = server.received_requests().await.unwrap_or_default();
+    let first_responses_request = requests_before
+        .iter()
+        .find(|request| request.method == "POST" && request.url.path().ends_with("/responses"))
+        .expect("expected at least one /responses request before /custom-agents");
+    let first_user_groups = request_user_instruction_groups(first_responses_request);
+    let first_instructions = first_user_groups
+        .iter()
+        .find_map(|group| {
+            group
+                .iter()
+                .find(|text| text.starts_with("# AGENTS.md instructions for "))
+        })
+        .expect("expected AGENTS.md instructions before /custom-agents");
+    assert!(
+        first_instructions.contains("old instructions"),
+        "expected AGENTS.md auto-discovery before /custom-agents, got {first_instructions:?}"
+    );
+
+    let update_id = mcp
+        .send_thread_metadata_update_request(ThreadMetadataUpdateParams {
+            thread_id: thread.id.clone(),
+            git_info: None,
+            project_doc_paths: Some(vec![PathBuf::from("docs/custom.md")]),
+        })
+        .await?;
+    let _: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(update_id)),
+    )
+    .await??;
+
+    let second_turn_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread.id.clone(),
+            input: vec![V2UserInput::Text {
+                text: "after update".to_string(),
+                text_elements: vec![],
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(second_turn_id)),
+    )
+    .await??;
+    let _ = to_response::<TurnStartResponse>(turn_resp)?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let requests = server.received_requests().await.unwrap_or_default();
+    let responses_request = requests
+        .iter()
+        .rev()
+        .find(|request| request.method == "POST" && request.url.path().ends_with("/responses"))
+        .expect("expected at least one /responses request after turn start");
+    let user_groups = request_user_instruction_groups(responses_request);
+    let agent_groups = user_groups
+        .iter()
+        .filter_map(|group| {
+            group
+                .iter()
+                .find(|text| text.starts_with("# AGENTS.md instructions for "))
+                .map(|text| (group, text))
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        agent_groups.len() >= 2,
+        "expected both prior and refreshed AGENTS instruction blocks after /custom-agents, got {user_groups:?}"
+    );
+    let instructions = agent_groups
+        .last()
+        .map(|(_, text)| *text)
+        .expect("expected at least one AGENTS instruction block after /custom-agents");
+    assert!(
+        instructions.contains("custom instructions"),
+        "expected custom agents contents in the next turn request, got {instructions:?}"
+    );
+    assert!(
+        !instructions.contains("old instructions"),
+        "expected refreshed AGENTS.md block to replace auto-discovery contents, got {instructions:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_metadata_update_rejects_empty_git_info_patch() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
@@ -154,6 +329,7 @@ async fn thread_metadata_update_rejects_empty_git_info_patch() -> Result<()> {
                 branch: None,
                 origin_url: None,
             }),
+            project_doc_paths: None,
         })
         .await?;
     let update_err: JSONRPCError = timeout(
@@ -198,6 +374,7 @@ async fn thread_metadata_update_repairs_missing_sqlite_row_for_stored_thread() -
                 branch: Some(Some("feature/stored-thread".to_string())),
                 origin_url: None,
             }),
+            project_doc_paths: None,
         })
         .await?;
     let update_resp: JSONRPCResponse = timeout(
@@ -278,6 +455,7 @@ async fn thread_metadata_update_repairs_loaded_thread_without_resetting_summary(
                 branch: Some(Some("feature/loaded-thread".to_string())),
                 origin_url: None,
             }),
+            project_doc_paths: None,
         })
         .await?;
     let update_resp: JSONRPCResponse = timeout(
@@ -341,6 +519,7 @@ async fn thread_metadata_update_repairs_missing_sqlite_row_for_archived_thread()
                 branch: Some(Some("feature/archived-thread".to_string())),
                 origin_url: None,
             }),
+            project_doc_paths: None,
         })
         .await?;
     let update_resp: JSONRPCResponse = timeout(
@@ -397,6 +576,7 @@ async fn thread_metadata_update_can_clear_stored_git_fields() -> Result<()> {
                 branch: Some(None),
                 origin_url: Some(None),
             }),
+            project_doc_paths: None,
         })
         .await?;
     let update_resp: JSONRPCResponse = timeout(

@@ -12,6 +12,8 @@ manual testing (for example `custom.exec.worker_user` + unified exec).
   - `--config /workspace/$(RUN_TUI_CONFIG)` (inside the Docker container)
   - Default: `RUN_TUI_CONFIG=sample_config.toml`
 - `make run-tui RUN_TUI_CONFIG=path/to/config.toml` points at any repo-tracked config.
+- TUI startup now threads the loader override through the final config reload as well, so the
+  selected config stays in effect when startup warnings are collected.
 
 ## Notes
 

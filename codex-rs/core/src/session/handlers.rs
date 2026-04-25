@@ -1,3 +1,4 @@
+use crate::agents_md::AgentsMdManager;
 use crate::realtime_conversation::handle_audio as handle_realtime_conversation_audio;
 use crate::realtime_conversation::handle_close as handle_realtime_conversation_close;
 use crate::realtime_conversation::handle_start as handle_realtime_conversation_start;
@@ -101,6 +102,7 @@ pub async fn realtime_conversation_list_voices(sess: &Session, sub_id: String) {
 }
 
 pub async fn override_turn_context(sess: &Session, sub_id: String, updates: SessionSettingsUpdate) {
+    let project_doc_paths_changed = updates.project_doc_paths.is_some();
     if let Err(err) = sess.update_settings(updates).await {
         sess.send_event_raw(Event {
             id: sub_id,
@@ -108,6 +110,34 @@ pub async fn override_turn_context(sess: &Session, sub_id: String, updates: Sess
                 message: err.to_string(),
                 codex_error_info: Some(CodexErrorInfo::BadRequest),
             }),
+        })
+        .await;
+        return;
+    }
+
+    if project_doc_paths_changed {
+        let config = sess.get_config().await;
+        let instruction_sources = AgentsMdManager::new(&config)
+            .instruction_sources(LOCAL_FS.as_ref())
+            .await;
+        let message = if instruction_sources.is_empty() {
+            "custom-agents loaded no instruction sources.".to_string()
+        } else {
+            let sources = instruction_sources
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "custom-agents loaded {} instruction source(s): {sources}",
+                instruction_sources.len()
+            )
+        };
+
+        warn!(%message, "custom-agents applied");
+        sess.send_event_raw(Event {
+            id: sub_id,
+            msg: EventMsg::Warning(WarningEvent { message }),
         })
         .await;
     }

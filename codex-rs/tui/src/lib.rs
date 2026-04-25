@@ -25,7 +25,6 @@ use codex_app_server_client::RemoteAppServerClient;
 use codex_app_server_client::RemoteAppServerConnectArgs;
 use codex_app_server_protocol::Account as AppServerAccount;
 use codex_app_server_protocol::AuthMode as AppServerAuthMode;
-use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::Thread as AppServerThread;
 use codex_app_server_protocol::ThreadListCwdFilter;
 use codex_app_server_protocol::ThreadListParams;
@@ -449,16 +448,9 @@ where
     F: FnOnce(InProcessClientStartArgs) -> Fut,
     Fut: Future<Output = std::io::Result<InProcessAppServerClient>>,
 {
-    let config_warnings = config
-        .startup_warnings
-        .iter()
-        .map(|warning| ConfigWarningNotification {
-            summary: warning.clone(),
-            details: None,
-            path: None,
-            range: None,
-        })
-        .collect();
+    // Startup warnings are replayed from the session after initialization, so
+    // do not send them twice via the embedded app-server bootstrap path.
+    let config_warnings = Vec::new();
     let client = start_client(InProcessClientStartArgs {
         arg0_paths,
         config: Arc::new(config),
@@ -851,6 +843,7 @@ pub async fn run_main(
     let config = load_config_or_exit(
         cli_kv_overrides.clone(),
         overrides.clone(),
+        loader_overrides.clone(),
         cloud_requirements.clone(),
     )
     .await;
@@ -1168,6 +1161,7 @@ async fn run_ratatui_app(
             load_config_or_exit(
                 cli_kv_overrides.clone(),
                 overrides.clone(),
+                loader_overrides.clone(),
                 cloud_requirements.clone(),
             )
             .await
@@ -1369,6 +1363,7 @@ async fn run_ratatui_app(
             load_config_or_exit_with_fallback_cwd(
                 cli_kv_overrides.clone(),
                 overrides.clone(),
+                loader_overrides.clone(),
                 cloud_requirements.clone(),
                 fallback_cwd,
             )
@@ -1688,11 +1683,13 @@ async fn get_login_status(
 async fn load_config_or_exit(
     cli_kv_overrides: Vec<(String, toml::Value)>,
     overrides: ConfigOverrides,
+    loader_overrides: LoaderOverrides,
     cloud_requirements: CloudRequirementsLoader,
 ) -> Config {
     load_config_or_exit_with_fallback_cwd(
         cli_kv_overrides,
         overrides,
+        loader_overrides,
         cloud_requirements,
         /*fallback_cwd*/ None,
     )
@@ -1702,6 +1699,7 @@ async fn load_config_or_exit(
 async fn load_config_or_exit_with_fallback_cwd(
     cli_kv_overrides: Vec<(String, toml::Value)>,
     overrides: ConfigOverrides,
+    loader_overrides: LoaderOverrides,
     cloud_requirements: CloudRequirementsLoader,
     fallback_cwd: Option<PathBuf>,
 ) -> Config {
@@ -1709,6 +1707,7 @@ async fn load_config_or_exit_with_fallback_cwd(
     match ConfigBuilder::default()
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
+        .loader_overrides(loader_overrides)
         .cloud_requirements(cloud_requirements)
         .fallback_cwd(fallback_cwd)
         .build()
@@ -1755,6 +1754,7 @@ mod tests {
     use crate::legacy_core::config::ConfigBuilder;
     use crate::legacy_core::config::ConfigOverrides;
     use codex_app_server_protocol::ClientRequest;
+    use codex_app_server_protocol::ConfigWarningNotification;
     use codex_app_server_protocol::RequestId;
     use codex_app_server_protocol::ThreadStartParams;
     use codex_app_server_protocol::ThreadStartResponse;
@@ -1769,6 +1769,7 @@ mod tests {
     use codex_protocol::protocol::TurnContextItem;
     use pretty_assertions::assert_eq;
     use serial_test::serial;
+    use std::sync::Mutex;
     use tempfile::TempDir;
 
     async fn build_config(temp_dir: &TempDir) -> std::io::Result<Config> {
@@ -2034,6 +2035,87 @@ mod tests {
         Ok(())
     }
 
+    struct EnvVarGuard {
+        key: &'static str,
+        value: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: impl Into<std::ffi::OsString>) -> Self {
+            let value = value.into();
+            let previous = std::env::var_os(key);
+            // SAFETY: this test is serial and the guard restores the original value on drop.
+            unsafe {
+                std::env::set_var(key, &value);
+            }
+            Self {
+                key,
+                value: previous,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            // SAFETY: this test is serial and the guard restores the original value on drop.
+            unsafe {
+                if let Some(value) = self.value.take() {
+                    std::env::set_var(self.key, value);
+                } else {
+                    std::env::remove_var(self.key);
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn run_tui_config_loader_applies_loader_overrides_to_final_config() -> std::io::Result<()>
+    {
+        let codex_home = TempDir::new()?;
+        std::fs::write(
+            codex_home.path().join("config.toml"),
+            r#"
+[custom.user_shell]
+no_inject = false
+"#,
+        )?;
+
+        let run_tui_config_dir = TempDir::new()?;
+        let run_tui_config = run_tui_config_dir.path().join("sample_config.toml");
+        std::fs::write(
+            &run_tui_config,
+            r#"
+[custom.user_shell]
+no_inject = true
+"#,
+        )?;
+
+        let _codex_home_guard = EnvVarGuard::set("CODEX_HOME", codex_home.path().as_os_str());
+        let config = load_config_or_exit_with_fallback_cwd(
+            Vec::new(),
+            ConfigOverrides::default(),
+            LoaderOverrides {
+                user_config_path: Some(run_tui_config),
+                ..Default::default()
+            },
+            CloudRequirementsLoader::default(),
+            None,
+        )
+        .await;
+
+        assert!(config.user_shell_no_inject()?);
+        assert!(
+            !config
+                .startup_warnings
+                .iter()
+                .any(|warning| warning.contains("custom.user_shell.no_inject is false")),
+            "unexpected startup warning from final config: {:?}",
+            config.startup_warnings
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     #[serial]
     async fn windows_shows_trust_prompt_without_sandbox() -> std::io::Result<()> {
@@ -2154,6 +2236,49 @@ mod tests {
             err.to_string()
                 .contains("failed to start embedded app server"),
             "error should preserve the embedded app server startup context"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn embedded_app_server_does_not_forward_startup_warnings_twice() -> color_eyre::Result<()>
+    {
+        let temp_dir = TempDir::new()?;
+        let mut config = build_config(&temp_dir).await?;
+        config.startup_warnings.push("startup warning".to_string());
+
+        let captured_warnings = Arc::new(Mutex::new(None::<Vec<ConfigWarningNotification>>));
+        let captured_warnings_clone = Arc::clone(&captured_warnings);
+
+        let result = start_embedded_app_server_with(
+            Arg0DispatchPaths::default(),
+            config,
+            Vec::new(),
+            LoaderOverrides::default(),
+            CloudRequirementsLoader::default(),
+            codex_feedback::CodexFeedback::new(),
+            /*log_db*/ None,
+            Arc::new(EnvironmentManager::default_for_tests()),
+            move |args| {
+                let captured_warnings = Arc::clone(&captured_warnings_clone);
+                async move {
+                    *captured_warnings.lock().expect("capture mutex") =
+                        Some(args.config_warnings.clone());
+                    Err(std::io::Error::other("boom"))
+                }
+            },
+        )
+        .await;
+
+        assert!(result.is_err(), "startup should fail in the test harness");
+        let warnings = captured_warnings
+            .lock()
+            .expect("capture mutex")
+            .clone()
+            .expect("captured warnings should be set");
+        assert!(
+            warnings.is_empty(),
+            "startup warnings should not be forwarded twice: {warnings:?}"
         );
         Ok(())
     }

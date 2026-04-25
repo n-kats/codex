@@ -671,7 +671,19 @@ impl App {
                 app_server.reload_user_config().await?;
                 Ok(true)
             }
-            AppCommandView::OverrideTurnContext { .. } => Ok(true),
+            AppCommandView::OverrideTurnContext {
+                project_doc_paths, ..
+            } => {
+                if let Some(project_doc_paths) = project_doc_paths {
+                    app_server
+                        .thread_metadata_update_project_doc_paths(
+                            thread_id,
+                            project_doc_paths.clone(),
+                        )
+                        .await?;
+                }
+                Ok(true)
+            }
             AppCommandView::Other(Op::ApproveGuardianDeniedAction { event }) => {
                 app_server
                     .thread_approve_guardian_denied_action(thread_id, event)
