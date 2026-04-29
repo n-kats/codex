@@ -70,6 +70,7 @@ fn test_exec_request(
         windows_sandbox_private_desktop,
         permission_profile,
         arg0,
+        None,
     )
 }
 

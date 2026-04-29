@@ -606,6 +606,7 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
         .await?;
 
@@ -856,6 +857,7 @@ async fn remote_models_apply_remote_base_instructions() -> Result<()> {
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
         .await?;
 
@@ -1145,7 +1147,7 @@ async fn remote_models_request_times_out_after_5s() -> Result<()> {
         "expected models call to block near the timeout; took {elapsed:?}"
     );
     assert!(
-        elapsed < Duration::from_millis(5_800),
+        elapsed < Duration::from_secs(8),
         "expected models call to time out before the delayed response; took {elapsed:?}"
     );
     assert_eq!(

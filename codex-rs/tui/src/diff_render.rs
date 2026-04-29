@@ -44,7 +44,10 @@ use ratatui::widgets::Paragraph;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use std::sync::RwLock;
 
+use codex_config::config_toml::CustomThemeDiffToml;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use unicode_width::UnicodeWidthChar;
 
@@ -74,6 +77,20 @@ const LIGHT_256_DEL_LINE_BG_IDX: u8 = 224;
 const LIGHT_256_ADD_NUM_BG_IDX: u8 = 157;
 const LIGHT_256_DEL_NUM_BG_IDX: u8 = 217;
 const LIGHT_256_GUTTER_FG_IDX: u8 = 236;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CustomDiffThemeOverride {
+    enabled: bool,
+    line_bg: bool,
+    gutter: bool,
+    sign: bool,
+    content: bool,
+    add_line_bg: Option<Color>,
+    del_line_bg: Option<Color>,
+}
+
+static CUSTOM_DIFF_THEME_OVERRIDE: OnceLock<RwLock<Option<CustomDiffThemeOverride>>> =
+    OnceLock::new();
 
 use crate::color::is_light;
 use crate::color::perceptual_distance;
@@ -223,6 +240,32 @@ pub(crate) fn current_diff_render_style_context() -> DiffRenderStyleContext {
     }
 }
 
+pub(crate) fn set_custom_diff_theme_override(
+    custom_diff: Option<&CustomThemeDiffToml>,
+) -> Option<String> {
+    let override_value = match custom_diff {
+        Some(custom_diff) => match parse_custom_diff_theme_override(custom_diff) {
+            Ok(override_value) => Some(override_value),
+            Err(warning) => {
+                if let Ok(mut guard) = custom_diff_override_lock().write() {
+                    *guard = None;
+                }
+                return Some(warning);
+            }
+        },
+        None => None,
+    };
+
+    if let Ok(mut guard) = custom_diff_override_lock().write() {
+        *guard = override_value;
+    }
+    None
+}
+
+fn custom_diff_override_lock() -> &'static RwLock<Option<CustomDiffThemeOverride>> {
+    CUSTOM_DIFF_THEME_OVERRIDE.get_or_init(|| RwLock::new(None))
+}
+
 /// Core background-resolution logic, kept pure for testability.
 ///
 /// Starts from the hardcoded fallback palette and then overrides with theme
@@ -246,6 +289,72 @@ fn resolve_diff_backgrounds_for(
         resolved.del = Some(color_from_rgb_for_level(rgb, level));
     }
     resolved
+}
+
+fn parse_custom_diff_theme_override(
+    custom_diff: &CustomThemeDiffToml,
+) -> Result<CustomDiffThemeOverride, String> {
+    Ok(CustomDiffThemeOverride {
+        enabled: custom_diff.enabled.unwrap_or(true),
+        line_bg: custom_diff.line_bg.unwrap_or(true),
+        gutter: custom_diff.gutter.unwrap_or(true),
+        sign: custom_diff.sign.unwrap_or(true),
+        content: custom_diff.content.unwrap_or(true),
+        add_line_bg: parse_custom_diff_color(
+            "custom.theme.diff.add_line_bg",
+            custom_diff.add_line_bg.as_deref(),
+        )?,
+        del_line_bg: parse_custom_diff_color(
+            "custom.theme.diff.del_line_bg",
+            custom_diff.del_line_bg.as_deref(),
+        )?,
+    })
+}
+
+fn parse_custom_diff_color(label: &str, value: Option<&str>) -> Result<Option<Color>, String> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let trimmed = value.trim();
+    let hex = trimmed.strip_prefix('#').unwrap_or(trimmed);
+    if hex.len() != 6 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(format!(
+            "{label} must be a 6-digit hex color like #102030 (got {value:?})"
+        ));
+    }
+    let parse = |range: std::ops::Range<usize>| u8::from_str_radix(&hex[range], 16);
+    let r = parse(0..2).map_err(|_| format!("{label} is invalid"))?;
+    let g = parse(2..4).map_err(|_| format!("{label} is invalid"))?;
+    let b = parse(4..6).map_err(|_| format!("{label} is invalid"))?;
+    Ok(Some(rgb_color((r, g, b))))
+}
+
+fn custom_diff_override() -> Option<CustomDiffThemeOverride> {
+    custom_diff_override_lock().read().ok()?.as_ref().copied()
+}
+
+fn resolved_custom_diff_line_bg(kind: DiffLineType) -> Option<Color> {
+    let override_value = custom_diff_override()?;
+    if !override_value.enabled || !override_value.line_bg {
+        return None;
+    }
+    match kind {
+        DiffLineType::Insert => override_value.add_line_bg,
+        DiffLineType::Delete => override_value.del_line_bg,
+        DiffLineType::Context => None,
+    }
+}
+
+fn resolved_custom_diff_gutter_bg(kind: DiffLineType) -> Option<Color> {
+    let override_value = custom_diff_override()?;
+    if !override_value.enabled || !override_value.gutter {
+        return None;
+    }
+    match kind {
+        DiffLineType::Insert => override_value.add_line_bg,
+        DiffLineType::Delete => override_value.del_line_bg,
+        DiffLineType::Context => None,
+    }
 }
 
 /// Hardcoded palette backgrounds, used when the syntax theme provides no
@@ -1139,15 +1248,12 @@ fn diff_color_level_for_terminal(
 /// Context lines intentionally leave the background unset so the terminal
 /// default shows through.
 fn style_line_bg_for(kind: DiffLineType, diff_backgrounds: ResolvedDiffBackgrounds) -> Style {
-    match kind {
-        DiffLineType::Insert => diff_backgrounds
-            .add
-            .map_or_else(Style::default, |bg| Style::default().bg(bg)),
-        DiffLineType::Delete => diff_backgrounds
-            .del
-            .map_or_else(Style::default, |bg| Style::default().bg(bg)),
-        DiffLineType::Context => Style::default(),
-    }
+    let background = match kind {
+        DiffLineType::Insert => resolved_custom_diff_line_bg(kind).or(diff_backgrounds.add),
+        DiffLineType::Delete => resolved_custom_diff_line_bg(kind).or(diff_backgrounds.del),
+        DiffLineType::Context => None,
+    };
+    background.map_or_else(Style::default, |bg| Style::default().bg(bg))
 }
 
 fn style_context() -> Style {
@@ -1198,6 +1304,12 @@ fn light_del_num_bg(color_level: RichDiffColorLevel) -> Color {
 /// tinted background so numbers contrast against the pastel line fill.  On
 /// dark backgrounds a simple `DIM` modifier is sufficient.
 fn style_gutter_for(kind: DiffLineType, theme: DiffTheme, color_level: DiffColorLevel) -> Style {
+    if let Some(bg) = resolved_custom_diff_gutter_bg(kind) {
+        return match theme {
+            DiffTheme::Light => Style::default().fg(light_gutter_fg(color_level)).bg(bg),
+            DiffTheme::Dark => style_gutter_dim().bg(bg),
+        };
+    }
     match (
         theme,
         kind,
@@ -1227,6 +1339,11 @@ fn style_sign_add(
     color_level: DiffColorLevel,
     diff_backgrounds: ResolvedDiffBackgrounds,
 ) -> Style {
+    if custom_diff_override()
+        .is_some_and(|override_value| override_value.enabled && !override_value.sign)
+    {
+        return Style::default();
+    }
     match theme {
         DiffTheme::Light => Style::default().fg(Color::Green),
         DiffTheme::Dark => style_add(theme, color_level, diff_backgrounds),
@@ -1239,6 +1356,11 @@ fn style_sign_del(
     color_level: DiffColorLevel,
     diff_backgrounds: ResolvedDiffBackgrounds,
 ) -> Style {
+    if custom_diff_override()
+        .is_some_and(|override_value| override_value.enabled && !override_value.sign)
+    {
+        return Style::default();
+    }
     match theme {
         DiffTheme::Light => Style::default().fg(Color::Red),
         DiffTheme::Dark => style_del(theme, color_level, diff_backgrounds),
@@ -1261,7 +1383,13 @@ fn style_add(
     color_level: DiffColorLevel,
     diff_backgrounds: ResolvedDiffBackgrounds,
 ) -> Style {
-    match (theme, color_level, diff_backgrounds.add) {
+    let background = resolved_custom_diff_line_bg(DiffLineType::Insert).or(diff_backgrounds.add);
+    if custom_diff_override()
+        .is_some_and(|override_value| override_value.enabled && !override_value.content)
+    {
+        return background.map_or_else(Style::default, |bg| Style::default().bg(bg));
+    }
+    match (theme, color_level, background) {
         (_, DiffColorLevel::Ansi16, _) => Style::default().fg(Color::Green),
         (DiffTheme::Light, DiffColorLevel::TrueColor, Some(bg))
         | (DiffTheme::Light, DiffColorLevel::Ansi256, Some(bg)) => Style::default().bg(bg),
@@ -1285,7 +1413,13 @@ fn style_del(
     color_level: DiffColorLevel,
     diff_backgrounds: ResolvedDiffBackgrounds,
 ) -> Style {
-    match (theme, color_level, diff_backgrounds.del) {
+    let background = resolved_custom_diff_line_bg(DiffLineType::Delete).or(diff_backgrounds.del);
+    if custom_diff_override()
+        .is_some_and(|override_value| override_value.enabled && !override_value.content)
+    {
+        return background.map_or_else(Style::default, |bg| Style::default().bg(bg));
+    }
+    match (theme, color_level, background) {
         (_, DiffColorLevel::Ansi16, _) => Style::default().fg(Color::Red),
         (DiffTheme::Light, DiffColorLevel::TrueColor, Some(bg))
         | (DiffTheme::Light, DiffColorLevel::Ansi256, Some(bg)) => Style::default().bg(bg),
@@ -1307,6 +1441,7 @@ fn style_gutter_dim() -> Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_config::config_toml::CustomThemeDiffToml;
     use insta::assert_snapshot;
     use pretty_assertions::assert_eq;
     use ratatui::Terminal;
@@ -1355,6 +1490,39 @@ mod tests {
         );
         assert_eq!(del_sign.fg, Some(Color::Red));
         assert_eq!(del_sign.bg, None);
+    }
+
+    #[test]
+    fn custom_diff_theme_override_parses_hex_colors() {
+        let parsed = parse_custom_diff_theme_override(&CustomThemeDiffToml {
+            enabled: Some(true),
+            line_bg: Some(false),
+            gutter: Some(true),
+            sign: Some(false),
+            content: Some(true),
+            add_line_bg: Some("#102030".into()),
+            del_line_bg: Some("402010".into()),
+        })
+        .expect("custom diff theme should parse");
+
+        assert!(parsed.enabled);
+        assert!(!parsed.line_bg);
+        assert!(parsed.gutter);
+        assert!(!parsed.sign);
+        assert!(parsed.content);
+        assert_eq!(parsed.add_line_bg, Some(rgb_color((0x10, 0x20, 0x30))));
+        assert_eq!(parsed.del_line_bg, Some(rgb_color((0x40, 0x20, 0x10))));
+    }
+
+    #[test]
+    fn custom_diff_theme_override_rejects_invalid_hex() {
+        let err = parse_custom_diff_theme_override(&CustomThemeDiffToml {
+            add_line_bg: Some("#12".into()),
+            ..Default::default()
+        })
+        .expect_err("invalid color should be rejected");
+
+        assert!(err.contains("custom.theme.diff.add_line_bg"));
     }
     fn diff_summary_for_tests(changes: &HashMap<PathBuf, FileChange>) -> Vec<RtLine<'static>> {
         create_diff_summary(changes, &PathBuf::from("/"), /*wrap_cols*/ 80)

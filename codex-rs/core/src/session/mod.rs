@@ -54,6 +54,7 @@ use codex_config::types::OAuthCredentialsStoreMode;
 use codex_exec_server::Environment;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::FileSystemSandboxContext;
+use codex_exec_server::LOCAL_FS;
 use codex_features::FEATURES;
 use codex_features::Feature;
 use codex_features::unstable_features_warning_event;
@@ -1301,6 +1302,7 @@ impl Session {
         &self,
         updates: SessionSettingsUpdate,
     ) -> ConstraintResult<()> {
+        let project_doc_paths_changed = updates.project_doc_paths.is_some();
         let (previous_cwd, permission_profile_changed, next_cwd, codex_home, session_source) = {
             let mut state = self.state.lock().await;
             let updated = match state.session_configuration.apply(&updates) {
@@ -1338,6 +1340,15 @@ impl Session {
         if permission_profile_changed {
             self.refresh_managed_network_proxy_for_current_permission_profile()
                 .await;
+        }
+        if project_doc_paths_changed {
+            let config = self.get_config().await;
+            let user_instructions = AgentsMdManager::new(&config)
+                .user_instructions_with_fs(LOCAL_FS.as_ref())
+                .await;
+            let mut state = self.state.lock().await;
+            state.session_configuration.user_instructions = user_instructions;
+            state.set_reference_context_item(None);
         }
 
         Ok(())

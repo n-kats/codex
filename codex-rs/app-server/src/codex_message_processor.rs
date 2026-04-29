@@ -3222,37 +3222,29 @@ impl CodexMessageProcessor {
         request_id: ConnectionRequestId,
         params: ThreadMetadataUpdateParams,
     ) {
-        let result = self.thread_metadata_update_response(params).await;
+        let result = self
+            .thread_metadata_update_response(&request_id, params)
+            .await;
         self.outgoing.send_result(request_id, result).await;
     }
 
     async fn thread_metadata_update_response(
         &self,
+        request_id: &ConnectionRequestId,
         params: ThreadMetadataUpdateParams,
     ) -> Result<ThreadMetadataUpdateResponse, JSONRPCErrorError> {
         let ThreadMetadataUpdateParams {
             thread_id,
             git_info,
+            project_doc_paths,
         } = params;
 
         let thread_uuid = ThreadId::from_string(&thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
 
-        let Some(ThreadMetadataGitInfoUpdateParams {
-            sha,
-            branch,
-            origin_url,
-        }) = git_info
-        else {
-            return Err(invalid_request("gitInfo must include at least one field"));
-        };
-
-        if sha.is_none() && branch.is_none() && origin_url.is_none() {
-            return Err(invalid_request("gitInfo must include at least one field"));
-        }
-
         let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
         let loaded_thread = self.thread_manager.get_thread(thread_uuid).await.ok();
+
         let mut state_db_ctx = loaded_thread.as_ref().and_then(|thread| thread.state_db());
         if state_db_ctx.is_none() {
             state_db_ctx = get_state_db(&self.config).await;
@@ -3266,28 +3258,111 @@ impl CodexMessageProcessor {
         self.ensure_thread_metadata_row_exists(thread_uuid, &state_db_ctx, loaded_thread.as_ref())
             .await?;
 
-        let git_sha = Self::normalize_thread_metadata_git_field(sha, "gitInfo.sha")?;
-        let git_branch = Self::normalize_thread_metadata_git_field(branch, "gitInfo.branch")?;
-        let git_origin_url =
-            Self::normalize_thread_metadata_git_field(origin_url, "gitInfo.originUrl")?;
+        if git_info.is_none() && project_doc_paths.is_none() {
+            return Err(invalid_request(
+                "thread/metadata/update must include gitInfo or projectDocPaths",
+            ));
+        }
 
-        let updated = state_db_ctx
-            .update_thread_git_info(
-                thread_uuid,
-                git_sha.as_ref().map(|value| value.as_deref()),
-                git_branch.as_ref().map(|value| value.as_deref()),
-                git_origin_url.as_ref().map(|value| value.as_deref()),
-            )
-            .await
-            .map_err(|err| {
-                internal_error(format!(
-                    "failed to update thread metadata for {thread_uuid}: {err}"
-                ))
-            })?;
-        if !updated {
-            return Err(internal_error(format!(
-                "thread metadata disappeared before update completed: {thread_uuid}"
-            )));
+        if let Some(ThreadMetadataGitInfoUpdateParams {
+            sha,
+            branch,
+            origin_url,
+        }) = git_info
+        {
+            if sha.is_none() && branch.is_none() && origin_url.is_none() {
+                return Err(invalid_request("gitInfo must include at least one field"));
+            }
+
+            let git_sha = match sha {
+                Some(Some(sha)) => {
+                    let sha = sha.trim().to_string();
+                    if sha.is_empty() {
+                        return Err(invalid_request("gitInfo.sha must not be empty"));
+                    }
+                    Some(Some(sha))
+                }
+                Some(None) => Some(None),
+                None => None,
+            };
+            let git_branch = match branch {
+                Some(Some(branch)) => {
+                    let branch = branch.trim().to_string();
+                    if branch.is_empty() {
+                        return Err(invalid_request("gitInfo.branch must not be empty"));
+                    }
+                    Some(Some(branch))
+                }
+                Some(None) => Some(None),
+                None => None,
+            };
+            let git_origin_url = match origin_url {
+                Some(Some(origin_url)) => {
+                    let origin_url = origin_url.trim().to_string();
+                    if origin_url.is_empty() {
+                        return Err(invalid_request("gitInfo.originUrl must not be empty"));
+                    }
+                    Some(Some(origin_url))
+                }
+                Some(None) => Some(None),
+                None => None,
+            };
+
+            let updated = match state_db_ctx
+                .update_thread_git_info(
+                    thread_uuid,
+                    git_sha.as_ref().map(|value| value.as_deref()),
+                    git_branch.as_ref().map(|value| value.as_deref()),
+                    git_origin_url.as_ref().map(|value| value.as_deref()),
+                )
+                .await
+            {
+                Ok(updated) => updated,
+                Err(err) => {
+                    return Err(internal_error(format!(
+                        "failed to update thread metadata for {thread_uuid}: {err}"
+                    )));
+                }
+            };
+            if !updated {
+                return Err(internal_error(format!(
+                    "thread metadata disappeared before update completed: {thread_uuid}"
+                )));
+            }
+        }
+
+        if let Some(project_doc_paths) = project_doc_paths {
+            let Some(loaded_thread) = loaded_thread.as_ref() else {
+                return Err(invalid_request(format!(
+                    "thread {thread_uuid} must be loaded before metadata updates can patch live context"
+                )));
+            };
+            if let Err(err) = self
+                .submit_core_op(
+                    request_id,
+                    loaded_thread.as_ref(),
+                    Op::OverrideTurnContext {
+                        cwd: None,
+                        approval_policy: None,
+                        approvals_reviewer: None,
+                        sandbox_policy: None,
+                        permission_profile: None,
+                        windows_sandbox_level: None,
+                        model: None,
+                        effort: None,
+                        summary: None,
+                        service_tier: None,
+                        collaboration_mode: None,
+                        personality: None,
+                        project_doc_paths: Some(project_doc_paths),
+                    },
+                )
+                .await
+            {
+                return Err(internal_error(format!(
+                    "failed to update custom agent documents for {thread_uuid}: {err}"
+                )));
+            }
         }
 
         let Some(summary) =
@@ -3310,6 +3385,7 @@ impl CodexMessageProcessor {
         Ok(ThreadMetadataUpdateResponse { thread })
     }
 
+    #[allow(dead_code)]
     fn normalize_thread_metadata_git_field(
         value: Option<Option<String>>,
         name: &str,

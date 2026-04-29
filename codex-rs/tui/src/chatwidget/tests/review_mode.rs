@@ -478,7 +478,7 @@ async fn steer_enter_queues_while_plan_stream_is_active() {
 
     chat.bottom_pane
         .set_composer_text("queued submission".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_eq!(chat.active_collaboration_mode_kind(), ModeKind::Plan);
     assert_eq!(chat.queued_user_messages.len(), 1);
@@ -499,7 +499,7 @@ async fn steer_enter_uses_pending_steers_while_turn_is_running_without_streaming
 
     chat.bottom_pane
         .set_composer_text("queued while running".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert!(chat.queued_user_messages.is_empty());
     assert_eq!(chat.pending_steers.len(), 1);
@@ -535,7 +535,7 @@ async fn steer_enter_uses_pending_steers_while_final_answer_stream_is_active() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert!(chat.queued_user_messages.is_empty());
     assert_eq!(chat.pending_steers.len(), 1);
@@ -569,7 +569,7 @@ async fn failed_pending_steer_submit_does_not_add_pending_preview() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert!(chat.pending_steers.is_empty());
     assert!(chat.queued_user_messages.is_empty());
@@ -700,10 +700,10 @@ async fn steer_enter_during_final_stream_preserves_follow_up_prompts_in_order() 
 
     chat.bottom_pane
         .set_composer_text("first follow-up".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     chat.bottom_pane
         .set_composer_text("second follow-up".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert!(chat.queued_user_messages.is_empty());
     assert_eq!(chat.pending_steers.len(), 2);
@@ -775,7 +775,7 @@ async fn manual_interrupt_restores_pending_steers_to_composer() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_eq!(chat.pending_steers.len(), 1);
     match next_submit_op(&mut op_rx) {
@@ -813,7 +813,7 @@ async fn esc_interrupt_sends_all_pending_steers_immediately_and_keeps_existing_d
 
     chat.bottom_pane
         .set_composer_text("first pending steer".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(
             items,
@@ -827,7 +827,7 @@ async fn esc_interrupt_sends_all_pending_steers_immediately_and_keeps_existing_d
 
     chat.bottom_pane
         .set_composer_text("second pending steer".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(
@@ -891,7 +891,7 @@ async fn esc_with_pending_steers_overrides_agent_command_interrupt_behavior() {
 
     chat.bottom_pane
         .set_composer_text("pending steer".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { .. } => {}
         other => panic!("expected Op::UserTurn, got {other:?}"),
@@ -925,7 +925,7 @@ async fn manual_interrupt_restores_pending_steer_mention_bindings_to_composer() 
         Vec::new(),
         mention_bindings.clone(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(
@@ -961,7 +961,7 @@ async fn manual_interrupt_restores_pending_steers_before_queued_messages() {
 
     chat.bottom_pane
         .set_composer_text("pending steer".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     chat.queued_user_messages
         .push_back(UserMessage::from("queued draft".to_string()).into());
     chat.refresh_pending_input_preview();
@@ -1003,7 +1003,7 @@ async fn replaced_turn_clears_pending_steers_but_keeps_queued_drafts() {
 
     chat.bottom_pane
         .set_composer_text("pending steer".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     chat.queued_user_messages
         .push_back(UserMessage::from("queued draft".to_string()).into());
     chat.refresh_pending_input_preview();
@@ -1136,7 +1136,7 @@ async fn review_popup_custom_prompt_action_sends_event() {
     chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     chat.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
     // Activate
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     // Drain events and ensure we saw the OpenReviewCustomPrompt request
     let mut found = false;
@@ -1219,7 +1219,7 @@ async fn custom_prompt_submit_sends_review_op() {
     chat.show_review_custom_prompt();
     // Paste prompt text via ChatWidget handler, then submit
     chat.handle_paste("  please audit dependencies  ".to_string());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     // Expect AppEvent::CodexOp(Op::Review { .. }) with trimmed prompt
     let evt = rx.try_recv().expect("expected one app event");
@@ -1246,7 +1246,7 @@ async fn custom_prompt_enter_empty_does_not_send() {
 
     chat.show_review_custom_prompt();
     // Enter without any text
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     // No AppEvent::CodexOp should be sent
     assert!(rx.try_recv().is_err(), "no app event should be sent");
@@ -1624,7 +1624,7 @@ async fn enter_submits_steer_while_review_is_running() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert!(chat.queued_user_messages.is_empty());
     assert_eq!(chat.pending_steers.len(), 1);

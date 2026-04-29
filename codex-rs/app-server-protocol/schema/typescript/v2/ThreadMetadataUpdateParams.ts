@@ -9,4 +9,9 @@ export type ThreadMetadataUpdateParams = { threadId: string,
  * Omit a field to leave it unchanged, set it to `null` to clear it, or
  * provide a string to replace the stored value.
  */
-gitInfo?: ThreadMetadataGitInfoUpdateParams | null, };
+gitInfo?: ThreadMetadataGitInfoUpdateParams | null,
+/**
+ * Override the instruction source files used by the active thread.
+ * Omit to leave the active thread's instruction sources unchanged.
+ */
+projectDocPaths?: Array<string> | null, };

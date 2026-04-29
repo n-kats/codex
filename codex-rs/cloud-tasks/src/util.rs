@@ -1,9 +1,11 @@
+use base64::Engine;
 use chrono::DateTime;
 use chrono::Local;
 use chrono::Utc;
 use reqwest::header::HeaderMap;
 
 use codex_core::config::Config;
+use codex_core::config_loader::LoaderOverrides;
 use codex_login::AuthManager;
 
 pub fn set_user_agent_suffix(suffix: &str) {
@@ -41,15 +43,35 @@ pub fn normalize_base_url(input: &str) -> String {
     base_url
 }
 
-pub async fn load_auth_manager(chatgpt_base_url: Option<String>) -> Option<AuthManager> {
+/// Extract the ChatGPT account id from a JWT token, when present.
+#[allow(dead_code)]
+pub fn extract_chatgpt_account_id(token: &str) -> Option<String> {
+    let mut parts = token.split('.');
+    let (_h, payload_b64, _s) = match (parts.next(), parts.next(), parts.next()) {
+        (Some(h), Some(p), Some(s)) if !h.is_empty() && !p.is_empty() && !s.is_empty() => (h, p, s),
+        _ => return None,
+    };
+    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_b64)
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
+    v.get("https://api.openai.com/auth")
+        .and_then(|auth| auth.get("chatgpt_account_id"))
+        .and_then(|id| id.as_str())
+        .map(str::to_string)
+}
+
+pub async fn load_auth_manager(loader_overrides: LoaderOverrides) -> Option<AuthManager> {
     // TODO: pass in cli overrides once cloud tasks properly support them.
-    let config = Config::load_with_cli_overrides(Vec::new()).await.ok()?;
+    let config = Config::load_with_cli_overrides_and_loader_overrides(Vec::new(), loader_overrides)
+        .await
+        .ok()?;
     Some(
         AuthManager::new(
             config.codex_home.to_path_buf(),
             /*enable_codex_api_key_env*/ false,
             config.cli_auth_credentials_store_mode,
-            chatgpt_base_url.or(Some(config.chatgpt_base_url)),
+            Some(config.chatgpt_base_url),
         )
         .await,
     )
@@ -68,7 +90,7 @@ pub async fn build_chatgpt_headers() -> HeaderMap {
         USER_AGENT,
         HeaderValue::from_str(&ua).unwrap_or(HeaderValue::from_static("codex-cli")),
     );
-    if let Some(am) = load_auth_manager(/*chatgpt_base_url*/ None).await
+    if let Some(am) = load_auth_manager(LoaderOverrides::default()).await
         && let Some(auth) = am.auth().await
         && auth.uses_codex_backend()
     {

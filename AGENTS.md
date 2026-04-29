@@ -211,3 +211,8 @@ These guidelines apply to app-server protocol work in `codex-rs`, especially:
 - Validate with `cargo test -p codex-app-server-protocol`.
 - Avoid boilerplate tests that only assert experimental field markers for individual
   request fields in `common.rs`; rely on schema generation/tests and behavioral coverage instead.
+
+## カスタマイズ
+
+- 必ず `CUSTOM.md` を参照し、その方針に従うこと。
+

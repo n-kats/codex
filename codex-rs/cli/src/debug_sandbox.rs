@@ -10,6 +10,7 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::NetworkProxyAuditMetadata;
+use codex_core::config_loader::LoaderOverrides;
 use codex_core::exec_env::create_env;
 #[cfg(target_os = "macos")]
 use codex_core::spawn::CODEX_SANDBOX_ENV_VAR;
@@ -40,6 +41,7 @@ use seatbelt::DenialLogger;
 pub async fn run_command_under_seatbelt(
     command: SeatbeltCommand,
     codex_linux_sandbox_exe: Option<PathBuf>,
+    loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     let SeatbeltCommand {
         full_auto,
@@ -53,6 +55,7 @@ pub async fn run_command_under_seatbelt(
         command,
         config_overrides,
         codex_linux_sandbox_exe,
+        loader_overrides,
         SandboxType::Seatbelt,
         log_denials,
         &allow_unix_sockets,
@@ -64,6 +67,7 @@ pub async fn run_command_under_seatbelt(
 pub async fn run_command_under_seatbelt(
     _command: SeatbeltCommand,
     _codex_linux_sandbox_exe: Option<PathBuf>,
+    _loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     anyhow::bail!("Seatbelt sandbox is only available on macOS");
 }
@@ -71,6 +75,7 @@ pub async fn run_command_under_seatbelt(
 pub async fn run_command_under_landlock(
     command: LandlockCommand,
     codex_linux_sandbox_exe: Option<PathBuf>,
+    loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     let LandlockCommand {
         full_auto,
@@ -82,6 +87,7 @@ pub async fn run_command_under_landlock(
         command,
         config_overrides,
         codex_linux_sandbox_exe,
+        loader_overrides,
         SandboxType::Landlock,
         /*log_denials*/ false,
         &[],
@@ -92,6 +98,7 @@ pub async fn run_command_under_landlock(
 pub async fn run_command_under_windows(
     command: WindowsCommand,
     codex_linux_sandbox_exe: Option<PathBuf>,
+    loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     let WindowsCommand {
         full_auto,
@@ -103,6 +110,7 @@ pub async fn run_command_under_windows(
         command,
         config_overrides,
         codex_linux_sandbox_exe,
+        loader_overrides,
         SandboxType::Windows,
         /*log_denials*/ false,
         &[],
@@ -122,6 +130,7 @@ async fn run_command_under_sandbox(
     command: Vec<String>,
     config_overrides: CliConfigOverrides,
     codex_linux_sandbox_exe: Option<PathBuf>,
+    loader_overrides: LoaderOverrides,
     sandbox_type: SandboxType,
     log_denials: bool,
     #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
@@ -133,6 +142,7 @@ async fn run_command_under_sandbox(
             .map_err(anyhow::Error::msg)?,
         codex_linux_sandbox_exe,
         full_auto,
+        loader_overrides,
     )
     .await?;
 
@@ -580,11 +590,13 @@ async fn load_debug_sandbox_config(
     cli_overrides: Vec<(String, TomlValue)>,
     codex_linux_sandbox_exe: Option<PathBuf>,
     full_auto: bool,
+    loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<Config> {
     load_debug_sandbox_config_with_codex_home(
         cli_overrides,
         codex_linux_sandbox_exe,
         full_auto,
+        loader_overrides,
         /*codex_home*/ None,
     )
     .await
@@ -594,6 +606,7 @@ async fn load_debug_sandbox_config_with_codex_home(
     cli_overrides: Vec<(String, TomlValue)>,
     codex_linux_sandbox_exe: Option<PathBuf>,
     full_auto: bool,
+    loader_overrides: LoaderOverrides,
     codex_home: Option<PathBuf>,
 ) -> anyhow::Result<Config> {
     let config = build_debug_sandbox_config(
@@ -602,6 +615,7 @@ async fn load_debug_sandbox_config_with_codex_home(
             codex_linux_sandbox_exe: codex_linux_sandbox_exe.clone(),
             ..Default::default()
         },
+        loader_overrides.clone(),
         codex_home.clone(),
     )
     .await?;
@@ -622,6 +636,7 @@ async fn load_debug_sandbox_config_with_codex_home(
             codex_linux_sandbox_exe,
             ..Default::default()
         },
+        loader_overrides,
         codex_home,
     )
     .await
@@ -631,10 +646,12 @@ async fn load_debug_sandbox_config_with_codex_home(
 async fn build_debug_sandbox_config(
     cli_overrides: Vec<(String, TomlValue)>,
     harness_overrides: ConfigOverrides,
+    loader_overrides: LoaderOverrides,
     codex_home: Option<PathBuf>,
 ) -> std::io::Result<Config> {
     let mut builder = ConfigBuilder::default()
         .cli_overrides(cli_overrides)
+        .loader_overrides(loader_overrides)
         .harness_overrides(harness_overrides);
     if let Some(codex_home) = codex_home {
         builder = builder
@@ -695,6 +712,7 @@ mod tests {
         let profile_config = build_debug_sandbox_config(
             Vec::new(),
             ConfigOverrides::default(),
+            LoaderOverrides::default(),
             Some(codex_home_path.clone()),
         )
         .await?;
@@ -704,6 +722,7 @@ mod tests {
                 sandbox_mode: Some(create_sandbox_mode(/*full_auto*/ false)),
                 ..Default::default()
             },
+            LoaderOverrides::default(),
             Some(codex_home_path.clone()),
         )
         .await?;
@@ -712,6 +731,7 @@ mod tests {
             Vec::new(),
             /*codex_linux_sandbox_exe*/ None,
             /*full_auto*/ false,
+            LoaderOverrides::default(),
             Some(codex_home_path),
         )
         .await?;
@@ -746,6 +766,7 @@ mod tests {
             Vec::new(),
             /*codex_linux_sandbox_exe*/ None,
             /*full_auto*/ true,
+            LoaderOverrides::default(),
             Some(codex_home.path().to_path_buf()),
         )
         .await

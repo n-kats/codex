@@ -56,6 +56,12 @@ mod original_image_detail;
 pub use codex_mcp::SandboxState;
 mod mcp_openai_file;
 mod mcp_tool_call;
+mod memories;
+pub mod config_loader {
+    pub use codex_config::{
+        ConfigLayerStack, ConfigLayerStackOrdering, LoaderOverrides, loader::*,
+    };
+}
 pub(crate) mod mention_syntax;
 pub(crate) mod message_history;
 pub(crate) mod utils;
@@ -138,6 +144,7 @@ pub(crate) mod safety;
 mod session_rollout_init_error;
 pub mod shell;
 pub(crate) mod shell_snapshot;
+pub mod shell_startup_files;
 pub mod spawn;
 pub(crate) mod state_db_bridge;
 pub use state_db_bridge::StateDbHandle;

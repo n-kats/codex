@@ -352,6 +352,16 @@ async fn model_verification_emits_structured_event_without_reroute_or_warning() 
                 );
                 verification_count += 1;
             }
+            EventMsg::Warning(warning)
+                if warning
+                    .message
+                    .contains("custom.user_shell.no_inject is false")
+                    || warning
+                        .message
+                        .contains("custom.exec.* resolves to the current user") =>
+            {
+                continue;
+            }
             EventMsg::Warning(_) => warning_count += 1,
             EventMsg::ModelReroute(_) => reroute_count += 1,
             EventMsg::RawResponseItem(raw)

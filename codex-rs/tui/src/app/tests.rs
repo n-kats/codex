@@ -998,7 +998,7 @@ async fn replay_thread_snapshot_restores_pending_pastes_for_submit() {
     assert_eq!(app.chat_widget.composer_text_with_pending(), large);
 
     app.chat_widget
-        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_user_turn_op(&mut new_op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(
@@ -1061,7 +1061,7 @@ async fn replay_thread_snapshot_restores_collaboration_mode_for_draft_submit() {
         /*resume_restored_queue*/ true,
     );
     app.chat_widget
-        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_user_turn_op(&mut new_op_rx) {
         Op::UserTurn {
@@ -1169,7 +1169,7 @@ async fn replayed_interrupted_turn_restores_queued_input_to_composer() {
     app.chat_widget
         .apply_external_edit("queued follow-up".to_string());
     app.chat_widget
-        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     let input_state = app
         .chat_widget
         .capture_thread_input_state()
@@ -1544,6 +1544,7 @@ async fn update_memory_settings_updates_current_thread_memory_mode() -> Result<(
     let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
     let codex_home = tempdir()?;
     app.config.codex_home = codex_home.path().to_path_buf().abs();
+    app.config.sqlite_home = codex_home.path().to_path_buf();
     // Seed the previous setting so this test exercises the thread-mode update path.
     app.config.memories.generate_memories = true;
 
@@ -1565,6 +1566,10 @@ async fn update_memory_settings_updates_current_thread_memory_mode() -> Result<(
     )
     .await
     .expect("state db should initialize");
+    state_db
+        .mark_backfill_complete(/*last_watermark*/ None)
+        .await
+        .expect("backfill should complete");
     let memory_mode = state_db
         .get_thread_memory_mode(thread_id)
         .await
@@ -1667,6 +1672,7 @@ async fn update_feature_flags_enabling_guardian_selects_auto_review() -> Result<
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
     );
     let cell = match app_event_rx.try_recv() {
@@ -1758,6 +1764,7 @@ async fn update_feature_flags_disabling_guardian_clears_review_policy_and_restor
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
     );
     let cell = match app_event_rx.try_recv() {
@@ -1837,6 +1844,7 @@ async fn update_feature_flags_enabling_guardian_overrides_explicit_manual_review
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
     );
 
@@ -1895,6 +1903,7 @@ async fn update_feature_flags_disabling_guardian_clears_manual_review_policy_wit
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
     );
     assert!(
@@ -1955,6 +1964,7 @@ async fn update_feature_flags_enabling_guardian_in_profile_sets_profile_auto_rev
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
     );
 
@@ -2043,6 +2053,7 @@ guardian_approval = true
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
     );
     let cell = match app_event_rx.try_recv() {
@@ -4504,7 +4515,7 @@ async fn backtrack_resubmit_preserves_data_image_urls_in_user_turn() {
     });
 
     app.chat_widget
-        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        .handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let mut saw_rollback = false;
     let mut submitted_items: Option<Vec<UserInput>> = None;

@@ -134,6 +134,9 @@ async fn ignore_user_config_keeps_empty_user_layer() -> std::io::Result<()> {
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides {
+            user_config_path: None,
+            disable_user_config: false,
+            disable_project_config: false,
             ignore_user_config: true,
             ..Default::default()
         },
@@ -165,6 +168,9 @@ async fn ignore_rules_marks_config_stack_for_exec_policy_rule_skip() -> std::io:
         Some(cwd),
         &[] as &[(String, TomlValue)],
         LoaderOverrides {
+            user_config_path: None,
+            disable_user_config: false,
+            disable_project_config: false,
             ignore_user_and_project_exec_policy_rules: true,
             ..Default::default()
         },
@@ -174,6 +180,100 @@ async fn ignore_rules_marks_config_stack_for_exec_policy_rule_skip() -> std::io:
     .await?;
 
     assert!(layers.ignore_user_and_project_exec_policy_rules());
+    Ok(())
+}
+
+#[tokio::test]
+async fn user_config_path_override_loads_alternate_file() -> std::io::Result<()> {
+    let tmp = tempdir().expect("tempdir");
+    let codex_home = tmp.path().join("home");
+    let alt_dir = tmp.path().join("alt");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    tokio::fs::create_dir_all(&alt_dir).await?;
+    tokio::fs::write(codex_home.join(CONFIG_TOML_FILE), "model = \"base\"\n").await?;
+
+    let alt_config = alt_dir.join("custom.toml");
+    tokio::fs::write(&alt_config, "model = \"alt\"\n").await?;
+
+    let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
+    let layers = load_config_layers_state(
+        LOCAL_FS.as_ref(),
+        &codex_home,
+        Some(cwd),
+        &[] as &[(String, TomlValue)],
+        LoaderOverrides {
+            user_config_path: Some(alt_config.clone()),
+            disable_user_config: false,
+            disable_project_config: false,
+            ..Default::default()
+        },
+        CloudRequirementsLoader::default(),
+        &codex_config::NoopThreadConfigLoader,
+        /*host_name*/ None,
+    )
+    .await?;
+
+    assert_eq!(
+        layers.effective_config().get("model"),
+        Some(&TomlValue::String("alt".to_string()))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn disable_project_config_omits_project_layers() -> std::io::Result<()> {
+    let tmp = tempdir().expect("tempdir");
+    let codex_home = tmp.path().join("home");
+    let project_root = tmp.path().join("project");
+    let project_dot_codex = project_root.join(".codex");
+    tokio::fs::create_dir_all(&codex_home).await?;
+    tokio::fs::create_dir_all(&project_dot_codex).await?;
+    tokio::fs::write(codex_home.join(CONFIG_TOML_FILE), "model = \"user\"\n").await?;
+    tokio::fs::write(
+        project_dot_codex.join(CONFIG_TOML_FILE),
+        "model = \"project\"\n",
+    )
+    .await?;
+
+    let cwd = AbsolutePathBuf::try_from(project_root.as_path()).expect("cwd");
+    let layers = load_config_layers_state(
+        LOCAL_FS.as_ref(),
+        &codex_home,
+        Some(cwd),
+        &[] as &[(String, TomlValue)],
+        LoaderOverrides {
+            user_config_path: None,
+            disable_user_config: false,
+            disable_project_config: true,
+            ..Default::default()
+        },
+        CloudRequirementsLoader::default(),
+        &codex_config::NoopThreadConfigLoader,
+        /*host_name*/ None,
+    )
+    .await?;
+
+    let project_layers: Vec<_> = layers
+        .get_layers(
+            crate::config_loader::ConfigLayerStackOrdering::LowestPrecedenceFirst,
+            /*include_disabled*/ false,
+        )
+        .into_iter()
+        .filter(|layer| {
+            matches!(
+                layer.name,
+                codex_app_server_protocol::ConfigLayerSource::Project { .. }
+            )
+        })
+        .collect();
+    assert!(
+        project_layers.is_empty(),
+        "expected project layers to be disabled, got: {project_layers:?}"
+    );
+    assert_eq!(
+        layers.effective_config().get("model"),
+        Some(&TomlValue::String("user".to_string()))
+    );
     Ok(())
 }
 

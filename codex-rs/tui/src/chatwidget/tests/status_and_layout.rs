@@ -766,7 +766,7 @@ async fn workspace_owner_nudge_default_no_dismisses_without_sending() {
         RateLimitErrorKind::Generic,
         "Usage limit reached.".to_string(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_no_owner_nudge_or_rate_limit_refresh(&mut rx);
 }
@@ -783,7 +783,7 @@ async fn workspace_owner_nudge_reappears_after_dismissing_no() {
         RateLimitErrorKind::UsageLimit,
         "Usage limit reached.".to_string(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
     assert_no_owner_nudge_or_rate_limit_refresh(&mut rx);
 
     chat.on_rate_limit_error(

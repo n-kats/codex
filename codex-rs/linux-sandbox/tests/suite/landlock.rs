@@ -41,6 +41,7 @@ const NETWORK_TIMEOUT_MS: u64 = 2_000;
 const NETWORK_TIMEOUT_MS: u64 = 10_000;
 
 const BWRAP_UNAVAILABLE_ERR: &str = "build-time bubblewrap is not available in this build.";
+const BWRAP_USERNS_UNAVAILABLE_ERR: &str = "No permissions to create a new namespace";
 
 fn create_env_from_core_vars() -> HashMap<String, String> {
     let policy = ShellEnvironmentPolicy::default();
@@ -63,11 +64,12 @@ async fn run_cmd_output(
     writable_roots: &[PathBuf],
     timeout_ms: u64,
 ) -> codex_protocol::exec_output::ExecToolCallOutput {
+    let use_legacy_landlock = should_skip_bwrap_tests().await;
     run_cmd_result_with_writable_roots(
         cmd,
         writable_roots,
         timeout_ms,
-        /*use_legacy_landlock*/ false,
+        use_legacy_landlock,
         /*network_access*/ false,
     )
     .await
@@ -141,6 +143,7 @@ async fn run_cmd_result_with_permission_profile(
 
 fn is_bwrap_unavailable_output(output: &codex_protocol::exec_output::ExecToolCallOutput) -> bool {
     output.stderr.text.contains(BWRAP_UNAVAILABLE_ERR)
+        || output.stderr.text.contains(BWRAP_USERNS_UNAVAILABLE_ERR)
         || (output
             .stderr
             .text
@@ -151,9 +154,14 @@ fn is_bwrap_unavailable_output(output: &codex_protocol::exec_output::ExecToolCal
 }
 
 async fn should_skip_bwrap_tests() -> bool {
+    let tempdir = match tempfile::tempdir() {
+        Ok(tempdir) => tempdir,
+        Err(err) => panic!("bwrap availability probe failed unexpectedly: {err:?}"),
+    };
+
     match run_cmd_result_with_writable_roots(
         &["bash", "-lc", "true"],
-        &[],
+        &[tempdir.path().to_path_buf()],
         NETWORK_TIMEOUT_MS,
         /*use_legacy_landlock*/ false,
         /*network_access*/ true,

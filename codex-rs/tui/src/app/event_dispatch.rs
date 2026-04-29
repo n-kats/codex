@@ -989,6 +989,7 @@ impl App {
                                         /*service_tier*/ None,
                                         /*collaboration_mode*/ None,
                                         /*personality*/ None,
+                                        /*project_doc_paths*/ None,
                                     )
                                     .into(),
                                 ));
@@ -1015,6 +1016,7 @@ impl App {
                                         /*service_tier*/ None,
                                         /*collaboration_mode*/ None,
                                         /*personality*/ None,
+                                        /*project_doc_paths*/ None,
                                     )
                                     .into(),
                                 ));

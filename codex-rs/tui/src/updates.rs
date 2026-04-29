@@ -142,6 +142,20 @@ async fn fetch_latest_github_release_version() -> anyhow::Result<String> {
     extract_version_from_latest_tag(&latest_tag_name)
 }
 
+fn is_newer(latest: &str, current: &str) -> Option<bool> {
+    match (parse_strict_version(latest), parse_current_version(current)) {
+        (Some(l), Some(c)) => Some(l > c),
+        _ => None,
+    }
+}
+
+fn extract_version_from_latest_tag(latest_tag_name: &str) -> anyhow::Result<String> {
+    latest_tag_name
+        .strip_prefix("rust-v")
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("Failed to parse latest tag name '{latest_tag_name}'"))
+}
+
 /// Returns the latest version to show in a popup, if it should be shown.
 /// This respects the user's dismissal choice for the current latest version.
 pub fn get_upgrade_version_for_popup(config: &Config) -> Option<String> {
@@ -175,4 +189,95 @@ pub async fn dismiss_version(config: &Config, version: &str) -> anyhow::Result<(
     }
     tokio::fs::write(version_file, json_line).await?;
     Ok(())
+}
+
+fn parse_strict_version(v: &str) -> Option<(u64, u64, u64)> {
+    let mut iter = v.trim().split('.');
+    let maj = iter.next()?.parse::<u64>().ok()?;
+    let min = iter.next()?.parse::<u64>().ok()?;
+    let pat = iter.next()?.parse::<u64>().ok()?;
+    if iter.next().is_some() {
+        return None;
+    }
+    Some((maj, min, pat))
+}
+
+fn parse_current_version(v: &str) -> Option<(u64, u64, u64)> {
+    let base = v.trim().split(['-', '+']).next().unwrap_or(v.trim());
+    let mut iter = base.split('.');
+    let maj = iter.next()?.parse::<u64>().ok()?;
+    let min = iter.next()?.parse::<u64>().ok()?;
+    let pat = iter.next()?.parse::<u64>().ok()?;
+    if iter.next().is_some() {
+        return None;
+    }
+    Some((maj, min, pat))
+}
+
+fn is_source_build_version(version: &str) -> bool {
+    parse_current_version(version) == Some((0, 0, 0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_version_from_brew_api_json() {
+        //
+        // https://formulae.brew.sh/api/cask/codex.json
+        let cask_json = r#"{
+            "token": "codex",
+            "full_token": "codex",
+            "tap": "homebrew/cask",
+            "version": "0.96.0",
+        }"#;
+        let HomebrewCaskInfo { version } = serde_json::from_str::<HomebrewCaskInfo>(cask_json)
+            .expect("failed to parse version from cask json");
+        assert_eq!(version, "0.96.0");
+    }
+
+    #[test]
+    fn extracts_version_from_latest_tag() {
+        assert_eq!(
+            extract_version_from_latest_tag("rust-v1.5.0").expect("failed to parse version"),
+            "1.5.0"
+        );
+    }
+
+    #[test]
+    fn latest_tag_without_prefix_is_invalid() {
+        assert!(extract_version_from_latest_tag("v1.5.0").is_err());
+    }
+
+    #[test]
+    fn prerelease_version_is_not_considered_newer() {
+        assert_eq!(is_newer("0.11.0-beta.1", "0.11.0"), None);
+        assert_eq!(is_newer("1.0.0-rc.1", "1.0.0"), None);
+    }
+
+    #[test]
+    fn plain_semver_comparisons_work() {
+        assert_eq!(is_newer("0.11.1", "0.11.0"), Some(true));
+        assert_eq!(is_newer("0.11.0", "0.11.1"), Some(false));
+        assert_eq!(is_newer("1.0.0", "0.9.9"), Some(true));
+        assert_eq!(is_newer("0.9.9", "1.0.0"), Some(false));
+    }
+
+    #[test]
+    fn whitespace_is_ignored() {
+        assert_eq!(parse_strict_version(" 1.2.3 \n"), Some((1, 2, 3)));
+        assert_eq!(
+            parse_current_version(" 1.2.3-custom-2026-04-25 \n"),
+            Some((1, 2, 3))
+        );
+        assert_eq!(is_newer(" 1.2.3 ", "1.2.2"), Some(true));
+    }
+
+    #[test]
+    fn custom_suffix_versions_are_comparable_against_plain_semver() {
+        assert_eq!(is_newer("1.2.4", "1.2.3-custom-2026-04-25"), Some(true));
+        assert_eq!(is_newer("1.2.3", "1.2.3-custom-2026-04-25"), Some(false));
+        assert_eq!(is_newer("1.2.3-custom-2026-04-25", "1.2.2"), None);
+    }
 }

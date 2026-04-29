@@ -2,6 +2,7 @@ use crate::agents_md::AgentsMdManager;
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::path_utils::normalize_for_native_workdir;
+use crate::spawn::RunAsUser;
 use crate::unified_exec::DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS;
 use crate::unified_exec::MIN_EMPTY_YIELD_TIME_MS;
 use crate::windows_sandbox::WindowsSandboxLevelExt;
@@ -22,6 +23,8 @@ use codex_config::SandboxModeRequirement;
 use codex_config::Sourced;
 use codex_config::ThreadConfigLoader;
 use codex_config::config_toml::ConfigToml;
+use codex_config::config_toml::CustomConfigToml;
+use codex_config::config_toml::CustomExecToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
@@ -97,6 +100,7 @@ use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::convert::TryFrom;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::path::PathBuf;
@@ -163,6 +167,10 @@ pub(crate) const MAX_MULTI_AGENT_V2_WAIT_TIMEOUT_MS: i64 = 3600 * 1000;
 pub(crate) const DEFAULT_AGENT_MAX_DEPTH: i32 = 1;
 pub(crate) const DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS: Option<u64> = None;
 const LOCAL_DEV_BUILD_VERSION: &str = "0.0.0";
+
+pub(crate) const USER_SHELL_NO_INJECT_WARNING: &str = "custom.user_shell.no_inject is false (default); `!` (UserShell) commands and their outputs will be injected into the model context and recorded to the local session history. Set custom.user_shell.no_inject=true to disable injection/recording, and avoid secrets in `!` commands/output.";
+
+pub(crate) const CUSTOM_EXEC_CURRENT_USER_WARNING: &str = "custom.exec.* resolves to the current user; model-triggered commands will run as the invoker user (same as `!`/UserShell), so privilege separation is not in effect. Configure a different worker user/uid/gid to enable separation.";
 
 pub const CONFIG_TOML_FILE: &str = "config.toml";
 
@@ -357,6 +365,9 @@ pub struct Config {
     /// Provenance for how this [`Config`] was derived (merged layers + enforced
     /// requirements).
     pub config_layer_stack: ConfigLayerStack,
+
+    /// Fork-specific settings loaded from config.toml.
+    pub custom: CustomConfigToml,
 
     /// Warnings collected during config load that should be shown on startup.
     pub startup_warnings: Vec<String>,
@@ -554,6 +565,9 @@ pub struct Config {
 
     /// Maximum number of bytes to include from an AGENTS.md project doc file.
     pub project_doc_max_bytes: usize,
+
+    /// Explicit project documentation files to prefer over auto-discovery.
+    pub project_doc_paths: Vec<PathBuf>,
 
     /// Additional filenames to try when looking for project-level docs.
     pub project_doc_fallback_filenames: Vec<String>,
@@ -952,6 +966,42 @@ impl Config {
             .set_legacy_sandbox_policy(sandbox_policy, self.cwd.as_path())
     }
 
+    fn effective_custom_config_toml(&self) -> std::io::Result<CustomConfigToml> {
+        Ok(self.custom.clone())
+    }
+
+    pub fn assistant_shell_environment_policy(&self) -> std::io::Result<ShellEnvironmentPolicy> {
+        let custom = self.effective_custom_config_toml()?;
+        Ok(custom
+            .assistant_shell_environment_policy
+            .map(Into::into)
+            .unwrap_or_else(|| self.permissions.shell_environment_policy.clone()))
+    }
+
+    pub fn user_shell_environment_policy(&self) -> std::io::Result<ShellEnvironmentPolicy> {
+        let custom = self.effective_custom_config_toml()?;
+        let assistant_shell_environment_policy = custom
+            .assistant_shell_environment_policy
+            .map(Into::into)
+            .unwrap_or_else(|| self.permissions.shell_environment_policy.clone());
+        Ok(custom
+            .user_shell_environment_policy
+            .map(Into::into)
+            .unwrap_or(assistant_shell_environment_policy))
+    }
+
+    pub fn user_shell_no_inject(&self) -> std::io::Result<bool> {
+        Ok(self
+            .effective_custom_config_toml()?
+            .user_shell
+            .no_inject
+            .unwrap_or(false))
+    }
+
+    pub fn custom_exec_run_as(&self) -> std::io::Result<Option<RunAsUser>> {
+        resolve_custom_exec_run_as(&self.effective_custom_config_toml()?.exec)
+    }
+
     pub fn to_models_manager_config(&self) -> ModelsManagerConfig {
         ModelsManagerConfig {
             model_context_window: self.model_context_window,
@@ -998,6 +1048,19 @@ impl Config {
     ) -> std::io::Result<Self> {
         ConfigBuilder::default()
             .cli_overrides(cli_overrides)
+            .build()
+            .await
+    }
+
+    /// Load configuration with CLI overrides plus loader overrides for config
+    /// file selection.
+    pub async fn load_with_cli_overrides_and_loader_overrides(
+        cli_overrides: Vec<(String, TomlValue)>,
+        loader_overrides: LoaderOverrides,
+    ) -> std::io::Result<Self> {
+        ConfigBuilder::default()
+            .cli_overrides(cli_overrides)
+            .loader_overrides(loader_overrides)
             .build()
             .await
     }
@@ -1058,6 +1121,173 @@ impl Config {
             .build()
             .await
     }
+}
+
+fn resolve_custom_exec_run_as(exec: &CustomExecToml) -> std::io::Result<Option<RunAsUser>> {
+    let worker_user = exec
+        .worker_user
+        .as_ref()
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    #[cfg(not(unix))]
+    {
+        if worker_user.is_some() || exec.worker_uid.is_some() || exec.worker_gid.is_some() {
+            return Err(std::io::Error::new(
+                ErrorKind::InvalidInput,
+                "custom.exec is only supported on unix targets",
+            ));
+        }
+        return Ok(None);
+    }
+
+    #[cfg(unix)]
+    {
+        let ids = match (exec.worker_uid, exec.worker_gid) {
+            (None, None) => None,
+            (Some(uid), Some(gid)) => Some(RunAsUser {
+                uid,
+                gid,
+                supplementary_gids: None,
+            }),
+            _ => {
+                return Err(std::io::Error::new(
+                    ErrorKind::InvalidInput,
+                    "custom.exec.worker_uid and custom.exec.worker_gid must be set together",
+                ));
+            }
+        };
+
+        let user_ids = if let Some(user) = worker_user {
+            Some(resolve_user_to_ids(user)?)
+        } else {
+            None
+        };
+
+        match (user_ids, ids) {
+            (None, None) => Ok(None),
+            (Some(user_ids), None) => Ok(Some(user_ids)),
+            (None, Some(ids)) => Ok(Some(ids)),
+            (Some(user_ids), Some(ids)) => {
+                if user_ids.uid == ids.uid && user_ids.gid == ids.gid {
+                    Ok(Some(user_ids))
+                } else {
+                    Err(std::io::Error::new(
+                        ErrorKind::InvalidInput,
+                        format!(
+                            "custom.exec.worker_user resolved to uid/gid {}/{} but custom.exec.worker_uid/gid is {}/{}",
+                            user_ids.uid, user_ids.gid, ids.uid, ids.gid
+                        ),
+                    ))
+                }
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn resolve_user_to_ids(user: &str) -> std::io::Result<RunAsUser> {
+    use std::ffi::CString;
+    use std::ptr;
+
+    let user = CString::new(user).map_err(|_| {
+        std::io::Error::new(
+            ErrorKind::InvalidInput,
+            "custom.exec.worker_user must not contain NUL bytes",
+        )
+    })?;
+
+    let mut buf_len = 1024usize;
+    for _ in 0..6 {
+        let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result: *mut libc::passwd = ptr::null_mut();
+        let mut buf = vec![0u8; buf_len];
+        let rc = unsafe {
+            libc::getpwnam_r(
+                user.as_ptr(),
+                &mut pwd,
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                &mut result,
+            )
+        };
+        if rc == libc::ERANGE {
+            buf_len = buf_len.saturating_mul(2);
+            continue;
+        }
+        if rc != 0 {
+            return Err(std::io::Error::from_raw_os_error(rc));
+        }
+        if result.is_null() {
+            return Err(std::io::Error::new(
+                ErrorKind::NotFound,
+                "custom.exec.worker_user does not exist",
+            ));
+        }
+
+        let uid = pwd.pw_uid;
+        let gid = pwd.pw_gid;
+        let supplementary_gids = resolve_user_supplementary_gids(&user, gid)?;
+        return Ok(RunAsUser {
+            uid,
+            gid,
+            supplementary_gids: Some(supplementary_gids),
+        });
+    }
+
+    Err(std::io::Error::new(
+        ErrorKind::Other,
+        "failed to resolve custom.exec.worker_user (buffer exhausted)",
+    ))
+}
+
+#[cfg(unix)]
+fn resolve_user_supplementary_gids(
+    user: &std::ffi::CString,
+    primary_gid: u32,
+) -> std::io::Result<Vec<u32>> {
+    let primary_gid_u32 = primary_gid;
+    let primary_gid: libc::gid_t = primary_gid;
+
+    let mut capacity: usize = 16;
+    for _ in 0..6 {
+        let mut groups: Vec<libc::gid_t> = vec![0; capacity];
+        let mut ngroups: libc::c_int = groups.len().try_into().unwrap_or(libc::c_int::MAX);
+
+        let rc = unsafe {
+            libc::getgrouplist(
+                user.as_ptr(),
+                primary_gid,
+                groups.as_mut_ptr(),
+                &mut ngroups,
+            )
+        };
+        if rc == -1 {
+            let needed: usize = ngroups
+                .try_into()
+                .unwrap_or_else(|_| groups.len().saturating_mul(2));
+            capacity = needed.clamp(capacity.saturating_add(1), 1024);
+            continue;
+        }
+
+        let len: usize = ngroups.try_into().unwrap_or_default();
+        groups.truncate(len);
+
+        let mut resolved: Vec<u32> = groups
+            .into_iter()
+            .filter_map(|gid| u32::try_from(gid).ok())
+            .filter(|gid| *gid != primary_gid_u32)
+            .collect();
+        resolved.sort_unstable();
+        resolved.dedup();
+        return Ok(resolved);
+    }
+
+    Err(std::io::Error::new(
+        ErrorKind::Other,
+        "failed to resolve custom.exec.worker_user supplementary groups",
+    ))
 }
 
 /// DEPRECATED: Use [Config::load_with_cli_overrides()] instead because working
@@ -1611,6 +1841,8 @@ pub struct ConfigOverrides {
     pub codex_linux_sandbox_exe: Option<PathBuf>,
     pub main_execve_wrapper_exe: Option<PathBuf>,
     pub zsh_path: Option<PathBuf>,
+    /// Explicit project documentation files to prefer over auto-discovery.
+    pub project_doc_paths: Vec<PathBuf>,
     pub base_instructions: Option<String>,
     pub developer_instructions: Option<String>,
     pub personality: Option<Personality>,
@@ -1865,6 +2097,7 @@ impl Config {
             codex_linux_sandbox_exe,
             main_execve_wrapper_exe,
             zsh_path: zsh_path_override,
+            project_doc_paths,
             base_instructions,
             developer_instructions,
             personality,
@@ -2244,7 +2477,40 @@ impl Config {
             })?
             .clone();
 
-        let shell_environment_policy = cfg.shell_environment_policy.into();
+        let shell_environment_policy: ShellEnvironmentPolicy = cfg.shell_environment_policy.into();
+        let assistant_shell_environment_policy = cfg
+            .custom
+            .assistant_shell_environment_policy
+            .clone()
+            .map(ShellEnvironmentPolicy::from)
+            .unwrap_or_else(|| shell_environment_policy.clone());
+        let exec_run_as = resolve_custom_exec_run_as(&cfg.custom.exec)?;
+        if exec_run_as.is_some()
+            && matches!(
+                assistant_shell_environment_policy.inherit,
+                codex_protocol::config_types::ShellEnvironmentPolicyInherit::All
+            )
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "custom.exec is configured, but shell_environment_policy.inherit is 'all'; refusing because a model-run `env`/`printenv` would leak the invoker environment (set inherit = 'core' or 'none', or use include_only).",
+            ));
+        }
+        let user_shell_no_inject = cfg.custom.user_shell.no_inject.unwrap_or(false);
+        if !user_shell_no_inject {
+            startup_warnings.push(USER_SHELL_NO_INJECT_WARNING.to_string());
+        }
+        let custom_exec_was_configured = cfg.custom.exec.worker_user.as_deref().is_some_and(|value| !value.trim().is_empty())
+            || cfg.custom.exec.worker_uid.is_some()
+            || cfg.custom.exec.worker_gid.is_some();
+        #[cfg(unix)]
+        if custom_exec_was_configured
+            && exec_run_as
+                .as_ref()
+                .is_some_and(|run_as| run_as.uid == unsafe { libc::geteuid() })
+        {
+            startup_warnings.push(CUSTOM_EXEC_CURRENT_USER_WARNING.to_string());
+        }
         let allow_login_shell = cfg.allow_login_shell.unwrap_or(true);
 
         let history = cfg.history.unwrap_or_default();
@@ -2660,6 +2926,7 @@ impl Config {
             mcp_oauth_callback_url: cfg.mcp_oauth_callback_url.clone(),
             model_providers,
             project_doc_max_bytes: cfg.project_doc_max_bytes.unwrap_or(AGENTS_MD_MAX_BYTES),
+            project_doc_paths,
             project_doc_fallback_filenames: cfg
                 .project_doc_fallback_filenames
                 .unwrap_or_default()
@@ -2677,6 +2944,7 @@ impl Config {
             agent_max_threads,
             agent_max_depth,
             agent_roles,
+            custom: cfg.custom.clone(),
             memories: cfg.memories.unwrap_or_default().into(),
             agent_job_max_runtime_seconds,
             agent_interrupt_message_enabled,

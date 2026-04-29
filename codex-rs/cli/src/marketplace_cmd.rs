@@ -4,6 +4,7 @@ use anyhow::bail;
 use clap::Parser;
 use codex_core::config::Config;
 use codex_core::config::find_codex_home;
+use codex_core::config_loader::LoaderOverrides;
 use codex_core::plugins::PluginMarketplaceUpgradeOutcome;
 use codex_core::plugins::PluginsManager;
 use codex_core_plugins::marketplace_add::MarketplaceAddRequest;
@@ -61,7 +62,7 @@ struct RemoveMarketplaceArgs {
 }
 
 impl MarketplaceCli {
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self, loader_overrides: LoaderOverrides) -> Result<()> {
         let MarketplaceCli {
             config_overrides,
             subcommand,
@@ -73,7 +74,9 @@ impl MarketplaceCli {
 
         match subcommand {
             MarketplaceSubcommand::Add(args) => run_add(args).await?,
-            MarketplaceSubcommand::Upgrade(args) => run_upgrade(overrides, args).await?,
+            MarketplaceSubcommand::Upgrade(args) => {
+                run_upgrade(overrides, loader_overrides, args).await?
+            }
             MarketplaceSubcommand::Remove(args) => run_remove(args).await?,
         }
 
@@ -120,10 +123,11 @@ async fn run_add(args: AddMarketplaceArgs) -> Result<()> {
 
 async fn run_upgrade(
     overrides: Vec<(String, toml::Value)>,
+    loader_overrides: LoaderOverrides,
     args: UpgradeMarketplaceArgs,
 ) -> Result<()> {
     let UpgradeMarketplaceArgs { marketplace_name } = args;
-    let config = Config::load_with_cli_overrides(overrides)
+    let config = Config::load_with_cli_overrides_and_loader_overrides(overrides, loader_overrides)
         .await
         .context("failed to load configuration")?;
     let codex_home = find_codex_home().context("failed to resolve CODEX_HOME")?;

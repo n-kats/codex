@@ -215,7 +215,11 @@ fn exec_root_span() -> tracing::Span {
     )
 }
 
-pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
+pub async fn run_main(
+    cli: Cli,
+    arg0_paths: Arg0DispatchPaths,
+    loader_overrides: LoaderOverrides,
+) -> anyhow::Result<()> {
     if let Err(err) = set_default_originator("codex_exec".to_string()) {
         tracing::warn!(?err, "Failed to set codex exec originator override {err:?}");
     }
@@ -246,6 +250,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         dangerously_bypass_approvals_and_sandbox,
         cwd,
         add_dir,
+        agents_md,
     } = shared;
 
     let (_stdout_with_ansi, stderr_with_ansi) = match color {
@@ -305,12 +310,9 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         }
     };
 
-    #[allow(clippy::print_stderr)]
-    let loader_overrides = LoaderOverrides {
-        ignore_user_config,
-        ignore_user_and_project_exec_policy_rules: ignore_rules,
-        ..Default::default()
-    };
+    let mut loader_overrides = loader_overrides;
+    loader_overrides.ignore_user_config |= ignore_user_config;
+    loader_overrides.ignore_user_and_project_exec_policy_rules = ignore_rules;
 
     let config_toml = match load_config_as_toml_with_cli_and_loader_overrides(
         &codex_home,
@@ -401,6 +403,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe.clone(),
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
         zsh_path: None,
+        project_doc_paths: agents_md,
         base_instructions: None,
         developer_instructions: None,
         personality: None,

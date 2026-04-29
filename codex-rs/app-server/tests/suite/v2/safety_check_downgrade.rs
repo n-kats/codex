@@ -18,6 +18,7 @@ use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput;
+use codex_app_server_protocol::WarningNotification;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
@@ -366,6 +367,19 @@ async fn collect_model_verification_notifications_and_validate_no_warning_item(
                 verification = Some(payload);
             }
             "warning" => {
+                let params = notification
+                    .params
+                    .ok_or_else(|| anyhow::anyhow!("warning notifications must include params"))?;
+                let warning: WarningNotification = serde_json::from_value(params)?;
+                if warning
+                    .message
+                    .contains("custom.user_shell.no_inject is false")
+                    || warning
+                        .message
+                        .contains("custom.exec.* resolves to the current user")
+                {
+                    continue;
+                }
                 anyhow::bail!("verification-only response must not emit warning");
             }
             "model/rerouted" => {

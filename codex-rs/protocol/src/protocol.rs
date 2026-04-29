@@ -652,6 +652,10 @@ pub enum Op {
         /// Updated personality preference.
         #[serde(skip_serializing_if = "Option::is_none")]
         personality: Option<Personality>,
+
+        /// Updated AGENTS.md discovery roots for subsequent turns.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        project_doc_paths: Option<Vec<PathBuf>>,
     },
 
     /// Approve a command execution

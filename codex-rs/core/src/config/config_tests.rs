@@ -12,6 +12,8 @@ use codex_config::config_toml::AgentRoleToml;
 use codex_config::config_toml::AgentsToml;
 use codex_config::config_toml::AutoReviewToml;
 use codex_config::config_toml::ConfigToml;
+use codex_config::config_toml::CustomConfigToml;
+use codex_config::config_toml::CustomThemeDiffToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
@@ -84,9 +86,13 @@ use pretty_assertions::assert_eq;
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::ffi::CStr;
 use std::path::Path;
 use std::time::Duration;
 use tempfile::TempDir;
+
+use crate::spawn::RunAsUser;
 
 fn stdio_mcp(command: &str) -> McpServerConfig {
     McpServerConfig {
@@ -163,6 +169,394 @@ async fn derive_legacy_sandbox_policy_for_test(
             );
             SandboxPolicy::new_read_only_policy()
         })
+}
+
+#[tokio::test]
+async fn custom_user_shell_environment_policy_overrides_user_shell_env() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+[shell_environment_policy]
+inherit = "none"
+set = { HOME = "/home/assistant" }
+
+[custom.user_shell_environment_policy]
+inherit = "none"
+set = { HOME = "/home/ubuntu" }
+"#,
+    )
+    .expect("parse config toml");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config
+            .assistant_shell_environment_policy()?
+            .r#set
+            .get("HOME")
+            .map(String::as_str),
+        Some("/home/assistant")
+    );
+    assert_eq!(
+        config
+            .user_shell_environment_policy()?
+            .r#set
+            .get("HOME")
+            .map(String::as_str),
+        Some("/home/ubuntu")
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn custom_user_shell_no_inject_is_resolved() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+[custom.user_shell]
+no_inject = true
+"#,
+    )
+    .expect("parse config toml");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert!(config.user_shell_no_inject()?);
+    Ok(())
+}
+
+#[tokio::test]
+async fn custom_user_shell_no_inject_false_adds_startup_warning() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+[custom.user_shell]
+no_inject = false
+"#,
+    )
+    .expect("parse config toml");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert!(
+        config
+            .startup_warnings
+            .iter()
+            .any(|warning| warning == super::USER_SHELL_NO_INJECT_WARNING),
+        "expected warning about custom.user_shell.no_inject=false, got: {:?}",
+        config.startup_warnings
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn custom_user_shell_no_inject_default_adds_startup_warning() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert!(
+        config
+            .startup_warnings
+            .iter()
+            .any(|warning| warning == super::USER_SHELL_NO_INJECT_WARNING),
+        "expected warning about custom.user_shell.no_inject default, got: {:?}",
+        config.startup_warnings
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn custom_exec_requires_uid_and_gid_together() {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+[custom.exec]
+worker_uid = 1000
+"#,
+    )
+    .expect("parse config toml");
+
+    let codex_home = TempDir::new().expect("tempdir");
+    let err = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await
+    .expect_err("expected error");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[tokio::test]
+async fn custom_exec_accepts_uid_gid_pair() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+[shell_environment_policy]
+inherit = "core"
+
+[custom.exec]
+worker_uid = 1000
+worker_gid = 1001
+"#,
+    )
+    .expect("parse config toml");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.custom_exec_run_as()?,
+        Some(RunAsUser {
+            uid: 1000,
+            gid: 1001,
+            supplementary_gids: None,
+        })
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn custom_exec_resolves_to_current_user_adds_startup_warning() -> std::io::Result<()> {
+    let (user, uid, gid) = unsafe {
+        let uid = libc::getuid();
+        let pwd = libc::getpwuid(uid);
+        assert!(!pwd.is_null(), "current user should resolve");
+        let user = CStr::from_ptr((*pwd).pw_name)
+            .to_string_lossy()
+            .into_owned();
+        (user, (*pwd).pw_uid, (*pwd).pw_gid)
+    };
+
+    let cfg: ConfigToml = toml::from_str(&format!(
+        r#"
+[shell_environment_policy]
+inherit = "core"
+
+[custom.exec]
+worker_user = "{user}"
+worker_uid = {uid}
+worker_gid = {gid}
+"#
+    ))
+    .expect("parse config toml");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert!(
+        config
+            .startup_warnings
+            .iter()
+            .any(|warning| warning == super::CUSTOM_EXEC_CURRENT_USER_WARNING),
+        "expected warning about custom.exec resolving to current user, got: {:?}",
+        config.startup_warnings
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn custom_exec_accepts_matching_user_and_uid_gid() -> std::io::Result<()> {
+    let (user, uid, gid) = unsafe {
+        let uid = libc::getuid();
+        let pwd = libc::getpwuid(uid);
+        if pwd.is_null() {
+            return Ok(());
+        }
+        let user = CStr::from_ptr((*pwd).pw_name)
+            .to_string_lossy()
+            .into_owned();
+        (user, (*pwd).pw_uid, (*pwd).pw_gid)
+    };
+
+    let cfg: ConfigToml = toml::from_str(&format!(
+        r#"
+[shell_environment_policy]
+inherit = "core"
+
+[custom.exec]
+worker_user = "{user}"
+worker_uid = {uid}
+worker_gid = {gid}
+"#
+    ))
+    .expect("parse config toml");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    let run_as = config
+        .custom_exec_run_as()?
+        .expect("worker user should resolve");
+    assert_eq!(run_as.uid, uid);
+    assert_eq!(run_as.gid, gid);
+    assert!(run_as.supplementary_gids.is_some());
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn custom_exec_rejects_inherit_all_shell_environment_policy() {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+[shell_environment_policy]
+inherit = "all"
+
+[custom.exec]
+worker_uid = 1000
+worker_gid = 1000
+"#,
+    )
+    .expect("parse config toml");
+
+    let codex_home = TempDir::new().expect("tempdir");
+    let err = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await
+    .expect_err("expected error");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn custom_exec_rejects_mismatched_user_and_uid_gid() {
+    let (user, uid, gid) = unsafe {
+        let uid = libc::getuid();
+        let pwd = libc::getpwuid(uid);
+        assert!(!pwd.is_null(), "current user should resolve");
+        let user = CStr::from_ptr((*pwd).pw_name)
+            .to_string_lossy()
+            .into_owned();
+        (user, (*pwd).pw_uid, (*pwd).pw_gid)
+    };
+
+    let mismatched_uid = uid.saturating_add(1);
+    let cfg: ConfigToml = toml::from_str(&format!(
+        r#"
+[shell_environment_policy]
+inherit = "core"
+
+[custom.exec]
+worker_user = "{user}"
+worker_uid = {mismatched_uid}
+worker_gid = {gid}
+"#
+    ))
+    .expect("parse config toml");
+
+    let codex_home = TempDir::new().expect("tempdir");
+    let err = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await
+    .expect_err("expected error");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn resolve_user_to_ids_includes_current_process_groups() -> std::io::Result<()> {
+    let (user, primary_gid) = unsafe {
+        let uid = libc::getuid();
+        let pwd = libc::getpwuid(uid);
+        assert!(!pwd.is_null(), "current user should resolve");
+        let user = CStr::from_ptr((*pwd).pw_name)
+            .to_string_lossy()
+            .into_owned();
+        (user, (*pwd).pw_gid)
+    };
+
+    let cfg: ConfigToml = toml::from_str(&format!(
+        r#"
+[shell_environment_policy]
+inherit = "core"
+
+[custom.exec]
+worker_user = "{user}"
+"#
+    ))
+    .expect("parse config toml");
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+    let run_as = config
+        .custom_exec_run_as()?
+        .expect("worker user should resolve");
+
+    let mut group_count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+    if group_count < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let mut groups = vec![0 as libc::gid_t; group_count as usize];
+    group_count = unsafe { libc::getgroups(groups.len() as libc::c_int, groups.as_mut_ptr()) };
+    if group_count < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    groups.truncate(group_count as usize);
+    let mut expected: Vec<u32> = groups
+        .into_iter()
+        .filter_map(|gid| u32::try_from(gid).ok())
+        .filter(|gid| *gid != primary_gid)
+        .collect();
+    expected.sort_unstable();
+    expected.dedup();
+
+    assert_eq!(run_as.uid, unsafe { libc::getuid() });
+    assert_eq!(run_as.gid, primary_gid);
+    assert_eq!(run_as.supplementary_gids.as_ref(), Some(&expected));
+
+    Ok(())
 }
 
 #[tokio::test]
@@ -1919,6 +2313,37 @@ fn tui_theme_defaults_to_none() {
 "#;
     let parsed = toml::from_str::<ConfigToml>(cfg).expect("TOML deserialization should succeed");
     assert_eq!(parsed.tui.as_ref().and_then(|t| t.theme.as_deref()), None);
+}
+
+#[test]
+fn custom_theme_diff_deserializes_from_toml() {
+    let cfg = r##"
+[custom.theme.diff]
+enabled = true
+line_bg = false
+gutter = true
+sign = false
+content = true
+add_line_bg = "#102030"
+del_line_bg = "#402010"
+"##;
+    let parsed = toml::from_str::<ConfigToml>(cfg).expect("TOML deserialization should succeed");
+    assert_eq!(
+        parsed
+            .custom
+            .theme
+            .as_ref()
+            .and_then(|theme| theme.diff.as_ref()),
+        Some(&CustomThemeDiffToml {
+            enabled: Some(true),
+            line_bg: Some(false),
+            gutter: Some(true),
+            sign: Some(false),
+            content: Some(true),
+            add_line_bg: Some("#102030".to_string()),
+            del_line_bg: Some("#402010".to_string()),
+        })
+    );
 }
 
 #[test]
@@ -5855,6 +6280,11 @@ model_verbosity = "high"
     })
 }
 
+fn clear_startup_warnings(mut config: Config) -> Config {
+    config.startup_warnings.clear();
+    config
+}
+
 /// Users can specify config values at multiple levels that have the
 /// following precedence:
 ///
@@ -5882,121 +6312,123 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
         fixture.codex_home(),
     )
     .await?;
-    assert_eq!(
-        Config {
-            model: Some("o3".to_string()),
-            review_model: None,
-            model_context_window: None,
-            model_auto_compact_token_limit: None,
-            service_tier: None,
-            model_provider_id: "openai".to_string(),
-            model_provider: fixture.openai_provider.clone(),
-            permissions: Permissions {
-                approval_policy: Constrained::allow_any(AskForApproval::Never),
-                permission_profile: Constrained::allow_any(PermissionProfile::read_only()),
-                network: None,
-                allow_login_shell: true,
-                shell_environment_policy: ShellEnvironmentPolicy::default(),
-                windows_sandbox_mode: None,
-                windows_sandbox_private_desktop: true,
-            },
-            approvals_reviewer: ApprovalsReviewer::User,
-            enforce_residency: Constrained::allow_any(/*initial_value*/ None),
-            user_instructions: None,
-            notify: None,
-            cwd: fixture.cwd(),
-            cli_auth_credentials_store_mode: Default::default(),
-            mcp_servers: Constrained::allow_any(HashMap::new()),
-            mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
-                Default::default(),
-                LOCAL_DEV_BUILD_VERSION,
+    let expected = clear_startup_warnings(Config {
+        model: Some("o3".to_string()),
+        review_model: None,
+        model_context_window: None,
+        model_auto_compact_token_limit: None,
+        service_tier: None,
+        model_provider_id: "openai".to_string(),
+        model_provider: fixture.openai_provider.clone(),
+        permissions: Permissions {
+            approval_policy: Constrained::allow_any(AskForApproval::Never),
+            sandbox_policy: Constrained::allow_any(SandboxPolicy::new_read_only_policy()),
+            file_system_sandbox_policy: FileSystemSandboxPolicy::from(
+                &SandboxPolicy::new_read_only_policy(),
             ),
-            mcp_oauth_callback_port: None,
-            mcp_oauth_callback_url: None,
-            model_providers: fixture.model_provider_map.clone(),
-            project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
-            project_doc_fallback_filenames: Vec::new(),
-            tool_output_token_limit: None,
-            agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
-            agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
-            agent_roles: BTreeMap::new(),
-            memories: MemoriesConfig::default(),
-            agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
-            agent_interrupt_message_enabled: true,
-            codex_home: fixture.codex_home(),
-            sqlite_home: fixture.codex_home().to_path_buf(),
-            log_dir: fixture.codex_home().join("log").to_path_buf(),
-            config_layer_stack: Default::default(),
-            startup_warnings: Vec::new(),
-            history: History::default(),
-            ephemeral: false,
-            file_opener: UriBasedFileOpener::VsCode,
-            codex_self_exe: None,
-            codex_linux_sandbox_exe: None,
-            main_execve_wrapper_exe: None,
-            zsh_path: None,
-            hide_agent_reasoning: false,
-            show_raw_agent_reasoning: false,
-            model_reasoning_effort: Some(ReasoningEffort::High),
-            plan_mode_reasoning_effort: None,
-            model_reasoning_summary: Some(ReasoningSummary::Detailed),
-            model_supports_reasoning_summaries: None,
-            model_catalog: None,
-            model_verbosity: None,
-            personality: Some(Personality::Pragmatic),
-            chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
-            realtime_audio: RealtimeAudioConfig::default(),
-            experimental_realtime_start_instructions: None,
-            experimental_realtime_ws_base_url: None,
-            experimental_realtime_ws_model: None,
-            realtime: RealtimeConfig::default(),
-            experimental_realtime_ws_backend_prompt: None,
-            experimental_realtime_ws_startup_context: None,
-            experimental_thread_config_endpoint: None,
-            experimental_thread_store: ThreadStoreConfig::Local,
-            base_instructions: None,
-            developer_instructions: None,
-            guardian_policy_config: None,
-            include_permissions_instructions: true,
-            include_apps_instructions: true,
-            include_skill_instructions: true,
-            include_environment_context: true,
-            compact_prompt: None,
-            commit_attribution: None,
-            forced_chatgpt_workspace_id: None,
-            forced_login_method: None,
-            include_apply_patch_tool: false,
-            web_search_mode: Constrained::allow_any(WebSearchMode::Cached),
-            web_search_config: None,
-            use_experimental_unified_exec_tool: !cfg!(windows),
-            background_terminal_max_timeout: DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS,
-            ghost_snapshot: GhostSnapshotConfig::default(),
-            multi_agent_v2: MultiAgentV2Config::default(),
-            features: Features::with_defaults().into(),
-            suppress_unstable_features_warning: false,
-            active_profile: Some("o3".to_string()),
-            active_project: ProjectConfig { trust_level: None },
-            windows_wsl_setup_acknowledged: false,
-            notices: Default::default(),
-            check_for_update_on_startup: true,
-            disable_paste_burst: false,
-            tui_notifications: Default::default(),
-            animations: true,
-            show_tooltips: true,
-            model_availability_nux: ModelAvailabilityNuxConfig::default(),
-            terminal_resize_reflow: TerminalResizeReflowConfig::default(),
-            analytics_enabled: Some(true),
-            feedback_enabled: true,
-            tool_suggest: ToolSuggestConfig::default(),
-            tui_alternate_screen: AltScreenMode::Auto,
-            tui_status_line: None,
-            tui_terminal_title: None,
-            tui_theme: None,
-            tui_keymap: TuiKeymap::default(),
-            otel: OtelConfig::default(),
+            network_sandbox_policy: NetworkSandboxPolicy::Restricted,
+            network: None,
+            allow_login_shell: true,
+            shell_environment_policy: ShellEnvironmentPolicy::default(),
+            windows_sandbox_mode: None,
+            windows_sandbox_private_desktop: true,
         },
-        o3_profile_config
-    );
+        approvals_reviewer: ApprovalsReviewer::User,
+        enforce_residency: Constrained::allow_any(/*initial_value*/ None),
+        user_instructions: None,
+        notify: None,
+        cwd: fixture.cwd(),
+        cli_auth_credentials_store_mode: Default::default(),
+        mcp_servers: Constrained::allow_any(HashMap::new()),
+        mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
+            Default::default(),
+            LOCAL_DEV_BUILD_VERSION,
+        ),
+        mcp_oauth_callback_port: None,
+        mcp_oauth_callback_url: None,
+        model_providers: fixture.model_provider_map.clone(),
+        project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
+        project_doc_paths: Vec::new(),
+        project_doc_fallback_filenames: Vec::new(),
+        tool_output_token_limit: None,
+        agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
+        agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
+        agent_roles: BTreeMap::new(),
+        memories: MemoriesConfig::default(),
+        agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
+        codex_home: fixture.codex_home(),
+        sqlite_home: fixture.codex_home().to_path_buf(),
+        log_dir: fixture.codex_home().join("log").to_path_buf(),
+        config_layer_stack: Default::default(),
+        custom: CustomConfigToml::default(),
+        startup_warnings: Vec::new(),
+        history: History::default(),
+        ephemeral: false,
+        file_opener: UriBasedFileOpener::VsCode,
+        codex_self_exe: None,
+        codex_linux_sandbox_exe: None,
+        main_execve_wrapper_exe: None,
+        js_repl_node_path: None,
+        js_repl_node_module_dirs: Vec::new(),
+        zsh_path: None,
+        hide_agent_reasoning: false,
+        show_raw_agent_reasoning: false,
+        model_reasoning_effort: Some(ReasoningEffort::High),
+        plan_mode_reasoning_effort: None,
+        model_reasoning_summary: Some(ReasoningSummary::Detailed),
+        model_supports_reasoning_summaries: None,
+        model_catalog: None,
+        model_verbosity: None,
+        personality: Some(Personality::Pragmatic),
+        chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
+        realtime_audio: RealtimeAudioConfig::default(),
+        experimental_realtime_start_instructions: None,
+        experimental_realtime_ws_base_url: None,
+        experimental_realtime_ws_model: None,
+        realtime: RealtimeConfig::default(),
+        experimental_realtime_ws_backend_prompt: None,
+        experimental_realtime_ws_startup_context: None,
+        experimental_thread_store_endpoint: None,
+        base_instructions: None,
+        developer_instructions: None,
+        guardian_policy_config: None,
+        include_permissions_instructions: true,
+        include_apps_instructions: true,
+        include_skill_instructions: true,
+        include_environment_context: true,
+        compact_prompt: None,
+        commit_attribution: None,
+        forced_chatgpt_workspace_id: None,
+        forced_login_method: None,
+        include_apply_patch_tool: false,
+        web_search_mode: Constrained::allow_any(WebSearchMode::Cached),
+        web_search_config: None,
+        use_experimental_unified_exec_tool: !cfg!(windows),
+        background_terminal_max_timeout: DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS,
+        ghost_snapshot: GhostSnapshotConfig::default(),
+        multi_agent_v2: MultiAgentV2Config::default(),
+        features: Features::with_defaults().into(),
+        suppress_unstable_features_warning: false,
+        active_profile: Some("o3".to_string()),
+        active_project: ProjectConfig { trust_level: None },
+        windows_wsl_setup_acknowledged: false,
+        notices: Default::default(),
+        check_for_update_on_startup: true,
+        disable_paste_burst: false,
+        tui_notifications: Default::default(),
+        animations: true,
+        show_tooltips: true,
+        model_availability_nux: ModelAvailabilityNuxConfig::default(),
+        analytics_enabled: Some(true),
+        feedback_enabled: true,
+        tool_suggest: ToolSuggestConfig::default(),
+        tui_alternate_screen: AltScreenMode::Auto,
+        tui_status_line: None,
+        tui_terminal_title: None,
+        tui_theme: None,
+        otel: OtelConfig::default(),
+    });
+    assert_eq!(expected, clear_startup_warnings(o3_profile_config));
     Ok(())
 }
 
@@ -6077,7 +6509,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         fixture.codex_home(),
     )
     .await?;
-    let expected_gpt3_profile_config = Config {
+    let expected_gpt3_profile_config = clear_startup_warnings(Config {
         model: Some("gpt-3.5-turbo".to_string()),
         review_model: None,
         model_context_window: None,
@@ -6109,6 +6541,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         mcp_oauth_callback_url: None,
         model_providers: fixture.model_provider_map.clone(),
         project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
+        project_doc_paths: Vec::new(),
         project_doc_fallback_filenames: Vec::new(),
         tool_output_token_limit: None,
         agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
@@ -6121,6 +6554,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         sqlite_home: fixture.codex_home().to_path_buf(),
         log_dir: fixture.codex_home().join("log").to_path_buf(),
         config_layer_stack: Default::default(),
+        custom: CustomConfigToml::default(),
         startup_warnings: Vec::new(),
         history: History::default(),
         ephemeral: false,
@@ -6188,9 +6622,12 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         tui_theme: None,
         tui_keymap: TuiKeymap::default(),
         otel: OtelConfig::default(),
-    };
+    });
 
-    assert_eq!(expected_gpt3_profile_config, gpt3_profile_config);
+    assert_eq!(
+        expected_gpt3_profile_config,
+        clear_startup_warnings(gpt3_profile_config)
+    );
 
     // Verify that loading without specifying a profile in ConfigOverrides
     // uses the default profile from the config file (which is "gpt3").
@@ -6206,7 +6643,10 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
     )
     .await?;
 
-    assert_eq!(expected_gpt3_profile_config, default_profile_config);
+    assert_eq!(
+        expected_gpt3_profile_config,
+        clear_startup_warnings(default_profile_config)
+    );
     Ok(())
 }
 
@@ -6225,7 +6665,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         fixture.codex_home(),
     )
     .await?;
-    let expected_zdr_profile_config = Config {
+    let expected_zdr_profile_config = clear_startup_warnings(Config {
         model: Some("o3".to_string()),
         review_model: None,
         model_context_window: None,
@@ -6257,6 +6697,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         mcp_oauth_callback_url: None,
         model_providers: fixture.model_provider_map.clone(),
         project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
+        project_doc_paths: Vec::new(),
         project_doc_fallback_filenames: Vec::new(),
         tool_output_token_limit: None,
         agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
@@ -6269,6 +6710,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         sqlite_home: fixture.codex_home().to_path_buf(),
         log_dir: fixture.codex_home().join("log").to_path_buf(),
         config_layer_stack: Default::default(),
+        custom: CustomConfigToml::default(),
         startup_warnings: Vec::new(),
         history: History::default(),
         ephemeral: false,
@@ -6336,9 +6778,12 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         tui_theme: None,
         tui_keymap: TuiKeymap::default(),
         otel: OtelConfig::default(),
-    };
+    });
 
-    assert_eq!(expected_zdr_profile_config, zdr_profile_config);
+    assert_eq!(
+        expected_zdr_profile_config,
+        clear_startup_warnings(zdr_profile_config)
+    );
 
     Ok(())
 }
@@ -6358,7 +6803,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         fixture.codex_home(),
     )
     .await?;
-    let expected_gpt5_profile_config = Config {
+    let expected_gpt5_profile_config = clear_startup_warnings(Config {
         model: Some("gpt-5.4".to_string()),
         review_model: None,
         model_context_window: None,
@@ -6390,6 +6835,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         mcp_oauth_callback_url: None,
         model_providers: fixture.model_provider_map.clone(),
         project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
+        project_doc_paths: Vec::new(),
         project_doc_fallback_filenames: Vec::new(),
         tool_output_token_limit: None,
         agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
@@ -6402,6 +6848,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         sqlite_home: fixture.codex_home().to_path_buf(),
         log_dir: fixture.codex_home().join("log").to_path_buf(),
         config_layer_stack: Default::default(),
+        custom: CustomConfigToml::default(),
         startup_warnings: Vec::new(),
         history: History::default(),
         ephemeral: false,
@@ -6469,9 +6916,12 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         tui_theme: None,
         tui_keymap: TuiKeymap::default(),
         otel: OtelConfig::default(),
-    };
+    });
 
-    assert_eq!(expected_gpt5_profile_config, gpt5_profile_config);
+    assert_eq!(
+        expected_gpt5_profile_config,
+        clear_startup_warnings(gpt5_profile_config)
+    );
 
     Ok(())
 }

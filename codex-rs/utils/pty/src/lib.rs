@@ -9,6 +9,13 @@ mod win;
 
 pub const DEFAULT_OUTPUT_BYTES_CAP: usize = 1024 * 1024;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunAsUser {
+    pub uid: u32,
+    pub gid: u32,
+    pub supplementary_gids: Option<Vec<u32>>,
+}
+
 /// Spawn a non-interactive process using regular pipes for stdin/stdout/stderr.
 pub use pipe::spawn_process as spawn_pipe_process;
 /// Spawn a non-interactive process using regular pipes, but close stdin immediately.

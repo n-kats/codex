@@ -11,7 +11,7 @@ fn top_cli_parses_resume_prompt_after_config_flag() {
         "--json",
         "--model",
         "gpt-5.2-codex",
-        "--config",
+        "-c",
         "reasoning_level=xhigh",
         "--dangerously-bypass-approvals-and-sandbox",
         "--skip-git-repo-check",

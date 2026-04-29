@@ -16,6 +16,8 @@ use crate::exec_env::create_env;
 use crate::exec_policy::ExecApprovalRequest;
 use crate::sandboxing::ExecRequest;
 use crate::sandboxing::ExecServerEnvConfig;
+use crate::shell_detect::detect_shell_type;
+use crate::shell_startup_files::apply_shell_startup_files_env;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
@@ -56,6 +58,8 @@ use codex_protocol::error::SandboxErr;
 use codex_protocol::protocol::ExecCommandSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::approx_token_count;
+use codex_utils_pty::RunAsUser as PtyRunAsUser;
+use std::path::PathBuf;
 
 const UNIFIED_EXEC_ENV: [(&str, &str); 10] = [
     ("NO_COLOR", "1"),
@@ -736,6 +740,11 @@ impl UnifiedExecProcessManager {
             .command
             .split_first()
             .ok_or(UnifiedExecError::MissingCommandLine)?;
+        let run_as = request.run_as.as_ref().map(|run_as| PtyRunAsUser {
+            uid: run_as.uid,
+            gid: run_as.gid,
+            supplementary_gids: run_as.supplementary_gids.clone(),
+        });
         let spawn_result = if tty {
             codex_utils_pty::pty::spawn_process_with_inherited_fds(
                 program,
@@ -748,13 +757,14 @@ impl UnifiedExecProcessManager {
             )
             .await
         } else {
-            codex_utils_pty::pipe::spawn_process_no_stdin_with_inherited_fds(
+            codex_utils_pty::pipe::spawn_process_no_stdin_with_inherited_fds_and_run_as(
                 program,
                 args,
                 request.cwd.as_path(),
                 &request.env,
                 &request.arg0,
                 &inherited_fds,
+                run_as,
             )
             .await
         };
@@ -770,18 +780,33 @@ impl UnifiedExecProcessManager {
         cwd: AbsolutePathBuf,
         context: &UnifiedExecContext,
     ) -> Result<(UnifiedExecProcess, Option<DeferredNetworkApproval>), UnifiedExecError> {
-        let local_policy_env = create_env(
-            &context.turn.shell_environment_policy,
-            /*thread_id*/ None,
-        );
+        let assistant_shell_environment_policy = context
+            .turn
+            .assistant_shell_environment_policy()
+            .unwrap_or_else(|err| {
+                tracing::warn!(
+                    error = %err,
+                    "failed to resolve assistant shell environment policy; falling back to current shell policy"
+                );
+                context.turn.shell_environment_policy.clone()
+            });
+        let local_policy_env =
+            create_env(&assistant_shell_environment_policy, /*thread_id*/ None);
         let mut env = local_policy_env.clone();
         env.insert(
             CODEX_THREAD_ID_ENV_VAR.to_string(),
             context.session.conversation_id.to_string(),
         );
+        if let Some(shell_type) = request
+            .command
+            .first()
+            .and_then(|program| detect_shell_type(&PathBuf::from(program)))
+        {
+            apply_shell_startup_files_env(&mut env, shell_type);
+        }
         let env = apply_unified_exec_env(env);
         let exec_server_env_config = ExecServerEnvConfig {
-            policy: exec_env_policy_from_shell_policy(&context.turn.shell_environment_policy),
+            policy: exec_env_policy_from_shell_policy(&assistant_shell_environment_policy),
             local_policy_env,
         };
         let mut orchestrator = ToolOrchestrator::new();
@@ -815,7 +840,7 @@ impl UnifiedExecProcessManager {
             cwd,
             env,
             exec_server_env_config: Some(exec_server_env_config),
-            explicit_env_overrides: context.turn.shell_environment_policy.r#set.clone(),
+            explicit_env_overrides: assistant_shell_environment_policy.r#set.clone(),
             network: request.network.clone(),
             tty: request.tty,
             sandbox_permissions: request.sandbox_permissions,

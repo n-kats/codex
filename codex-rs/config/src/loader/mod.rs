@@ -92,7 +92,8 @@ pub async fn load_config_layers_state(
     cloud_requirements: CloudRequirementsLoader,
     thread_config_loader: &dyn ThreadConfigLoader,
 ) -> io::Result<ConfigLayerStack> {
-    let ignore_user_config = overrides.ignore_user_config;
+    let ignore_user_config = overrides.disable_user_config || overrides.ignore_user_config;
+    let disable_project_config = overrides.disable_project_config;
     let ignore_user_and_project_exec_policy_rules =
         overrides.ignore_user_and_project_exec_policy_rules;
     let mut config_requirements_toml = ConfigRequirementsWithSources::default();
@@ -121,7 +122,7 @@ pub async fn load_config_layers_state(
     // Make a best-effort to support the legacy `managed_config.toml` as a
     // requirements specification.
     let loaded_config_layers =
-        layer_io::load_config_layers_internal(fs, codex_home, overrides.clone()).await?;
+        layer_io::load_config_layers_internal(fs, codex_home, &overrides).await?;
     load_requirements_from_legacy_scheme(
         &mut config_requirements_toml,
         loaded_config_layers.clone(),
@@ -171,7 +172,10 @@ pub async fn load_config_layers_state(
     // Add a layer for $CODEX_HOME/config.toml so folder-derived resources such
     // as rules/ can still be discovered. When user config is ignored, preserve
     // the layer metadata without reading config.toml.
-    let user_file = AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home);
+    let user_file = match &overrides.user_config_path {
+        Some(path) => AbsolutePathBuf::from_absolute_path(path.clone())?,
+        None => AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home),
+    };
     let user_layer = if ignore_user_config {
         ConfigLayerEntry::new(
             ConfigLayerSource::User {
@@ -192,7 +196,9 @@ pub async fn load_config_layers_state(
     };
     layers.push(user_layer);
 
-    if let Some(cwd) = cwd {
+    if let Some(cwd) = cwd
+        && !disable_project_config
+    {
         let mut merged_so_far = TomlValue::Table(toml::map::Map::new());
         for layer in &layers {
             merge_toml_values(&mut merged_so_far, &layer.config);

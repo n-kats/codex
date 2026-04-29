@@ -27,6 +27,7 @@ use core_test_support::test_codex::test_codex;
 use core_test_support::test_codex::turn_permission_fields;
 use core_test_support::wait_for_event;
 use serde_json::json;
+use std::path::PathBuf;
 
 const PRETURN_CONTEXT_DIFF_CWD: &str = "PRETURN_CONTEXT_DIFF_CWD";
 
@@ -310,6 +311,98 @@ async fn snapshot_model_visible_layout_cwd_change_does_not_refresh_agents() -> R
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn snapshot_model_visible_layout_custom_agents_override_replaces_agents_md() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let responses = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_assistant_message("msg-1", "turn complete"),
+            ev_completed("resp-1"),
+        ]),
+    )
+    .await;
+
+    let mut builder = test_codex().with_model("gpt-5.3-codex");
+    let test = builder.build(&server).await?;
+    let cwd = test.cwd_path().to_path_buf();
+    let custom_doc = cwd.join("docs/custom.md");
+    fs::create_dir_all(custom_doc.parent().expect("custom doc parent"))?;
+    fs::write(cwd.join("AGENTS.md"), "project instructions")?;
+    fs::write(&custom_doc, "custom instructions")?;
+
+    test.codex
+        .submit(Op::OverrideTurnContext {
+            cwd: None,
+            approval_policy: None,
+            approvals_reviewer: None,
+            sandbox_policy: None,
+            permission_profile: None,
+            windows_sandbox_level: None,
+            model: None,
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+            project_doc_paths: Some(vec![PathBuf::from("docs/custom.md")]),
+        })
+        .await?;
+
+    test.codex
+        .submit(Op::UserTurn {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "turn with explicit custom agents".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            cwd: cwd.clone(),
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: None,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            model: test.session_configured.model.clone(),
+            effort: test.config.model_reasoning_effort,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+        })
+        .await?;
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let request = responses.single_request();
+    let user_texts = request.message_input_texts("user");
+    assert_eq!(
+        user_texts
+            .iter()
+            .filter(|text| text.starts_with("# AGENTS.md instructions for "))
+            .count(),
+        1,
+        "expected explicit custom docs to inject one AGENTS.md-style wrapper"
+    );
+    assert!(
+        user_texts
+            .iter()
+            .any(|text| text.contains("custom instructions")),
+        "expected explicit custom docs to be included in the model-visible context, got {user_texts:?}"
+    );
+    assert!(
+        !user_texts
+            .iter()
+            .any(|text| text.contains("project instructions")),
+        "expected explicit custom docs to replace cwd AGENTS.md content, got {user_texts:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn snapshot_model_visible_layout_resume_with_personality_change() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -487,6 +580,7 @@ async fn snapshot_model_visible_layout_resume_override_matches_rollout_model() -
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
         .await?;
     resumed

@@ -282,6 +282,11 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
         let env = attempt
             .env_for(command, options, managed_network)
             .map_err(|err| ToolError::Codex(err.into()))?;
+        let mut env = env;
+        env.run_as = ctx
+            .turn
+            .custom_exec_run_as()
+            .map_err(|err| ToolError::Codex(err.into()))?;
         let out = execute_env(env, Self::stdout_stream(ctx))
             .await
             .map_err(ToolError::Codex)?;

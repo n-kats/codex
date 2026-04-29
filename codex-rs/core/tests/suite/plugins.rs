@@ -1,10 +1,15 @@
 #![cfg(not(target_os = "windows"))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::fs;
+use std::process::Command as StdCommand;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
+use anyhow::Context as _;
 use anyhow::Result;
 use anyhow::bail;
 use codex_features::Feature;
@@ -12,6 +17,7 @@ use codex_login::CodexAuth;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use core_test_support::apps_test_server::AppsTestServer;
+use core_test_support::remote_env_env_var;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_once;
@@ -98,6 +104,68 @@ fn write_plugin_app_plugin(home: &TempDir) {
     .expect("write plugin app config");
 }
 
+fn remote_aware_stdio_server_bin(home: &TempDir) -> Result<String> {
+    let bin = stdio_server_bin()?;
+    let wrapper_dir = home.path().join(".tmp");
+    fs::create_dir_all(&wrapper_dir).context("create plugin stdio wrapper dir")?;
+    let unique_suffix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let wrapper_path = wrapper_dir.join(format!(
+        "test_stdio_server_wrapper-{}-{unique_suffix}.sh",
+        std::process::id()
+    ));
+    let host_bin = bin.replace('\"', "\\\"");
+    let remote_bin = if let Some(container_name) = std::env::var_os(remote_env_env_var()) {
+        let container_name = container_name.into_string().map_err(|value| {
+            anyhow::anyhow!("remote env container name must be utf-8: {value:?}")
+        })?;
+        let remote_path = format!(
+            "/tmp/codex-remote-env/test_stdio_server-{}-{unique_suffix}",
+            std::process::id()
+        );
+        let container_target = format!("{container_name}:{remote_path}");
+        let copy_output = StdCommand::new("docker")
+            .arg("cp")
+            .arg(&bin)
+            .arg(&container_target)
+            .output()
+            .with_context(|| format!("copy {bin} to remote MCP test env"))?;
+        ensure!(
+            copy_output.status.success(),
+            "docker cp test_stdio_server failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&copy_output.stdout).trim(),
+            String::from_utf8_lossy(&copy_output.stderr).trim()
+        );
+
+        let chmod_output = StdCommand::new("docker")
+            .args(["exec", &container_name, "chmod", "+x", remote_path.as_str()])
+            .output()
+            .context("mark remote test_stdio_server executable")?;
+        ensure!(
+            chmod_output.status.success(),
+            "docker chmod test_stdio_server failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&chmod_output.stdout).trim(),
+            String::from_utf8_lossy(&chmod_output.stderr).trim()
+        );
+        Some(remote_path.replace('\"', "\\\""))
+    } else {
+        None
+    }
+    .unwrap_or_else(|| host_bin.clone());
+
+    let script = format!(
+        "#!/bin/sh\nif [ -x \"{remote_bin}\" ]; then\n  exec \"{remote_bin}\" \"$@\"\nfi\nexec \"{host_bin}\" \"$@\"\n"
+    );
+    fs::write(&wrapper_path, script).context("write plugin stdio wrapper")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&wrapper_path)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&wrapper_path, perms).context("chmod plugin stdio wrapper")?;
+    }
+    Ok(wrapper_path.to_string_lossy().into_owned())
+}
+
 async fn build_plugin_test_codex(
     server: &MockServer,
     codex_home: Arc<TempDir>,
@@ -105,11 +173,8 @@ async fn build_plugin_test_codex(
     let mut builder = test_codex()
         .with_home(codex_home)
         .with_auth(CodexAuth::from_api_key("Test API Key"));
-    Ok(builder
-        .build(server)
-        .await
-        .expect("create new conversation")
-        .codex)
+    let test = builder.build_remote_aware(server).await?;
+    Ok(test.codex)
 }
 
 async fn build_analytics_plugin_test_codex(
@@ -124,11 +189,8 @@ async fn build_analytics_plugin_test_codex(
         .with_config(move |config| {
             config.chatgpt_base_url = chatgpt_base_url;
         });
-    Ok(builder
-        .build(server)
-        .await
-        .expect("create new conversation")
-        .codex)
+    let test = builder.build_remote_aware(server).await?;
+    Ok(test.codex)
 }
 
 async fn build_apps_enabled_plugin_test_codex(
@@ -146,11 +208,8 @@ async fn build_apps_enabled_plugin_test_codex(
                 .expect("test config should allow feature update");
             config.chatgpt_base_url = chatgpt_base_url;
         });
-    Ok(builder
-        .build(server)
-        .await
-        .expect("create new conversation")
-        .codex)
+    let test = builder.build(server).await?;
+    Ok(test.codex)
 }
 
 async fn wait_for_sample_mcp_ready(codex: &codex_core::CodexThread) -> Result<()> {
@@ -207,6 +266,48 @@ fn tool_names(body: &serde_json::Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+async fn wait_for_mcp_startup_complete(
+    codex: &Arc<codex_core::CodexThread>,
+) -> Result<codex_protocol::protocol::McpStartupCompleteEvent> {
+    let startup_complete = wait_for_event_with_timeout(
+        codex,
+        |ev| matches!(ev, EventMsg::McpStartupComplete(_)),
+        Duration::from_secs(180),
+    )
+    .await;
+    let EventMsg::McpStartupComplete(startup_complete) = startup_complete else {
+        unreachable!("event guard guarantees McpStartupComplete");
+    };
+    Ok(startup_complete)
+}
+
+async fn wait_for_mcp_tool(codex: &Arc<codex_core::CodexThread>, tool_name: &str) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        codex.submit(Op::ListMcpTools).await?;
+        let list_event = wait_for_event_with_timeout(
+            codex,
+            |ev| matches!(ev, EventMsg::McpListToolsResponse(_)),
+            Duration::from_secs(10),
+        )
+        .await;
+        let EventMsg::McpListToolsResponse(tool_list) = list_event else {
+            unreachable!("event guard guarantees McpListToolsResponse");
+        };
+        if tool_list.tools.contains_key(tool_name) {
+            return Ok(());
+        }
+
+        let available_tools: Vec<&str> = tool_list.tools.keys().map(String::as_str).collect();
+        if Instant::now() >= deadline {
+            panic!(
+                "timed out waiting for MCP tool {tool_name} to become available; discovered tools: {available_tools:?}"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -293,7 +394,7 @@ async fn explicit_plugin_mentions_inject_plugin_guidance() -> Result<()> {
     .await;
 
     let codex_home = Arc::new(TempDir::new()?);
-    let rmcp_test_server_bin = match stdio_server_bin() {
+    let rmcp_test_server_bin = match remote_aware_stdio_server_bin(codex_home.as_ref()) {
         Ok(bin) => bin,
         Err(err) => {
             eprintln!("test_stdio_server binary not available, skipping test: {err}");
@@ -308,6 +409,8 @@ async fn explicit_plugin_mentions_inject_plugin_guidance() -> Result<()> {
         build_apps_enabled_plugin_test_codex(&server, codex_home, apps_server.chatgpt_base_url)
             .await?;
     wait_for_sample_mcp_ready(&codex).await?;
+    wait_for_mcp_tool(&codex, "mcp__sample__echo").await?;
+    wait_for_mcp_tool(&codex, "mcp__sample__image").await?;
 
     codex
         .submit(Op::UserInput {
@@ -448,33 +551,58 @@ async fn explicit_plugin_mentions_track_plugin_used_analytics() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn plugin_mcp_tools_are_listed() -> Result<()> {
     skip_if_no_network!(Ok(()));
     let server = start_mock_server().await;
     let codex_home = Arc::new(TempDir::new()?);
-    let rmcp_test_server_bin = stdio_server_bin()?;
+    fs::create_dir_all(codex_home.path().join(".tmp"))?;
+    fs::write(
+        codex_home
+            .path()
+            .join(".tmp/app-server-remote-plugin-sync-v1"),
+        "",
+    )?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin(codex_home.as_ref())?;
     write_plugin_mcp_plugin(codex_home.as_ref(), &rmcp_test_server_bin);
     let codex = build_plugin_test_codex(&server, codex_home).await?;
-    wait_for_sample_mcp_ready(&codex).await?;
-
-    codex.submit(Op::ListMcpTools).await?;
-    let list_event = wait_for_event_with_timeout(
-        &codex,
-        |ev| matches!(ev, EventMsg::McpListToolsResponse(_)),
-        Duration::from_secs(10),
-    )
-    .await;
-    let EventMsg::McpListToolsResponse(tool_list) = list_event else {
-        unreachable!("event guard guarantees McpListToolsResponse");
-    };
-    let mut available_tools: Vec<&str> = tool_list.tools.keys().map(String::as_str).collect();
-    available_tools.sort_unstable();
+    let startup_complete = wait_for_mcp_startup_complete(&codex).await?;
     assert!(
-        tool_list.tools.contains_key("mcp__sample__echo")
-            && tool_list.tools.contains_key("mcp__sample__image"),
-        "expected plugin MCP tools to be listed; discovered tools: {available_tools:?}"
+        startup_complete.failed.is_empty(),
+        "plugin MCP startup failed: {startup_complete:?}"
     );
+    assert!(
+        startup_complete.cancelled.is_empty(),
+        "plugin MCP startup was cancelled: {startup_complete:?}"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        codex.submit(Op::ListMcpTools).await?;
+        let list_event = wait_for_event_with_timeout(
+            &codex,
+            |ev| matches!(ev, EventMsg::McpListToolsResponse(_)),
+            Duration::from_secs(10),
+        )
+        .await;
+        let EventMsg::McpListToolsResponse(tool_list) = list_event else {
+            unreachable!("event guard guarantees McpListToolsResponse");
+        };
+        let available_tools: Vec<&str> = tool_list.tools.keys().map(String::as_str).collect();
+        if tool_list.tools.contains_key("mcp__sample__echo")
+            && tool_list.tools.contains_key("mcp__sample__image")
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            assert!(
+                tool_list.tools.contains_key("mcp__sample__echo")
+                    && tool_list.tools.contains_key("mcp__sample__image"),
+                "timed out waiting for plugin MCP tools; discovered tools: {available_tools:?}"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 
     Ok(())
 }

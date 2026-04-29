@@ -146,6 +146,7 @@ pub(super) async fn try_run_zsh_fork(
         network_sandbox_policy,
         windows_sandbox_filesystem_overrides: _windows_sandbox_filesystem_overrides,
         arg0,
+        run_as,
     } = sandbox_exec_request;
     let ParsedShellCommand { script, login, .. } = extract_shell_script(&command)?;
     let effective_timeout = Duration::from_millis(
@@ -166,6 +167,7 @@ pub(super) async fn try_run_zsh_fork(
         network: sandbox_network,
         windows_sandbox_level,
         arg0,
+        run_as,
         sandbox_policy_cwd,
         codex_linux_sandbox_exe: ctx.turn.codex_linux_sandbox_exe.clone(),
         use_legacy_landlock: ctx.turn.features.use_legacy_landlock(),
@@ -264,7 +266,8 @@ pub(crate) async fn prepare_unified_exec_zsh_fork(
         network: exec_request.network.clone(),
         windows_sandbox_level: exec_request.windows_sandbox_level,
         arg0: exec_request.arg0.clone(),
-        sandbox_policy_cwd: exec_request.windows_sandbox_policy_cwd.clone(),
+        run_as: exec_request.run_as.clone(),
+        sandbox_policy_cwd: ctx.turn.cwd.clone(),
         codex_linux_sandbox_exe: ctx.turn.codex_linux_sandbox_exe.clone(),
         use_legacy_landlock: ctx.turn.features.use_legacy_landlock(),
     };
@@ -745,6 +748,7 @@ struct CoreShellCommandExecutor {
     network: Option<codex_network_proxy::NetworkProxy>,
     windows_sandbox_level: WindowsSandboxLevel,
     arg0: Option<String>,
+    run_as: Option<crate::spawn::RunAsUser>,
     sandbox_policy_cwd: AbsolutePathBuf,
     codex_linux_sandbox_exe: Option<PathBuf>,
     use_legacy_landlock: bool,
@@ -795,6 +799,7 @@ impl ShellCommandExecutor for CoreShellCommandExecutor {
                 network_sandbox_policy: self.network_sandbox_policy,
                 windows_sandbox_filesystem_overrides: None,
                 arg0: self.arg0.clone(),
+                run_as: self.run_as.clone(),
             },
             /*stdout_stream*/ None,
             after_spawn,

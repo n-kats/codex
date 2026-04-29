@@ -35,7 +35,6 @@ use tokio::time::timeout;
 use super::connection_handling_websocket::DEFAULT_READ_TIMEOUT;
 use super::connection_handling_websocket::assert_no_message;
 use super::connection_handling_websocket::connect_websocket;
-use super::connection_handling_websocket::create_config_toml;
 use super::connection_handling_websocket::read_jsonrpc_message;
 use super::connection_handling_websocket::send_initialize_request;
 use super::connection_handling_websocket::send_request;
@@ -1111,4 +1110,34 @@ fn process_with_marker_exists(marker: &str) -> Result<bool> {
         .context("spawn ps -axo command")?;
     let stdout = String::from_utf8(output.stdout).context("decode ps output")?;
     Ok(stdout.lines().any(|line| line.contains(marker)))
+}
+
+fn create_config_toml(
+    codex_home: &std::path::Path,
+    server_uri: &str,
+    approval_policy: &str,
+) -> std::io::Result<()> {
+    let config_toml = codex_home.join("config.toml");
+    std::fs::write(
+        config_toml,
+        format!(
+            r#"
+model = "mock-model"
+approval_policy = "{approval_policy}"
+sandbox_mode = "read-only"
+
+model_provider = "mock_provider"
+
+[model_providers.mock_provider]
+name = "Mock provider for test"
+base_url = "{server_uri}/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+
+[features]
+use_legacy_landlock = true
+"#
+        ),
+    )
 }

@@ -33,6 +33,32 @@ const GOAL_USAGE: &str = "Usage: /goal <objective>";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 
 impl ChatWidget {
+    fn custom_agents_loaded_message(
+        cwd: &codex_utils_absolute_path::AbsolutePathBuf,
+        project_doc_paths: &[PathBuf],
+    ) -> String {
+        if project_doc_paths.is_empty() {
+            "custom-agents applied: restored auto-discovery".to_string()
+        } else {
+            let loaded_paths = project_doc_paths
+                .iter()
+                .map(|path| {
+                    let resolved: PathBuf = if path.is_absolute() {
+                        path.clone()
+                    } else {
+                        cwd.join(path).to_path_buf()
+                    };
+                    std::fs::canonicalize(resolved.as_path())
+                        .unwrap_or(resolved)
+                        .display()
+                        .to_string()
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("custom-agents applied: {loaded_paths}")
+        }
+    }
+
     /// Dispatch a bare slash command and record its staged local-history entry.
     ///
     /// The composer stages history before returning `InputResult::Command`; this wrapper commits
@@ -103,6 +129,80 @@ impl ChatWidget {
         self.request_side_conversation(parent_thread_id, /*user_message*/ None);
     }
 
+    fn show_custom_agents_prompt(&mut self) {
+        let tx = self.app_event_tx.clone();
+        let cwd = self.config.cwd.clone();
+        let current_paths = if self.config.project_doc_paths.is_empty() {
+            String::new()
+        } else {
+            self.config
+                .project_doc_paths
+                .iter()
+                .map(|path| path.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let view = CustomPromptView::new(
+            "Choose AGENTS.md documents".to_string(),
+            "Enter one or more paths, or clear/auto".to_string(),
+            current_paths,
+            Some(
+                "`clear`, `off`, `none`, `auto`, or `default` restore auto-discovery.".to_string(),
+            ),
+            Box::new(move |text: String| {
+                match Self::parse_custom_agents_paths(&text) {
+                    Ok(project_doc_paths) => {
+                        let message = Self::custom_agents_loaded_message(&cwd, &project_doc_paths);
+                        tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            history_cell::new_info_event(message, None),
+                        )));
+                        tx.send(AppEvent::CodexOp(
+                            AppCommand::override_turn_context(
+                                /*cwd*/ None,
+                                /*approval_policy*/ None,
+                                /*approvals_reviewer*/ None,
+                                /*sandbox_policy*/ None,
+                                /*windows_sandbox_level*/ None,
+                                /*model*/ None,
+                                /*effort*/ None,
+                                /*summary*/ None,
+                                /*service_tier*/ None,
+                                /*collaboration_mode*/ None,
+                                /*personality*/ None,
+                                Some(project_doc_paths),
+                            )
+                            .into_core(),
+                        ));
+                    }
+                    Err(message) => {
+                        tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            history_cell::new_error_event(message),
+                        )));
+                    }
+                }
+            }),
+        );
+        self.bottom_pane.show_view(Box::new(view));
+    }
+
+    fn parse_custom_agents_paths(input: &str) -> Result<Vec<std::path::PathBuf>, String> {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Ok(Vec::new());
+        }
+        match trimmed.to_ascii_lowercase().as_str() {
+            "clear" | "off" | "none" | "auto" | "default" => return Ok(Vec::new()),
+            _ => {}
+        }
+        let Some(parts) = shlex::split(trimmed) else {
+            return Err("failed to parse AGENTS.md paths".to_string());
+        };
+        if parts.is_empty() {
+            return Err("expected at least one AGENTS.md path".to_string());
+        }
+        Ok(parts.into_iter().map(std::path::PathBuf::from).collect())
+    }
+
     pub(super) fn dispatch_command(&mut self, cmd: SlashCommand) {
         if !self.ensure_slash_command_allowed_in_side_conversation(cmd) {
             return;
@@ -158,6 +258,9 @@ impl ChatWidget {
                 }
                 const INIT_PROMPT: &str = include_str!("../../prompt_for_init_command.md");
                 self.submit_user_message(INIT_PROMPT.to_string().into());
+            }
+            SlashCommand::CustomAgents => {
+                self.show_custom_agents_prompt();
             }
             SlashCommand::Compact => {
                 self.clear_token_usage();
@@ -718,6 +821,34 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::BeginWindowsSandboxGrantReadRoot { path: args });
             }
+            SlashCommand::CustomAgents if !trimmed.is_empty() => {
+                match Self::parse_custom_agents_paths(&args) {
+                    Ok(project_doc_paths) => {
+                        let message = Self::custom_agents_loaded_message(
+                            &self.config.cwd,
+                            &project_doc_paths,
+                        );
+                        self.app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
+                            history_cell::new_info_event(message, None),
+                        )));
+                        self.submit_op(AppCommand::override_turn_context(
+                            /*cwd*/ None,
+                            /*approval_policy*/ None,
+                            /*approvals_reviewer*/ None,
+                            /*sandbox_policy*/ None,
+                            /*windows_sandbox_level*/ None,
+                            /*model*/ None,
+                            /*effort*/ None,
+                            /*summary*/ None,
+                            /*service_tier*/ None,
+                            /*collaboration_mode*/ None,
+                            /*personality*/ None,
+                            Some(project_doc_paths),
+                        ));
+                    }
+                    Err(message) => self.add_error_message(message),
+                }
+            }
             _ => self.dispatch_command(cmd),
         }
         if source == SlashCommandDispatchSource::Live && cmd != SlashCommand::Goal {
@@ -880,7 +1011,8 @@ impl ChatWidget {
             | SlashCommand::Skills
             | SlashCommand::Title
             | SlashCommand::Statusline
-            | SlashCommand::Theme => QueueDrain::Stop,
+            | SlashCommand::Theme
+            | SlashCommand::CustomAgents => QueueDrain::Stop,
         }
     }
 

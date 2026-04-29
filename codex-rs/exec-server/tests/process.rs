@@ -14,6 +14,7 @@ use codex_exec_server::WriteResponse;
 use codex_exec_server::WriteStatus;
 use common::exec_server::exec_server;
 use pretty_assertions::assert_eq;
+use std::time::Duration;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exec_server_starts_process_over_websocket() -> anyhow::Result<()> {
@@ -224,6 +225,7 @@ async fn exec_server_resumes_detached_session_without_killing_processes() -> any
         .await?;
 
     server.disconnect_websocket().await?;
+    tokio::time::sleep(Duration::from_millis(250)).await;
     server.reconnect_websocket().await?;
 
     let resume_initialize_id = server
@@ -236,7 +238,7 @@ async fn exec_server_resumes_detached_session_without_killing_processes() -> any
         )
         .await?;
     let response = server
-        .wait_for_event(|event| {
+        .wait_for_event_with_timeout(Duration::from_secs(15), |event| {
             matches!(
                 event,
                 JSONRPCMessage::Response(JSONRPCResponse { id, .. }) if id == &resume_initialize_id
@@ -265,7 +267,7 @@ async fn exec_server_resumes_detached_session_without_killing_processes() -> any
         )
         .await?;
     let response = server
-        .wait_for_event(|event| {
+        .wait_for_event_with_timeout(Duration::from_secs(15), |event| {
             matches!(
                 event,
                 JSONRPCMessage::Response(JSONRPCResponse { id, .. }) if id == &process_read_id

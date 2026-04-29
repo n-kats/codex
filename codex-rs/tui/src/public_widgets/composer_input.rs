@@ -2,7 +2,7 @@
 //!
 //! This exposes a minimal interface suitable for other crates (e.g.,
 //! codex-cloud-tasks) to reuse the mature composer behavior: multi-line input,
-//! paste heuristics, Enter-to-submit, and Shift+Enter for newline.
+//! paste heuristics, Enter for newline, and Ctrl+Enter/Ctrl+J for submit.
 
 use crossterm::event::KeyEvent;
 use ratatui::buffer::Buffer;
@@ -17,7 +17,7 @@ use crate::render::renderable::Renderable;
 
 /// Action returned from feeding a key event into the ComposerInput.
 pub enum ComposerAction {
-    /// The user submitted the current text (typically via Enter). Contains the submitted text.
+    /// The user submitted the current text (typically via Ctrl+Enter/Ctrl+J). Contains the submitted text.
     Submitted(String),
     /// No submission occurred; UI may need to redraw if `needs_redraw()` returned true.
     None,
@@ -36,7 +36,7 @@ impl ComposerInput {
     pub fn new() -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let sender = AppEventSender::new(tx.clone());
-        // `enhanced_keys_supported=true` enables Shift+Enter newline hint/behavior.
+        // `enhanced_keys_supported=true` enables Ctrl+Enter/Ctrl+J send hints.
         let inner = ChatComposer::new(
             /*has_input_focus*/ true,
             sender,

@@ -203,7 +203,7 @@ async fn slash_side_without_args_starts_empty_side_conversation() {
     chat.bottom_pane
         .set_composer_text("/side".to_string(), Vec::new(), Vec::new());
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_matches!(
         rx.try_recv(),
@@ -234,7 +234,7 @@ async fn slash_side_requests_forked_side_question_while_task_running() {
         Vec::new(),
     );
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_matches!(
         rx.try_recv(),

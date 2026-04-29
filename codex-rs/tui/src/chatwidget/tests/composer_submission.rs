@@ -41,7 +41,7 @@ async fn submission_preserves_text_elements_and_local_images() {
 
     chat.bottom_pane
         .set_composer_text(text.clone(), text_elements.clone(), local_images.clone());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -242,7 +242,7 @@ async fn submission_with_remote_and_local_images_keeps_local_placeholder_numberi
     chat.bottom_pane
         .set_composer_text(text.clone(), text_elements.clone(), local_images.clone());
     assert_eq!(chat.bottom_pane.composer_text(), "[Image #2] submit mixed");
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -327,7 +327,7 @@ async fn enter_with_only_remote_images_submits_user_turn() {
     chat.set_remote_image_urls(vec![remote_url.clone()]);
     assert_eq!(chat.bottom_pane.composer_text(), "");
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let (items, summary) = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, summary, .. } => (items, summary),
@@ -432,7 +432,7 @@ async fn enter_with_only_remote_images_does_not_submit_when_modal_is_active() {
     chat.set_remote_image_urls(vec![remote_url.clone()]);
 
     chat.open_review_popup();
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_eq!(chat.remote_image_urls(), vec![remote_url]);
     assert_no_submit_op(&mut op_rx);
@@ -475,7 +475,7 @@ async fn enter_with_only_remote_images_does_not_submit_when_input_disabled() {
         Some("Input disabled for test.".to_string()),
     );
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_eq!(chat.remote_image_urls(), vec![remote_url]);
     assert_no_submit_op(&mut op_rx);
@@ -545,7 +545,7 @@ async fn submission_prefers_selected_duplicate_skill_path() {
             path: user_skill_path.to_string_lossy().into_owned(),
         }],
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -743,7 +743,7 @@ async fn interrupted_turn_restore_keeps_active_mode_for_resubmission() {
     assert!(chat.queued_user_messages.is_empty());
     assert_eq!(chat.active_collaboration_mode_kind(), expected_mode);
 
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
@@ -897,7 +897,7 @@ async fn empty_enter_during_task_does_not_queue() {
     chat.bottom_pane.set_task_running(/*running*/ true);
 
     // Press Enter with an empty composer.
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     // Ensure nothing was queued.
     assert!(chat.queued_user_messages.is_empty());
@@ -1099,7 +1099,7 @@ async fn enqueueing_history_prompt_multiple_times_is_stable() {
     // Submit an initial prompt to seed history.
     chat.bottom_pane
         .set_composer_text("repeat me".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     // Simulate an active task so further submissions are queued.
     chat.bottom_pane.set_task_running(/*running*/ true);

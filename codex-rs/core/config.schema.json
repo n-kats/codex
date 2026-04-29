@@ -672,6 +672,112 @@
       },
       "type": "object"
     },
+    "CustomConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "assistant_shell_environment_policy": {
+          "$ref": "#/definitions/ShellEnvironmentPolicyToml"
+        },
+        "exec": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomExecToml"
+            }
+          ],
+          "default": {
+            "worker_gid": null,
+            "worker_uid": null,
+            "worker_user": null
+          }
+        },
+        "theme": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomThemeToml"
+            }
+          ],
+          "default": null
+        },
+        "user_shell": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomUserShellToml"
+            }
+          ],
+          "default": {
+            "no_inject": null
+          }
+        },
+        "user_shell_environment_policy": {
+          "$ref": "#/definitions/ShellEnvironmentPolicyToml"
+        }
+      },
+      "type": "object"
+    },
+    "CustomExecToml": {
+      "additionalProperties": false,
+      "properties": {
+        "worker_gid": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "worker_uid": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "worker_user": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeDiffToml": {
+      "additionalProperties": false,
+      "properties": {
+        "add_line_bg": {
+          "type": "string"
+        },
+        "content": {
+          "type": "boolean"
+        },
+        "del_line_bg": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "gutter": {
+          "type": "boolean"
+        },
+        "line_bg": {
+          "type": "boolean"
+        },
+        "sign": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeToml": {
+      "additionalProperties": false,
+      "properties": {
+        "diff": {
+          "$ref": "#/definitions/CustomThemeDiffToml"
+        }
+      },
+      "type": "object"
+    },
+    "CustomUserShellToml": {
+      "additionalProperties": false,
+      "properties": {
+        "no_inject": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "ExternalConfigMigrationPrompts": {
       "additionalProperties": false,
       "description": "Settings for notices we display to users via the tui and app-server clients (primarily the Codex IDE extension). NOTE: these are different from notifications - notices are warnings, NUX screens, acknowledgements, etc.",
@@ -3224,6 +3330,27 @@
     "compact_prompt": {
       "description": "Compact prompt used for history compaction.",
       "type": "string"
+    },
+    "custom": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/CustomConfigToml"
+        }
+      ],
+      "default": {
+        "assistant_shell_environment_policy": null,
+        "exec": {
+          "worker_gid": null,
+          "worker_uid": null,
+          "worker_user": null
+        },
+        "theme": null,
+        "user_shell": {
+          "no_inject": null
+        },
+        "user_shell_environment_policy": null
+      },
+      "description": "Custom fork-specific settings."
     },
     "default_permissions": {
       "description": "Default permissions profile to apply. Names starting with `:` refer to built-in profiles; other names are resolved from the `[permissions]` table.",

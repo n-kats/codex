@@ -94,6 +94,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::CompactedItem;
 use codex_protocol::protocol::ConversationAudioParams;
 use codex_protocol::protocol::CreditsSnapshot;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GranularApprovalConfig;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
@@ -118,6 +119,7 @@ use codex_protocol::protocol::TurnCompleteEvent;
 use codex_protocol::protocol::TurnStartedEvent;
 use codex_protocol::protocol::UserMessageEvent;
 use codex_protocol::protocol::W3cTraceContext;
+use codex_protocol::protocol::WarningEvent;
 use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::context_snapshot;
@@ -1673,6 +1675,7 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
             service_tier: None,
             collaboration_mode: Some(collaboration_mode),
             personality: None,
+            project_doc_paths: None,
         })
         .await?;
 
@@ -3265,6 +3268,294 @@ async fn session_update_settings_keeps_runtime_cwds_absolute() {
 }
 
 #[tokio::test]
+async fn session_update_settings_rebuilds_user_instructions_for_project_doc_paths() {
+    let (session, _turn_context) = make_session_and_context().await;
+    let workspace = tempfile::tempdir().expect("create temp dir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("custom.md"), "custom instructions")
+        .expect("write custom agents doc");
+
+    session
+        .update_settings(SessionSettingsUpdate {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: Some(vec![PathBuf::from("docs/custom.md")]),
+            ..Default::default()
+        })
+        .await
+        .expect("project doc path update should succeed");
+
+    let user_instructions = {
+        let state = session.state.lock().await;
+        state.session_configuration.user_instructions.clone()
+    };
+    assert_eq!(user_instructions.as_deref(), Some("custom instructions"));
+
+    let next_turn = session.new_default_turn().await;
+    assert_eq!(
+        next_turn.user_instructions.as_deref(),
+        Some("custom instructions")
+    );
+}
+
+#[tokio::test]
+async fn session_update_settings_reinjects_project_doc_paths_into_initial_context() {
+    let (session, turn_context) = make_session_and_context().await;
+    let workspace = tempfile::tempdir().expect("create temp dir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("custom.md"), "custom instructions")
+        .expect("write custom agents doc");
+
+    session
+        .record_context_updates_and_set_reference_context_item(&turn_context)
+        .await;
+    let initial_history = session.clone_history().await;
+    let initial_context = session.build_initial_context(&turn_context).await;
+    assert_eq!(initial_history.raw_items().to_vec(), initial_context);
+
+    session
+        .update_settings(SessionSettingsUpdate {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: Some(vec![PathBuf::from("docs/custom.md")]),
+            ..Default::default()
+        })
+        .await
+        .expect("project doc path update should succeed");
+
+    let next_turn = session.new_default_turn().await;
+    session
+        .record_context_updates_and_set_reference_context_item(&next_turn)
+        .await;
+
+    let history = session.clone_history().await;
+    let history_texts = user_input_texts(history.raw_items());
+    assert!(
+        history_texts
+            .iter()
+            .any(|text| text.contains("custom instructions")),
+        "expected /custom-agents docs to be reinjected into the model-visible context, got {history_texts:?}"
+    );
+    assert_eq!(
+        history.raw_items().to_vec(),
+        [
+            initial_context,
+            session.build_initial_context(&next_turn).await
+        ]
+        .concat()
+    );
+}
+
+#[tokio::test]
+async fn override_turn_context_reports_loaded_instruction_sources() {
+    let (session, _turn_context, rx) = make_session_and_context_with_rx().await;
+    let workspace = tempfile::tempdir().expect("create temp dir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    let custom_doc = docs_dir.join("custom.md");
+    std::fs::write(&custom_doc, "custom instructions").expect("write custom agents doc");
+    let custom_doc_path = custom_doc.display().to_string();
+
+    crate::session::handlers::override_turn_context(
+        session.as_ref(),
+        "test-submission".to_string(),
+        SessionSettingsUpdate {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: Some(vec![PathBuf::from("docs/custom.md")]),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let evt = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("loaded-sources warning should arrive")
+        .expect("loaded-sources warning should be readable");
+    assert!(matches!(
+        evt.msg,
+        EventMsg::Warning(WarningEvent { message })
+            if message.contains("custom-agents loaded")
+                && message.contains(&custom_doc_path)
+    ));
+}
+
+#[tokio::test]
+async fn override_turn_context_reinjects_custom_agents_into_next_turn_context() {
+    let (session, turn_context, rx) = make_session_and_context_with_rx().await;
+    let workspace = tempfile::tempdir().expect("create temp dir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("custom.md"), "custom instructions")
+        .expect("write custom agents doc");
+
+    crate::session::handlers::override_turn_context(
+        session.as_ref(),
+        "test-submission".to_string(),
+        SessionSettingsUpdate {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: Some(vec![PathBuf::from("docs/custom.md")]),
+            ..Default::default()
+        },
+    )
+    .await;
+
+    let evt = timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("loaded-sources warning should arrive")
+        .expect("loaded-sources warning should be readable");
+    assert!(matches!(
+        evt.msg,
+        EventMsg::Warning(WarningEvent { message })
+            if message.contains("custom-agents loaded")
+                && message.contains("docs/custom.md")
+    ));
+
+    let next_turn = session.new_default_turn().await;
+    let initial_context = session.build_initial_context(&next_turn).await;
+    let user_texts = user_input_texts(&initial_context);
+    assert!(
+        user_texts
+            .iter()
+            .any(|text| text.contains("custom instructions")),
+        "expected /custom-agents docs to be injected into the next model-visible context, got {user_texts:?}"
+    );
+
+    session
+        .record_context_updates_and_set_reference_context_item(&next_turn)
+        .await;
+    let history = session.clone_history().await;
+    assert_eq!(history.raw_items().to_vec(), initial_context);
+    assert!(
+        turn_context.user_instructions.is_none(),
+        "the test setup should start without custom user instructions"
+    );
+}
+
+#[tokio::test]
+async fn session_update_settings_clears_reference_context_item_when_project_doc_paths_change() {
+    let (session, turn_context) = make_session_and_context().await;
+    let workspace = tempfile::tempdir().expect("create temp dir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("custom.md"), "custom instructions")
+        .expect("write custom agents doc");
+
+    {
+        let mut state = session.state.lock().await;
+        state.set_reference_context_item(Some(turn_context.to_turn_context_item()));
+    }
+    assert!(
+        session.reference_context_item().await.is_some(),
+        "expected baseline to exist before project doc path update"
+    );
+
+    session
+        .update_settings(SessionSettingsUpdate {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: Some(vec![PathBuf::from("docs/custom.md")]),
+            ..Default::default()
+        })
+        .await
+        .expect("project doc path update should succeed");
+
+    assert!(
+        session.reference_context_item().await.is_none(),
+        "expected baseline cleared so next turn can inject updated user instructions"
+    );
+}
+
+#[tokio::test]
+async fn session_update_settings_clears_project_doc_paths_to_restore_auto_discovery() {
+    let (session, _turn_context) = make_session_and_context().await;
+    let session_cwd = session.get_config().await.cwd.clone();
+    let workspace = tempfile::tempdir_in(session_cwd.as_path()).expect("create temp dir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("custom.md"), "custom instructions")
+        .expect("write custom agents doc");
+
+    session
+        .update_settings(SessionSettingsUpdate {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: Some(vec![PathBuf::from("docs/custom.md")]),
+            ..Default::default()
+        })
+        .await
+        .expect("project doc path update should succeed");
+
+    session
+        .update_settings(SessionSettingsUpdate {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: Some(Vec::new()),
+            ..Default::default()
+        })
+        .await
+        .expect("clearing project doc paths should succeed");
+
+    let project_doc_paths = {
+        let state = session.state.lock().await;
+        state
+            .session_configuration
+            .original_config_do_not_use
+            .project_doc_paths
+            .clone()
+    };
+    assert!(
+        project_doc_paths.is_empty(),
+        "expected project doc paths to clear"
+    );
+}
+
+#[tokio::test]
+async fn session_update_settings_rejects_invalid_project_doc_paths() {
+    let (session, _turn_context) = make_session_and_context().await;
+    let session_cwd = session.get_config().await.cwd.clone();
+    let workspace = tempfile::tempdir_in(session_cwd.as_path()).expect("create temp dir");
+    let docs_dir = workspace.path().join("docs");
+    std::fs::create_dir_all(&docs_dir).expect("create docs dir");
+    std::fs::write(docs_dir.join("custom.md"), "custom instructions")
+        .expect("write custom agents doc");
+
+    session
+        .update_settings(SessionSettingsUpdate {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: Some(vec![PathBuf::from("docs/custom.md")]),
+            ..Default::default()
+        })
+        .await
+        .expect("project doc path update should succeed");
+
+    for invalid_paths in [
+        vec![PathBuf::from("missing.md")],
+        vec![PathBuf::from("docs")],
+    ] {
+        let err = session
+            .update_settings(SessionSettingsUpdate {
+                cwd: Some(workspace.path().to_path_buf()),
+                project_doc_paths: Some(invalid_paths),
+                ..Default::default()
+            })
+            .await
+            .expect_err("invalid project doc paths should be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid /custom-agents path"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    let project_doc_paths = {
+        let state = session.state.lock().await;
+        state
+            .session_configuration
+            .original_config_do_not_use
+            .project_doc_paths
+            .clone()
+    };
+    assert_eq!(project_doc_paths, vec![PathBuf::from("docs/custom.md")]);
+}
+
+#[tokio::test]
 async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
     let codex_home = tempfile::tempdir().expect("create temp dir");
     let mut config = build_test_config(codex_home.path()).await;
@@ -4180,6 +4471,7 @@ fn op_kind_distinguishes_turn_ops() {
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         }
         .kind(),
         "override_turn_context"

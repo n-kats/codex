@@ -10,6 +10,8 @@
 use codex_app_server_protocol::AuthMode;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::config::Config;
+use codex_core::config::ConfigBuilder;
+use codex_core::config_loader::LoaderOverrides;
 use codex_login::CLIENT_ID;
 use codex_login::CodexAuth;
 use codex_login::ServerOptions;
@@ -131,8 +133,11 @@ pub async fn login_with_chatgpt(
     server.block_until_done().await
 }
 
-pub async fn run_login_with_chatgpt(cli_config_overrides: CliConfigOverrides) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+pub async fn run_login_with_chatgpt(
+    cli_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
+) -> ! {
+    let config = load_config_or_exit(cli_config_overrides, loader_overrides).await;
     let _login_log_guard = init_login_file_logging(&config);
     tracing::info!("starting browser login flow");
 
@@ -164,8 +169,9 @@ pub async fn run_login_with_chatgpt(cli_config_overrides: CliConfigOverrides) ->
 pub async fn run_login_with_api_key(
     cli_config_overrides: CliConfigOverrides,
     api_key: String,
+    loader_overrides: LoaderOverrides,
 ) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+    let config = load_config_or_exit(cli_config_overrides, loader_overrides).await;
     let _login_log_guard = init_login_file_logging(&config);
     tracing::info!("starting api key login flow");
 
@@ -194,7 +200,7 @@ pub async fn run_login_with_agent_identity(
     cli_config_overrides: CliConfigOverrides,
     agent_identity: String,
 ) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+    let config = load_config_or_exit(cli_config_overrides, LoaderOverrides::default()).await;
     let _login_log_guard = init_login_file_logging(&config);
     tracing::info!("starting agent identity login flow");
 
@@ -268,8 +274,9 @@ pub async fn run_login_with_device_code(
     cli_config_overrides: CliConfigOverrides,
     issuer_base_url: Option<String>,
     client_id: Option<String>,
+    loader_overrides: LoaderOverrides,
 ) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+    let config = load_config_or_exit(cli_config_overrides, loader_overrides).await;
     let _login_log_guard = init_login_file_logging(&config);
     tracing::info!("starting device code login flow");
     if matches!(config.forced_login_method, Some(ForcedLoginMethod::Api)) {
@@ -306,8 +313,9 @@ pub async fn run_login_with_device_code_fallback_to_browser(
     cli_config_overrides: CliConfigOverrides,
     issuer_base_url: Option<String>,
     client_id: Option<String>,
+    loader_overrides: LoaderOverrides,
 ) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+    let config = load_config_or_exit(cli_config_overrides, loader_overrides).await;
     let _login_log_guard = init_login_file_logging(&config);
     tracing::info!("starting login flow with device code fallback");
     if matches!(config.forced_login_method, Some(ForcedLoginMethod::Api)) {
@@ -362,8 +370,11 @@ pub async fn run_login_with_device_code_fallback_to_browser(
     }
 }
 
-pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+pub async fn run_login_status(
+    cli_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
+) -> ! {
+    let config = load_config_or_exit(cli_config_overrides, loader_overrides).await;
 
     match CodexAuth::from_auth_storage(
         &config.codex_home,
@@ -403,8 +414,11 @@ pub async fn run_login_status(cli_config_overrides: CliConfigOverrides) -> ! {
     }
 }
 
-pub async fn run_logout(cli_config_overrides: CliConfigOverrides) -> ! {
-    let config = load_config_or_exit(cli_config_overrides).await;
+pub async fn run_logout(
+    cli_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
+) -> ! {
+    let config = load_config_or_exit(cli_config_overrides, loader_overrides).await;
 
     match logout_with_revoke(&config.codex_home, config.cli_auth_credentials_store_mode).await {
         Ok(true) => {
@@ -422,7 +436,10 @@ pub async fn run_logout(cli_config_overrides: CliConfigOverrides) -> ! {
     }
 }
 
-async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config {
+async fn load_config_or_exit(
+    cli_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
+) -> Config {
     let cli_overrides = match cli_config_overrides.parse_overrides() {
         Ok(v) => v,
         Err(e) => {
@@ -431,7 +448,12 @@ async fn load_config_or_exit(cli_config_overrides: CliConfigOverrides) -> Config
         }
     };
 
-    match Config::load_with_cli_overrides(cli_overrides).await {
+    match ConfigBuilder::default()
+        .cli_overrides(cli_overrides)
+        .loader_overrides(loader_overrides)
+        .build()
+        .await
+    {
         Ok(config) => config,
         Err(e) => {
             eprintln!("Error loading configuration: {e}");

@@ -1,5 +1,6 @@
 use super::*;
 use pretty_assertions::assert_eq;
+use std::path::PathBuf;
 
 fn turn_complete_event(turn_id: &str, last_agent_message: Option<&str>) -> TurnCompleteEvent {
     serde_json::from_value(serde_json::json!({
@@ -13,8 +14,7 @@ fn submit_composer_text(chat: &mut ChatWidget, text: &str) {
     chat.bottom_pane
         .set_composer_text(text.to_string(), Vec::new(), Vec::new());
     chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 }
 
 fn queue_composer_text_with_tab(chat: &mut ChatWidget, text: &str) {
@@ -60,7 +60,7 @@ async fn slash_compact_eagerly_queues_follow_up_before_turn_start() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert!(chat.pending_steers.is_empty());
     assert_eq!(chat.queued_user_messages.len(), 1);
@@ -175,6 +175,94 @@ async fn queued_slash_review_with_args_restores_for_edit() {
     assert_eq!(
         chat.bottom_pane.composer_text(),
         "/review check regressions"
+    );
+}
+
+#[tokio::test]
+async fn queued_slash_custom_agents_with_args_updates_project_doc_paths() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    queue_composer_text_with_tab(&mut chat, "/custom-agents docs/custom.md");
+
+    match op_rx.try_recv() {
+        Ok(Op::OverrideTurnContext {
+            project_doc_paths: Some(paths),
+            ..
+        }) => {
+            assert_eq!(paths, vec![PathBuf::from("docs/custom.md")]);
+        }
+        other => panic!("expected custom agents override op, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn queued_slash_custom_agents_clear_restores_auto_discovery() {
+    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    queue_composer_text_with_tab(&mut chat, "/custom-agents clear");
+
+    match op_rx.try_recv() {
+        Ok(Op::OverrideTurnContext {
+            project_doc_paths: Some(paths),
+            ..
+        }) => {
+            assert!(
+                paths.is_empty(),
+                "expected /custom-agents clear to send no paths"
+            );
+        }
+        other => panic!("expected custom agents clear op, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn queued_slash_custom_agents_emits_visible_log_with_resolved_path() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let docs_dir = chat.config.cwd.join("docs");
+    std::fs::create_dir_all(docs_dir.as_path()).expect("create docs dir");
+    let resolved_doc = docs_dir.join("custom.md");
+    std::fs::write(resolved_doc.as_path(), "custom instructions").expect("write custom agents doc");
+
+    queue_composer_text_with_tab(&mut chat, "/custom-agents docs/custom.md");
+
+    match op_rx.try_recv() {
+        Ok(Op::OverrideTurnContext {
+            project_doc_paths: Some(paths),
+            ..
+        }) => {
+            assert_eq!(paths, vec![PathBuf::from("docs/custom.md")]);
+        }
+        other => panic!("expected custom agents override op, got {other:?}"),
+    }
+
+    let rendered = match rx.try_recv() {
+        Ok(AppEvent::InsertHistoryCell(cell)) => {
+            lines_to_single_string(&cell.display_lines(/*width*/ 80))
+        }
+        other => panic!("expected /custom-agents to emit a visible history cell, got {other:?}"),
+    };
+    assert!(
+        rendered.contains("custom-agents applied:"),
+        "unexpected /custom-agents history cell: {rendered}"
+    );
+    assert!(
+        rendered.contains(&resolved_doc.display().to_string()),
+        "expected /custom-agents history cell to show the resolved instruction source path, got {rendered}"
+    );
+
+    chat.handle_codex_event(Event {
+        id: "custom-agents-warning".into(),
+        msg: EventMsg::Warning(WarningEvent {
+            message: format!(
+                "custom-agents loaded 1 instruction source(s): {}",
+                resolved_doc.display()
+            ),
+        }),
+    });
+
+    assert!(
+        rx.try_recv().is_err(),
+        "expected backend custom-agents warning to be suppressed after the visible log"
     );
 }
 
@@ -397,7 +485,7 @@ async fn queued_slash_menu_selection_drains_next_input() {
         "expected permissions menu to open; popup:\n{popup}"
     );
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => assert_eq!(
@@ -440,7 +528,7 @@ async fn queued_bare_rename_drains_next_input_after_name_update() {
     assert_matches!(op_rx.try_recv(), Err(TryRecvError::Empty));
 
     chat.handle_paste("Queued rename".to_string());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
     assert!(
@@ -1133,7 +1221,7 @@ async fn slash_rename_prefills_existing_thread_name() {
     let popup = render_bottom_popup(&chat, /*width*/ 80);
     assert_chatwidget_snapshot!("slash_rename_prefilled_prompt", popup);
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     assert_matches!(
         rx.try_recv(),
@@ -1151,7 +1239,7 @@ async fn slash_rename_without_existing_thread_name_starts_empty() {
     assert!(popup.contains("Name thread"));
     assert!(popup.contains("Type a name and press Enter"));
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
 }
@@ -1900,7 +1988,7 @@ async fn slash_resume_with_arg_requests_named_session() {
         Vec::new(),
         Vec::new(),
     );
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_matches!(
         rx.try_recv(),
@@ -2089,7 +2177,7 @@ async fn user_turn_carries_service_tier_after_fast_toggle() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
@@ -2184,7 +2272,7 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
 
     chat.bottom_pane
         .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {

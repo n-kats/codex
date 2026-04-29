@@ -693,6 +693,9 @@ async fn ignore_user_config_keeps_user_policy_files() -> std::io::Result<()> {
         .codex_home(codex_home)
         .fallback_cwd(Some(temp.path().to_path_buf()))
         .loader_overrides(LoaderOverrides {
+            user_config_path: None,
+            disable_user_config: false,
+            disable_project_config: false,
             ignore_user_config: true,
             ..Default::default()
         })

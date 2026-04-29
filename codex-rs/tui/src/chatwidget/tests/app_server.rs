@@ -52,7 +52,7 @@ async fn live_app_server_user_message_item_completed_does_not_duplicate_rendered
 
     chat.bottom_pane
         .set_composer_text("Hi, are you there?".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { .. } => {}
@@ -171,7 +171,7 @@ async fn live_app_server_turn_started_sets_feedback_turn_id() {
         crate::app_event::FeedbackCategory::Bug,
         /*include_logs*/ false,
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     assert_matches!(
         rx.try_recv(),
