@@ -5012,6 +5012,9 @@ impl CodexMessageProcessor {
                     }
                     thread
                 };
+            if thread.preview.is_empty() {
+                thread.preview = preview_from_rollout_items(&history_items);
+            }
 
             self.thread_watch_manager
                 .upsert_thread_silently(thread.clone())

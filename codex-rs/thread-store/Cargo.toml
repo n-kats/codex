@@ -9,7 +9,7 @@ name = "codex_thread_store"
 path = "src/lib.rs"
 
 [[example]]
-name = "generate-proto"
+name = "generate-thread-store-proto"
 path = "examples/generate-proto.rs"
 
 [lints]

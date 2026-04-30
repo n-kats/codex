@@ -16,7 +16,7 @@ trap cleanup EXIT
     cd "$repo_root/codex-rs"
     CARGO_TARGET_DIR="$tmpdir/target" cargo run \
         -p codex-thread-store \
-        --example generate-proto \
+        --example generate-thread-store-proto \
         -- "$proto_dir"
 )
 

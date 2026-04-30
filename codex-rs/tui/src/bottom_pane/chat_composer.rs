@@ -3197,14 +3197,6 @@ impl ChatComposer {
                 self.handle_input_basic(key_event)
             }
             KeyEvent {
-                code: KeyCode::Tab,
-                modifiers: KeyModifiers::NONE,
-                kind: KeyEventKind::Press,
-                ..
-            } if self.is_task_running || !self.is_bang_shell_command() => {
-                self.handle_submission(self.is_task_running)
-            }
-            KeyEvent {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
                 ..
@@ -4121,11 +4113,11 @@ fn footer_insert_newline_key(
     }
 
     let plain_enter = key_hint::plain(KeyCode::Enter);
-    bindings
-        .iter()
-        .copied()
-        .find(|binding| *binding != plain_enter)
-        .or_else(|| bindings.first().copied())
+    if bindings.contains(&plain_enter) {
+        return Some(plain_enter);
+    }
+
+    bindings.first().copied()
 }
 
 #[cfg(not(target_os = "linux"))]

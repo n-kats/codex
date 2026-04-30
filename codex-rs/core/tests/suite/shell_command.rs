@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use codex_config::types::ShellEnvironmentPolicyInherit;
 use codex_config::types::ShellEnvironmentPolicyToml;
+use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
 use core_test_support::assert_regex_match;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;

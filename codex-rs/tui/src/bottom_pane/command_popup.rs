@@ -324,18 +324,21 @@ mod tests {
 
     #[test]
     fn collab_command_visible_when_collaboration_modes_enabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags {
-            collaboration_modes_enabled: true,
-            connectors_enabled: false,
-            plugins_command_enabled: false,
-            fast_command_enabled: false,
-            goal_command_enabled: false,
-            personality_command_enabled: true,
-            realtime_conversation_enabled: false,
-            audio_device_selection_enabled: false,
-            windows_degraded_sandbox_active: false,
-            side_conversation_active: false,
-        });
+        let mut popup = CommandPopup::new(
+            Vec::new(),
+            CommandPopupFlags {
+                collaboration_modes_enabled: true,
+                connectors_enabled: false,
+                plugins_command_enabled: false,
+                fast_command_enabled: false,
+                goal_command_enabled: false,
+                personality_command_enabled: true,
+                realtime_conversation_enabled: false,
+                audio_device_selection_enabled: false,
+                windows_degraded_sandbox_active: false,
+                side_conversation_active: false,
+            },
+        );
         popup.on_composer_text_change("/collab".to_string());
 
         match popup.selected_item() {
@@ -346,18 +349,21 @@ mod tests {
 
     #[test]
     fn plan_command_visible_when_collaboration_modes_enabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags {
-            collaboration_modes_enabled: true,
-            connectors_enabled: false,
-            plugins_command_enabled: false,
-            fast_command_enabled: false,
-            goal_command_enabled: false,
-            personality_command_enabled: true,
-            realtime_conversation_enabled: false,
-            audio_device_selection_enabled: false,
-            windows_degraded_sandbox_active: false,
-            side_conversation_active: false,
-        });
+        let mut popup = CommandPopup::new(
+            Vec::new(),
+            CommandPopupFlags {
+                collaboration_modes_enabled: true,
+                connectors_enabled: false,
+                plugins_command_enabled: false,
+                fast_command_enabled: false,
+                goal_command_enabled: false,
+                personality_command_enabled: true,
+                realtime_conversation_enabled: false,
+                audio_device_selection_enabled: false,
+                windows_degraded_sandbox_active: false,
+                side_conversation_active: false,
+            },
+        );
         popup.on_composer_text_change("/plan".to_string());
 
         match popup.selected_item() {
@@ -368,18 +374,21 @@ mod tests {
 
     #[test]
     fn personality_command_hidden_when_disabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags {
-            collaboration_modes_enabled: true,
-            connectors_enabled: false,
-            plugins_command_enabled: false,
-            fast_command_enabled: false,
-            goal_command_enabled: false,
-            personality_command_enabled: false,
-            realtime_conversation_enabled: false,
-            audio_device_selection_enabled: false,
-            windows_degraded_sandbox_active: false,
-            side_conversation_active: false,
-        });
+        let mut popup = CommandPopup::new(
+            Vec::new(),
+            CommandPopupFlags {
+                collaboration_modes_enabled: true,
+                connectors_enabled: false,
+                plugins_command_enabled: false,
+                fast_command_enabled: false,
+                goal_command_enabled: false,
+                personality_command_enabled: false,
+                realtime_conversation_enabled: false,
+                audio_device_selection_enabled: false,
+                windows_degraded_sandbox_active: false,
+                side_conversation_active: false,
+            },
+        );
         popup.on_composer_text_change("/pers".to_string());
 
         let cmds: Vec<&str> = popup
@@ -387,6 +396,7 @@ mod tests {
             .into_iter()
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command(),
+                CommandItem::UserPrompt(_) => panic!("expected builtin command"),
             })
             .collect();
         assert!(
@@ -397,18 +407,21 @@ mod tests {
 
     #[test]
     fn personality_command_visible_when_enabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags {
-            collaboration_modes_enabled: true,
-            connectors_enabled: false,
-            plugins_command_enabled: false,
-            fast_command_enabled: false,
-            goal_command_enabled: false,
-            personality_command_enabled: true,
-            realtime_conversation_enabled: false,
-            audio_device_selection_enabled: false,
-            windows_degraded_sandbox_active: false,
-            side_conversation_active: false,
-        });
+        let mut popup = CommandPopup::new(
+            Vec::new(),
+            CommandPopupFlags {
+                collaboration_modes_enabled: true,
+                connectors_enabled: false,
+                plugins_command_enabled: false,
+                fast_command_enabled: false,
+                goal_command_enabled: false,
+                personality_command_enabled: true,
+                realtime_conversation_enabled: false,
+                audio_device_selection_enabled: false,
+                windows_degraded_sandbox_active: false,
+                side_conversation_active: false,
+            },
+        );
         popup.on_composer_text_change("/personality".to_string());
 
         match popup.selected_item() {
@@ -419,18 +432,21 @@ mod tests {
 
     #[test]
     fn settings_command_hidden_when_audio_device_selection_is_disabled() {
-        let mut popup = CommandPopup::new(CommandPopupFlags {
-            collaboration_modes_enabled: false,
-            connectors_enabled: false,
-            plugins_command_enabled: false,
-            fast_command_enabled: false,
-            goal_command_enabled: false,
-            personality_command_enabled: true,
-            realtime_conversation_enabled: true,
-            audio_device_selection_enabled: false,
-            windows_degraded_sandbox_active: false,
-            side_conversation_active: false,
-        });
+        let mut popup = CommandPopup::new(
+            Vec::new(),
+            CommandPopupFlags {
+                collaboration_modes_enabled: false,
+                connectors_enabled: false,
+                plugins_command_enabled: false,
+                fast_command_enabled: false,
+                goal_command_enabled: false,
+                personality_command_enabled: true,
+                realtime_conversation_enabled: true,
+                audio_device_selection_enabled: false,
+                windows_degraded_sandbox_active: false,
+                side_conversation_active: false,
+            },
+        );
         popup.on_composer_text_change("/aud".to_string());
 
         let cmds: Vec<&str> = popup
@@ -438,6 +454,7 @@ mod tests {
             .into_iter()
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command(),
+                CommandItem::UserPrompt(_) => panic!("expected builtin command"),
             })
             .collect();
 
@@ -449,12 +466,13 @@ mod tests {
 
     #[test]
     fn debug_commands_are_hidden_from_popup() {
-        let popup = CommandPopup::new(CommandPopupFlags::default());
+        let popup = CommandPopup::new(Vec::new(), CommandPopupFlags::default());
         let cmds: Vec<&str> = popup
             .filtered_items()
             .into_iter()
             .map(|item| match item {
                 CommandItem::Builtin(cmd) => cmd.command(),
+                CommandItem::UserPrompt(_) => panic!("expected builtin command"),
             })
             .collect();
 

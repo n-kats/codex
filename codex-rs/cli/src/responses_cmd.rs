@@ -171,6 +171,7 @@ mod tests {
                 reasoning_output_tokens: 3,
                 total_tokens: 17,
             }),
+            end_turn: None,
         });
         assert_eq!(
             completed,
@@ -196,6 +197,7 @@ mod tests {
         let completed_without_usage = response_event_to_json(codex_api::ResponseEvent::Completed {
             response_id: "resp-2".to_string(),
             token_usage: None,
+            end_turn: None,
         });
         assert_eq!(
             completed_without_usage,

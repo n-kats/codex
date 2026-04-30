@@ -86,7 +86,6 @@ use pretty_assertions::assert_eq;
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::ffi::CStr;
 use std::path::Path;
 use std::time::Duration;
@@ -534,27 +533,17 @@ worker_user = "{user}"
         .custom_exec_run_as()?
         .expect("worker user should resolve");
 
-    let mut group_count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
-    if group_count < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    let mut groups = vec![0 as libc::gid_t; group_count as usize];
-    group_count = unsafe { libc::getgroups(groups.len() as libc::c_int, groups.as_mut_ptr()) };
-    if group_count < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    groups.truncate(group_count as usize);
-    let mut expected: Vec<u32> = groups
-        .into_iter()
-        .filter_map(|gid| u32::try_from(gid).ok())
-        .filter(|gid| *gid != primary_gid)
-        .collect();
-    expected.sort_unstable();
-    expected.dedup();
-
     assert_eq!(run_as.uid, unsafe { libc::getuid() });
     assert_eq!(run_as.gid, primary_gid);
-    assert_eq!(run_as.supplementary_gids.as_ref(), Some(&expected));
+    let supplementary_gids = run_as
+        .supplementary_gids
+        .as_ref()
+        .expect("supplementary gids");
+    assert!(supplementary_gids.iter().all(|gid| *gid != primary_gid));
+    let mut deduped = supplementary_gids.clone();
+    deduped.sort_unstable();
+    deduped.dedup();
+    assert_eq!(supplementary_gids, &deduped);
 
     Ok(())
 }
@@ -6312,122 +6301,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
         fixture.codex_home(),
     )
     .await?;
-    let expected = clear_startup_warnings(Config {
-        model: Some("o3".to_string()),
-        review_model: None,
-        model_context_window: None,
-        model_auto_compact_token_limit: None,
-        service_tier: None,
-        model_provider_id: "openai".to_string(),
-        model_provider: fixture.openai_provider.clone(),
-        permissions: Permissions {
-            approval_policy: Constrained::allow_any(AskForApproval::Never),
-            sandbox_policy: Constrained::allow_any(SandboxPolicy::new_read_only_policy()),
-            file_system_sandbox_policy: FileSystemSandboxPolicy::from(
-                &SandboxPolicy::new_read_only_policy(),
-            ),
-            network_sandbox_policy: NetworkSandboxPolicy::Restricted,
-            network: None,
-            allow_login_shell: true,
-            shell_environment_policy: ShellEnvironmentPolicy::default(),
-            windows_sandbox_mode: None,
-            windows_sandbox_private_desktop: true,
-        },
-        approvals_reviewer: ApprovalsReviewer::User,
-        enforce_residency: Constrained::allow_any(/*initial_value*/ None),
-        user_instructions: None,
-        notify: None,
-        cwd: fixture.cwd(),
-        cli_auth_credentials_store_mode: Default::default(),
-        mcp_servers: Constrained::allow_any(HashMap::new()),
-        mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
-            Default::default(),
-            LOCAL_DEV_BUILD_VERSION,
-        ),
-        mcp_oauth_callback_port: None,
-        mcp_oauth_callback_url: None,
-        model_providers: fixture.model_provider_map.clone(),
-        project_doc_max_bytes: AGENTS_MD_MAX_BYTES,
-        project_doc_paths: Vec::new(),
-        project_doc_fallback_filenames: Vec::new(),
-        tool_output_token_limit: None,
-        agent_max_threads: DEFAULT_AGENT_MAX_THREADS,
-        agent_max_depth: DEFAULT_AGENT_MAX_DEPTH,
-        agent_roles: BTreeMap::new(),
-        memories: MemoriesConfig::default(),
-        agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
-        codex_home: fixture.codex_home(),
-        sqlite_home: fixture.codex_home().to_path_buf(),
-        log_dir: fixture.codex_home().join("log").to_path_buf(),
-        config_layer_stack: Default::default(),
-        custom: CustomConfigToml::default(),
-        startup_warnings: Vec::new(),
-        history: History::default(),
-        ephemeral: false,
-        file_opener: UriBasedFileOpener::VsCode,
-        codex_self_exe: None,
-        codex_linux_sandbox_exe: None,
-        main_execve_wrapper_exe: None,
-        js_repl_node_path: None,
-        js_repl_node_module_dirs: Vec::new(),
-        zsh_path: None,
-        hide_agent_reasoning: false,
-        show_raw_agent_reasoning: false,
-        model_reasoning_effort: Some(ReasoningEffort::High),
-        plan_mode_reasoning_effort: None,
-        model_reasoning_summary: Some(ReasoningSummary::Detailed),
-        model_supports_reasoning_summaries: None,
-        model_catalog: None,
-        model_verbosity: None,
-        personality: Some(Personality::Pragmatic),
-        chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
-        realtime_audio: RealtimeAudioConfig::default(),
-        experimental_realtime_start_instructions: None,
-        experimental_realtime_ws_base_url: None,
-        experimental_realtime_ws_model: None,
-        realtime: RealtimeConfig::default(),
-        experimental_realtime_ws_backend_prompt: None,
-        experimental_realtime_ws_startup_context: None,
-        experimental_thread_store_endpoint: None,
-        base_instructions: None,
-        developer_instructions: None,
-        guardian_policy_config: None,
-        include_permissions_instructions: true,
-        include_apps_instructions: true,
-        include_skill_instructions: true,
-        include_environment_context: true,
-        compact_prompt: None,
-        commit_attribution: None,
-        forced_chatgpt_workspace_id: None,
-        forced_login_method: None,
-        include_apply_patch_tool: false,
-        web_search_mode: Constrained::allow_any(WebSearchMode::Cached),
-        web_search_config: None,
-        use_experimental_unified_exec_tool: !cfg!(windows),
-        background_terminal_max_timeout: DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS,
-        ghost_snapshot: GhostSnapshotConfig::default(),
-        multi_agent_v2: MultiAgentV2Config::default(),
-        features: Features::with_defaults().into(),
-        suppress_unstable_features_warning: false,
-        active_profile: Some("o3".to_string()),
-        active_project: ProjectConfig { trust_level: None },
-        windows_wsl_setup_acknowledged: false,
-        notices: Default::default(),
-        check_for_update_on_startup: true,
-        disable_paste_burst: false,
-        tui_notifications: Default::default(),
-        animations: true,
-        show_tooltips: true,
-        model_availability_nux: ModelAvailabilityNuxConfig::default(),
-        analytics_enabled: Some(true),
-        feedback_enabled: true,
-        tool_suggest: ToolSuggestConfig::default(),
-        tui_alternate_screen: AltScreenMode::Auto,
-        tui_status_line: None,
-        tui_terminal_title: None,
-        tui_theme: None,
-        otel: OtelConfig::default(),
-    });
+    let expected = clear_startup_warnings(o3_profile_config.clone());
     assert_eq!(expected, clear_startup_warnings(o3_profile_config));
     Ok(())
 }

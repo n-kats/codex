@@ -10,6 +10,7 @@ use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
+use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
 use core_test_support::context_snapshot;
 use core_test_support::context_snapshot::ContextSnapshotOptions;
@@ -369,6 +370,7 @@ async fn snapshot_model_visible_layout_custom_agents_override_replaces_agents_md
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            permission_profile: None,
         })
         .await?;
     wait_for_event(&test.codex, |event| {

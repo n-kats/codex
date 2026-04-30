@@ -43,6 +43,8 @@ use common::exec_server::exec_server;
 use common::exec_server::exec_server_with_env;
 use common::exec_server::test_codex_helper_paths;
 
+const BWRAP_USERNS_UNAVAILABLE_ERR: &str = "No permissions to create a new namespace";
+
 struct FileSystemContext {
     file_system: Arc<dyn ExecutorFileSystem>,
     _helper_paths: Option<TestCodexHelperPaths>,
@@ -236,9 +238,45 @@ exec "${cmd[@]}"
     Ok(fake_bwrap)
 }
 
+async fn should_skip_bwrap_tests() -> Result<bool> {
+    let context = create_file_system_context(false).await?;
+    let file_system = context.file_system;
+
+    let tmp = TempDir::new()?;
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir_all(&workspace)?;
+    let file_path = workspace.join("created.txt");
+    let sandbox = workspace_write_sandbox(workspace);
+
+    match file_system
+        .write_file(
+            &absolute_path(file_path),
+            b"written through fs helper".to_vec(),
+            Some(&sandbox),
+        )
+        .await
+    {
+        Ok(()) => Ok(false),
+        Err(error) if error.to_string().contains(BWRAP_USERNS_UNAVAILABLE_ERR) => Ok(true),
+        Err(error)
+            if error
+                .to_string()
+                .contains("build-time bubblewrap is not available") =>
+        {
+            Ok(true)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 #[cfg(target_os = "linux")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sandboxed_file_system_helper_finds_bwrap_on_preserved_path() -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        eprintln!("skipping bwrap test: bwrap sandbox prerequisites are unavailable");
+        return Ok(());
+    }
+
     let tmp = TempDir::new()?;
     let fake_bin_dir = tmp.path().join("bin");
     let fake_bwrap = write_fake_bwrap(&fake_bin_dir)?;
@@ -510,6 +548,10 @@ async fn file_system_copy_rejects_directory_without_recursive(use_remote: bool) 
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_sandboxed_read_allows_readable_root(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 
@@ -533,6 +575,10 @@ async fn file_system_sandboxed_read_allows_readable_root(use_remote: bool) -> Re
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_sandboxed_write_rejects_unwritable_path(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 
@@ -561,6 +607,10 @@ async fn file_system_sandboxed_write_rejects_unwritable_path(use_remote: bool) -
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_sandboxed_write_allows_explicit_alias_roots(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let Some(alias_root) = alias_root_candidate()? else {
         return Ok(());
     };
@@ -591,6 +641,10 @@ async fn file_system_sandboxed_write_allows_explicit_alias_roots(use_remote: boo
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_sandboxed_write_allows_additional_write_root(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 
@@ -640,6 +694,10 @@ async fn file_system_sandboxed_write_allows_additional_write_root(use_remote: bo
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_sandboxed_read_rejects_symlink_escape(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 
@@ -671,6 +729,10 @@ async fn file_system_sandboxed_read_rejects_symlink_escape(use_remote: bool) -> 
 async fn file_system_sandboxed_read_rejects_symlink_parent_dotdot_escape(
     use_remote: bool,
 ) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 
@@ -703,6 +765,10 @@ async fn file_system_sandboxed_read_rejects_symlink_parent_dotdot_escape(
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_sandboxed_write_rejects_symlink_escape(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 
@@ -736,6 +802,10 @@ async fn file_system_sandboxed_write_rejects_symlink_escape(use_remote: bool) ->
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_create_directory_rejects_symlink_escape(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 
@@ -769,6 +839,10 @@ async fn file_system_create_directory_rejects_symlink_escape(use_remote: bool) -
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_read_directory_rejects_symlink_escape(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 
@@ -798,6 +872,10 @@ async fn file_system_read_directory_rejects_symlink_escape(use_remote: bool) -> 
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_copy_rejects_symlink_escape_destination(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 
@@ -833,6 +911,10 @@ async fn file_system_copy_rejects_symlink_escape_destination(use_remote: bool) -
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_remove_removes_symlink_not_target(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 
@@ -870,6 +952,10 @@ async fn file_system_remove_removes_symlink_not_target(use_remote: bool) -> Resu
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_copy_preserves_symlink_source(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 
@@ -906,6 +992,10 @@ async fn file_system_copy_preserves_symlink_source(use_remote: bool) -> Result<(
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_remove_rejects_symlink_escape(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 
@@ -944,6 +1034,10 @@ async fn file_system_remove_rejects_symlink_escape(use_remote: bool) -> Result<(
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_copy_rejects_symlink_escape_source(use_remote: bool) -> Result<()> {
+    if should_skip_bwrap_tests().await? {
+        return Ok(());
+    }
+
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
 

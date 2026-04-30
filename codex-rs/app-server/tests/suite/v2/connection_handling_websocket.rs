@@ -534,7 +534,6 @@ async fn run_websocket_server_to_completion_with_args(
         .stderr(Stdio::piped())
         .env("CODEX_HOME", codex_home)
         .env("RUST_LOG", "debug");
-    const EXIT_TIMEOUT: Duration = Duration::from_secs(60);
     timeout(EXIT_TIMEOUT, cmd.output())
         .await
         .context("timed out waiting for websocket app-server to exit")?

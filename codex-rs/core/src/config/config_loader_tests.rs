@@ -209,7 +209,6 @@ async fn user_config_path_override_loads_alternate_file() -> std::io::Result<()>
         },
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -249,7 +248,6 @@ async fn disable_project_config_omits_project_layers() -> std::io::Result<()> {
         },
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 

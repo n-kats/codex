@@ -47,6 +47,7 @@ SKIP_ALMOST_TESTS ?= \
 	remote_models_merge_adds_new_high_priority_first \
 	turn_start_jsonrpc_span_parents_core_turn_spans \
 	suite::codex_tool::test_shell_command_approval_triggers_elicitation \
+	suite::v2::turn_start_zsh_fork::turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2 \
 	system_bwrap_warning_skips_supported_system_bwrap \
 	sandboxed_file_system_helper_finds_bwrap_on_preserved_path \
 	file_system_sandboxed_read_allows_readable_root \

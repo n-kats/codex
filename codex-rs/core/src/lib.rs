@@ -58,9 +58,10 @@ mod mcp_openai_file;
 mod mcp_tool_call;
 mod memories;
 pub mod config_loader {
-    pub use codex_config::{
-        ConfigLayerStack, ConfigLayerStackOrdering, LoaderOverrides, loader::*,
-    };
+    pub use codex_config::ConfigLayerStack;
+    pub use codex_config::ConfigLayerStackOrdering;
+    pub use codex_config::LoaderOverrides;
+    pub use codex_config::loader::*;
 }
 pub(crate) mod mention_syntax;
 pub(crate) mod message_history;

@@ -17,6 +17,12 @@ use_memories = false
 [features]
 unified_exec = true
 
+[tui.keymap.composer]
+submit = ["ctrl-enter", "ctrl-j"]
+
+[tui.keymap.editor]
+insert_newline = "enter"
+
 [shell_environment_policy]
 # Required when enabling `[custom.exec]` in this fork.
 inherit = "core"

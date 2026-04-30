@@ -141,6 +141,7 @@ async fn custom__exec_worker_user__exec_command_tty_false_runs_as_worker_user() 
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            permission_profile: None,
         })
         .await?;
 
@@ -276,6 +277,7 @@ async fn custom__exec_worker_user__shell_runs_as_worker_user() -> Result<()> {
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            permission_profile: None,
         })
         .await?;
 

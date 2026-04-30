@@ -1,9 +1,9 @@
 #![allow(non_snake_case)]
 
 use anyhow::Context;
-use codex_config::types::ShellEnvironmentPolicyInherit;
 use codex_config::types::ShellEnvironmentPolicyToml;
 use codex_features::Feature;
+use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;

@@ -126,7 +126,7 @@ impl FooterKeyHints {
         Self {
             toggle_shortcuts: Some(key_hint::plain(KeyCode::Char('?'))),
             queue: Some(key_hint::plain(KeyCode::Tab)),
-            insert_newline: Some(key_hint::ctrl(KeyCode::Char('j'))),
+            insert_newline: Some(key_hint::plain(KeyCode::Enter)),
             external_editor: Some(key_hint::ctrl(KeyCode::Char('g'))),
             edit_previous: Some(key_hint::plain(KeyCode::Esc)),
             show_transcript: Some(key_hint::ctrl(KeyCode::Char('t'))),

@@ -16,6 +16,7 @@ use std::time::Duration;
 use tokio::process::Command;
 
 const BWRAP_UNAVAILABLE_ERR: &str = "build-time bubblewrap is not available in this build.";
+const BWRAP_USERNS_UNAVAILABLE_ERR: &str = "No permissions to create a new namespace";
 const NETWORK_TIMEOUT_MS: u64 = 4_000;
 const MANAGED_PROXY_PERMISSION_ERR_SNIPPETS: &[&str] = &[
     "loopback: Failed RTM_NEWADDR",
@@ -56,7 +57,8 @@ fn strip_proxy_env(env: &mut HashMap<String, String>) {
 }
 
 fn is_bwrap_unavailable_output(output: &Output) -> bool {
-    String::from_utf8_lossy(&output.stderr).contains(BWRAP_UNAVAILABLE_ERR)
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    stderr.contains(BWRAP_UNAVAILABLE_ERR) || stderr.contains(BWRAP_USERNS_UNAVAILABLE_ERR)
 }
 
 async fn should_skip_bwrap_tests() -> bool {

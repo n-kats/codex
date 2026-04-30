@@ -195,6 +195,11 @@ fn expect_denied(
 
 #[tokio::test]
 async fn test_root_read() {
+    if should_skip_bwrap_tests().await {
+        eprintln!("skipping bwrap test: bwrap sandbox prerequisites are unavailable");
+        return;
+    }
+
     run_cmd(&["ls", "-l", "/bin"], &[], SHORT_TIMEOUT_MS).await;
 }
 
@@ -301,6 +306,11 @@ async fn bwrap_preserves_writable_dev_shm_bind_mount() {
 
 #[tokio::test]
 async fn test_writable_root() {
+    if should_skip_bwrap_tests().await {
+        eprintln!("skipping bwrap test: bwrap sandbox prerequisites are unavailable");
+        return;
+    }
+
     let tmpdir = tempfile::tempdir().unwrap();
     let file_path = tmpdir.path().join("test");
     run_cmd(
@@ -345,6 +355,11 @@ async fn sandbox_ignores_missing_writable_roots_under_bwrap() {
 
 #[tokio::test]
 async fn test_no_new_privs_is_enabled() {
+    if should_skip_bwrap_tests().await {
+        eprintln!("skipping bwrap test: bwrap sandbox prerequisites are unavailable");
+        return;
+    }
+
     let output = run_cmd_output(
         &["bash", "-lc", "grep '^NoNewPrivs:' /proc/self/status"],
         &[],

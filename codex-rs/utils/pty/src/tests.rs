@@ -267,6 +267,17 @@ async fn wait_for_python_repl_ready_via_probe(
 fn process_exists(pid: i32) -> anyhow::Result<bool> {
     let result = unsafe { libc::kill(pid, 0) };
     if result == 0 {
+        #[cfg(target_os = "linux")]
+        {
+            let stat_path = format!("/proc/{pid}/stat");
+            if let Ok(stat) = std::fs::read_to_string(stat_path)
+                && let Some(close_paren) = stat.rfind(')')
+                && stat.as_bytes().get(close_paren + 2) == Some(&b'Z')
+            {
+                return Ok(false);
+            }
+        }
+
         return Ok(true);
     }
 

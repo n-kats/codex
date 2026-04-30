@@ -2073,12 +2073,12 @@ mod tests {
     }
 
     #[test]
-    fn responses_subcommand_is_not_registered() {
+    fn responses_subcommand_is_registered() {
         let command = MultitoolCli::command();
         assert!(
             command
                 .get_subcommands()
-                .all(|subcommand| subcommand.get_name() != "responses")
+                .any(|subcommand| subcommand.get_name() == "responses")
         );
     }
 
