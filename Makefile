@@ -14,7 +14,7 @@ SHELL := /bin/bash
 	lint-cli test-cli fix-cli \
 	clean clean-dry-run build-linux-sandbox test-core test-all test-almost all almost \
 	write-config-schema \
-	verify-all-custom verify-codex-home-cli-flag verify-tui-enter-newline-ctrl-enter-send verify-additional-prompt-dirs-env verify-exec-command-default-login verify-linux-default-shell verify-command-exec-worker-user
+	verify-all-custom verify-codex-home-cli-flag verify-additional-prompt-dirs-env verify-exec-command-default-login verify-linux-default-shell verify-command-exec-worker-user
 
 .DEFAULT_GOAL := help
 
@@ -188,7 +188,6 @@ help:
 		"" \
 		"  make verify-all-custom# Run all custom verifications (no auto-fix)" \
 		"  make verify-codex-home-cli-flag # Verify --codex-home customization" \
-		"  make verify-tui-enter-newline-ctrl-enter-send # Verify TUI Enter newline / Ctrl+Enter send" \
 		"  make verify-additional-prompt-dirs-env # Verify CODEX_ADDITIONAL_PROMPT_DIRS customization" \
 		"  make verify-exec-command-default-login # Verify exec_command default login behavior" \
 		"  make verify-linux-default-shell # Verify Linux: zsh login shell is controllable (no user dotfiles)" \
@@ -270,15 +269,10 @@ almost:
 
 # Custom verifications
 verify-all-custom:
-	$(call run_targets_continue_logged,verify_all_custom,verify-codex-home-cli-flag verify-tui-enter-newline-ctrl-enter-send verify-additional-prompt-dirs-env verify-exec-command-default-login verify-linux-default-shell verify-command-exec-worker-user)
+	$(call run_targets_continue_logged,verify_all_custom,verify-codex-home-cli-flag verify-additional-prompt-dirs-env verify-exec-command-default-login verify-linux-default-shell verify-command-exec-worker-user)
 
 verify-codex-home-cli-flag:
 	$(call run_targets_continue_logged,verify_codex_home_cli_flag,fmt lint-arg0 test-arg0 lint-cli test-cli)
-
-verify-tui-enter-newline-ctrl-enter-send: cache-dir docker-build
-	$(call run_test_logged,verify_tui_enter_newline,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib enter_inserts_newline_without_submitting)
-	$(call run_test_logged,verify_tui_ctrl_enter_send,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib ctrl_enter_submits_message)
-	$(call run_test_logged,verify_tui_slash_tab_ctrl_enter,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-tui --lib slash_tab_then_enter_dispatches_builtin_command)
 
 verify-additional-prompt-dirs-env: cache-dir docker-build
 	$(call run_test_logged,verify_additional_prompt_dirs_parse,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib custom__追加プロンプトディレクトリ__カンマ区切りと相対パスを解決できる)

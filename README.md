@@ -4,7 +4,6 @@
 
 現在のカスタム一覧:
 
-- （機能追加）TUI の入力: Enter で改行、Ctrl+Enter（または Ctrl+J）で送信
 - （機能追加）AGENTS.md の明示指定: `codex --agents-md <FILE>`（複数指定可）でプロジェクトドキュメントを指定し、`AGENTS.md` の自動探索を上書きできる
 - （機能追加）TUI の AGENTS.md 切替: `/custom-agents <path> [path...]`（または `clear`）でセッション中のプロジェクトドキュメント指定を切り替えできる
 - （機能追加）TUI の更新チェック: `x.y.z-custom-...` のようなカスタム版バージョン文字列でも更新判定できるようにする（詳細: `_docs/custom_notes/update_check_custom_version_suffix/README.md`）

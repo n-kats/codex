@@ -7,6 +7,28 @@
 use super::*;
 
 impl App {
+    fn current_user_config_path(&self) -> Option<PathBuf> {
+        let layer = self.config.config_layer_stack.get_user_layer()?;
+        let ConfigLayerSource::User { file } = &layer.name else {
+            return None;
+        };
+        Some(file.to_path_buf())
+    }
+
+    pub(super) fn sync_runtime_keymap_from_config(&mut self) {
+        let runtime_keymap = match RuntimeKeymap::from_config(&self.config.tui_keymap) {
+            Ok(runtime_keymap) => runtime_keymap,
+            Err(err) => {
+                tracing::warn!(%err, "failed to refresh runtime keymap from config");
+                return;
+            }
+        };
+
+        self.keymap = runtime_keymap.clone();
+        self.chat_widget
+            .apply_keymap_update(self.config.tui_keymap.clone(), &runtime_keymap);
+    }
+
     pub(super) async fn rebuild_config_for_cwd(&self, cwd: PathBuf) -> Result<Config> {
         let mut overrides = self.harness_overrides.clone();
         overrides.cwd = Some(cwd.clone());
@@ -15,6 +37,10 @@ impl App {
             .codex_home(self.config.codex_home.to_path_buf())
             .cli_overrides(self.cli_kv_overrides.clone())
             .harness_overrides(overrides)
+            .loader_overrides(codex_config::LoaderOverrides {
+                user_config_path: self.current_user_config_path(),
+                ..Default::default()
+            })
             .build()
             .await
             .wrap_err_with(|| format!("Failed to rebuild config for cwd {cwd_display}"))
@@ -26,6 +52,7 @@ impl App {
             .await?;
         self.apply_runtime_policy_overrides(&mut config);
         self.config = config;
+        self.sync_runtime_keymap_from_config();
         self.chat_widget.sync_plugin_mentions_config(&self.config);
         Ok(())
     }
@@ -692,6 +719,88 @@ terminal_resize_reflow_max_rows = 9000
     }
 
     #[tokio::test]
+    async fn refresh_in_memory_config_from_disk_refreshes_runtime_keymap() -> Result<()> {
+        let mut app = make_test_app().await;
+        let codex_home = tempdir()?;
+        let user_config_path = codex_home.path().join("sample_config.toml");
+        std::fs::write(
+            &user_config_path,
+            r#"
+[tui.keymap.composer]
+submit = ["ctrl-enter", "ctrl-j"]
+
+[tui.keymap.editor]
+insert_newline = "enter"
+"#,
+        )?;
+
+        let loaded_config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .loader_overrides(codex_config::LoaderOverrides {
+                user_config_path: Some(user_config_path.clone()),
+                ..Default::default()
+            })
+            .build()
+            .await?;
+        app.config = loaded_config.clone();
+        app.sync_runtime_keymap_from_config();
+
+        std::fs::write(
+            &user_config_path,
+            r#"
+[tui.keymap.composer]
+submit = "ctrl-j"
+
+[tui.keymap.editor]
+insert_newline = "enter"
+"#,
+        )?;
+
+        let expected_config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .loader_overrides(codex_config::LoaderOverrides {
+                user_config_path: Some(user_config_path.clone()),
+                ..Default::default()
+            })
+            .build()
+            .await?;
+
+        app.refresh_in_memory_config_from_disk().await?;
+
+        let expected_user_layer = expected_config
+            .config_layer_stack
+            .get_user_layer()
+            .expect("expected user layer")
+            .name
+            .clone();
+        let actual_user_layer = app
+            .config
+            .config_layer_stack
+            .get_user_layer()
+            .expect("actual user layer")
+            .name
+            .clone();
+        assert_eq!(actual_user_layer, expected_user_layer);
+        assert_eq!(app.config.tui_keymap, expected_config.tui_keymap);
+
+        let expected_runtime_keymap =
+            RuntimeKeymap::from_config(&expected_config.tui_keymap).expect("runtime keymap");
+        assert_eq!(
+            app.keymap.composer.submit,
+            expected_runtime_keymap.composer.submit
+        );
+        assert_eq!(
+            app.keymap.editor.insert_newline,
+            expected_runtime_keymap.editor.insert_newline
+        );
+        assert_eq!(
+            app.chat_widget.config_ref().tui_keymap,
+            expected_config.tui_keymap
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn rebuild_config_for_resume_or_fallback_uses_current_config_on_same_cwd_error()
     -> Result<()> {
         let mut app = make_test_app().await;
@@ -706,6 +815,78 @@ terminal_resize_reflow_max_rows = 9000
             .await?;
 
         assert_eq!(resume_config, current_config);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rebuild_config_for_resume_or_fallback_preserves_user_config_path() -> Result<()> {
+        let mut app = make_test_app().await;
+        let codex_home = tempdir()?;
+        let user_config_path = codex_home.path().join("sample_config.toml");
+        std::fs::write(
+            &user_config_path,
+            r#"
+[tui.keymap.composer]
+submit = ["ctrl-enter", "ctrl-j"]
+
+[tui.keymap.editor]
+insert_newline = "enter"
+"#,
+        )?;
+
+        let loaded_config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .loader_overrides(codex_config::LoaderOverrides {
+                user_config_path: Some(user_config_path.clone()),
+                ..Default::default()
+            })
+            .build()
+            .await?;
+        app.config = loaded_config.clone();
+        app.sync_runtime_keymap_from_config();
+
+        std::fs::write(
+            &user_config_path,
+            r#"
+[tui.keymap.composer]
+submit = "ctrl-j"
+
+[tui.keymap.editor]
+insert_newline = "enter"
+"#,
+        )?;
+
+        let current_cwd = app.config.cwd.clone();
+        let next_cwd_tmp = tempdir()?;
+        let next_cwd = next_cwd_tmp.path().to_path_buf();
+        let rebuilt = app
+            .rebuild_config_for_resume_or_fallback(&current_cwd, next_cwd.clone())
+            .await?;
+
+        let expected_config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .loader_overrides(codex_config::LoaderOverrides {
+                user_config_path: Some(user_config_path.clone()),
+                ..Default::default()
+            })
+            .build()
+            .await?;
+
+        let expected_user_layer = expected_config
+            .config_layer_stack
+            .get_user_layer()
+            .expect("expected user layer")
+            .name
+            .clone();
+        let actual_user_layer = rebuilt
+            .config_layer_stack
+            .get_user_layer()
+            .expect("actual user layer")
+            .name
+            .clone();
+        assert_eq!(actual_user_layer, expected_user_layer);
+        assert_eq!(rebuilt.tui_keymap, expected_config.tui_keymap);
+        assert_eq!(rebuilt.cwd, next_cwd.abs());
         Ok(())
     }
 

@@ -4,7 +4,7 @@
 //! - Each question can be answered by selecting one option and/or providing notes.
 //! - Notes are stored per question and appended as extra answers.
 //! - Typing while focused on options jumps into notes to keep freeform input fast.
-//! - Enter advances to the next question; Ctrl+Enter/Ctrl+J submits notes/freeform answers.
+//! - Enter advances to the next question; the last question submits all answers.
 //! - Freeform-only questions submit an empty answer list when empty.
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -1173,19 +1173,7 @@ impl BottomPaneView for RequestUserInputOverlay {
                     self.sync_composer_placeholder();
                     return;
                 }
-                let is_submit_key = matches!(
-                    key_event,
-                    KeyEvent {
-                        code: KeyCode::Enter,
-                        modifiers: KeyModifiers::CONTROL,
-                        ..
-                    } | KeyEvent {
-                        code: KeyCode::Char('j'),
-                        modifiers: KeyModifiers::CONTROL,
-                        ..
-                    }
-                );
-                if is_submit_key {
+                if matches!(key_event.code, KeyCode::Enter) {
                     self.ensure_selected_for_notes();
                     self.pending_submission_draft = Some(self.capture_composer_draft());
                     let (result, _) = self.composer.handle_key_event(key_event);
@@ -2276,7 +2264,7 @@ mod tests {
     }
 
     #[test]
-    fn freeform_requires_ctrl_enter_with_text_to_mark_answered() {
+    fn freeform_requires_enter_with_text_to_mark_answered() {
         let (tx, _rx) = test_sender();
         let mut overlay = RequestUserInputOverlay::new(
             request_event(
@@ -2298,14 +2286,14 @@ mod tests {
         overlay.composer.move_cursor_to_end();
         assert_eq!(overlay.unanswered_count(), 2);
 
-        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
         assert_eq!(overlay.answers[0].answer_committed, true);
         assert_eq!(overlay.unanswered_count(), 1);
     }
 
     #[test]
-    fn freeform_ctrl_enter_with_empty_text_is_unanswered() {
+    fn freeform_enter_with_empty_text_is_unanswered() {
         let (tx, _rx) = test_sender();
         let mut overlay = RequestUserInputOverlay::new(
             request_event(
@@ -2321,7 +2309,7 @@ mod tests {
             /*disable_paste_burst*/ false,
         );
 
-        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
         assert_eq!(overlay.answers[0].answer_committed, false);
         assert_eq!(overlay.unanswered_count(), 2);
@@ -2394,7 +2382,7 @@ mod tests {
             .composer
             .set_text_content("Committed".to_string(), Vec::new(), Vec::new());
         overlay.composer.move_cursor_to_end();
-        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
         assert_eq!(overlay.answers[0].answer_committed, true);
         let _ = rx.try_recv();
 
@@ -2482,7 +2470,7 @@ mod tests {
             .set_text_content("Notes".to_string(), Vec::new(), Vec::new());
         overlay.composer.move_cursor_to_end();
 
-        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
         assert_eq!(overlay.current_index(), 1);
         let answer = overlay.answers.first().expect("answer missing");
@@ -2593,7 +2581,7 @@ mod tests {
         overlay.ensure_selected_for_notes();
         overlay.composer.handle_paste(large.clone());
 
-        overlay.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        overlay.handle_key_event(KeyEvent::from(KeyCode::Enter));
         overlay.handle_key_event(KeyEvent::new(KeyCode::Char('p'), KeyModifiers::CONTROL));
 
         let draft = &overlay.answers[0].draft;

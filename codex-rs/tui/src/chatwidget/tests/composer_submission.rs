@@ -1,4 +1,6 @@
 use super::*;
+use codex_config::types::KeybindingSpec;
+use codex_config::types::KeybindingsSpec;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -83,6 +85,95 @@ async fn submission_preserves_text_elements_and_local_images() {
     assert_eq!(stored_elements, text_elements);
     assert_eq!(stored_images, local_images);
     assert!(stored_remote_image_urls.is_empty());
+}
+
+#[tokio::test]
+async fn custom_keymap_survives_session_reconfiguration() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    let mut keymap_config = chat.config_ref().tui_keymap.clone();
+    keymap_config.composer.submit = Some(KeybindingsSpec::Many(vec![
+        KeybindingSpec("ctrl-enter".to_string()),
+        KeybindingSpec("ctrl-j".to_string()),
+    ]));
+    keymap_config.editor.insert_newline =
+        Some(KeybindingsSpec::One(KeybindingSpec("enter".to_string())));
+    let runtime_keymap =
+        crate::keymap::RuntimeKeymap::from_config(&keymap_config).expect("valid custom keymap");
+    chat.apply_keymap_update(keymap_config, &runtime_keymap);
+
+    let thread_id = ThreadId::new();
+    let configured = codex_protocol::protocol::SessionConfiguredEvent {
+        session_id: thread_id,
+        forked_from_id: None,
+        thread_name: Some("first".to_string()),
+        model: "test-model".to_string(),
+        model_provider_id: "test-provider".to_string(),
+        service_tier: None,
+        approval_policy: AskForApproval::Never,
+        approvals_reviewer: ApprovalsReviewer::User,
+        permission_profile: PermissionProfile::read_only(),
+        cwd: test_path_buf("/home/user/project").abs(),
+        reasoning_effort: Some(ReasoningEffortConfig::default()),
+        history_log_id: 0,
+        history_entry_count: 0,
+        initial_messages: None,
+        network_proxy: None,
+        rollout_path: Some(PathBuf::new()),
+    };
+    chat.handle_codex_event(Event {
+        id: "initial".into(),
+        msg: EventMsg::SessionConfigured(configured),
+    });
+    drain_insert_history(&mut rx);
+
+    chat.bottom_pane
+        .set_composer_text("first submit".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+    let _ = match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => items,
+        other => panic!("expected Op::UserTurn, got {other:?}"),
+    };
+
+    let reconfigured = codex_protocol::protocol::SessionConfiguredEvent {
+        session_id: ThreadId::new(),
+        forked_from_id: Some(thread_id),
+        thread_name: Some("second".to_string()),
+        model: "test-model".to_string(),
+        model_provider_id: "test-provider".to_string(),
+        service_tier: None,
+        approval_policy: AskForApproval::Never,
+        approvals_reviewer: ApprovalsReviewer::User,
+        permission_profile: PermissionProfile::read_only(),
+        cwd: test_path_buf("/home/user/project").abs(),
+        reasoning_effort: Some(ReasoningEffortConfig::default()),
+        history_log_id: 1,
+        history_entry_count: 0,
+        initial_messages: None,
+        network_proxy: None,
+        rollout_path: Some(PathBuf::new()),
+    };
+    chat.handle_codex_event(Event {
+        id: "resume".into(),
+        msg: EventMsg::SessionConfigured(reconfigured),
+    });
+    drain_insert_history(&mut rx);
+
+    chat.bottom_pane
+        .set_composer_text("second submit".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+
+    let items = match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => items,
+        other => panic!("expected Op::UserTurn after resume, got {other:?}"),
+    };
+    assert_eq!(
+        items,
+        vec![UserInput::Text {
+            text: "second submit".to_string(),
+            text_elements: Vec::new(),
+        }]
+    );
 }
 
 #[tokio::test]

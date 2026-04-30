@@ -38,9 +38,8 @@
 //!
 //! # Submission and Prompt Expansion
 //!
-//! `Enter` inserts a newline. `Ctrl+Enter` submits immediately, and `Ctrl+J` is a fallback
-//! submit key for terminals that do not report `Ctrl+Enter` distinctly. `Tab` requests queuing
-//! while a task is running; if no task is running, `Tab` submits so input is never dropped.
+//! `Enter` submits immediately. `Tab` requests queuing while a task is running; if no task is
+//! running, `Tab` submits just like Enter so input is never dropped.
 //! `Tab` does not submit when entering a `!` shell command.
 //!
 //! On submit/queue paths, the composer:
@@ -2756,10 +2755,9 @@ impl ChatComposer {
         // If the first line is a bare built-in slash command (no args),
         // dispatch it even when the slash popup isn't visible. This preserves
         // the workflow: type a prefix ("/di"), press Tab to complete to
-        // "/diff ", then press Ctrl+Enter/Ctrl+J to run it. Tab moves the cursor beyond
+        // "/diff ", then press Tab to complete to "/diff ". Tab moves the cursor beyond
         // the '/name' token and our caret-based heuristic hides the popup,
-        // but Ctrl+Enter/Ctrl+J should still dispatch the command rather than submit
-        // literal text.
+        // but the command should still dispatch rather than submit literal text.
         if let Some(result) = self.try_dispatch_bare_slash_command() {
             return (result, true);
         }

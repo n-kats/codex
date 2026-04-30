@@ -136,7 +136,6 @@
 - `_docs/custom_notes/codex_home_cli_flag/README.md`: `--codex-home` / `CODEX_HOME` の扱い（ホーム切替・テスト用ホームを安定運用するための方針と注意点）。
 - `_docs/custom_notes/codex_memory_cli_flag/README.md`: `--codex-memory` / `CODEX_MEMORIES_HOME` の扱い（memories 成果物の保存先を分離し、sandbox 初期化エラーを避ける）。
 - `_docs/custom_notes/additional_prompt_dirs/README.md`: `CODEX_ADDITIONAL_PROMPT_DIRS` の仕様（追加プロンプト探索パス、相対パス基準、分離文字、関連テスト）。
-- `_docs/custom_notes/tui-enter-newline-ctrl-enter-send/README.md`: TUI の入力仕様（Enter=改行、Ctrl+Enter/Ctrl+J=送信）と回帰テスト（スナップショット含む）の位置。
 - `_docs/custom_notes/update_check_custom_version_suffix/README.md`: TUI 更新チェックのバージョン比較（`x.y.z-custom-...` を正しく比較するための仕様・実装・テスト）。
 - `_docs/custom_notes/release_versioning/README.md`: `make release` の配布物バージョニング（`x.y.z-custom-yyyy-mm-dd` 形式の付与ルールとリリース手順）。
 - `_docs/custom_notes/exec_command_default_login/README.md`: `!`/shell 実行の起動ファイル読み込み制御（`CODEX_SHELL_STARTUP_FILES` と再現性、関連テスト）。
@@ -153,7 +152,6 @@
 履歴/参考（現状の実装に直接対応しない）:
 
 - `_docs/custom_notes/hooks/README.md`: hooks 構想メモ（未実装。notify 拡張案など将来検討用の背景）。
-- `_docs/custom_notes/tui2_input_submit_behavior_tests/README.md`: 旧 TUI2 の履歴（入力キー・送信挙動・`/prompts:` 引数なし挙動の経緯。tui2 は削除済みなので背景参照用）。
 
 ---
 
@@ -341,7 +339,6 @@ let request = mock.single_request();
 
 ## カスタム一覧
 
-- （機能追加）TUI の入力: Enter で改行、Ctrl+Enter（または Ctrl+J）で送信。
 - （機能追加）TUI の更新チェック: `x.y.z-custom-...` のようなカスタム版バージョン文字列でも更新判定できるようにする（詳細: `_docs/custom_notes/update_check_custom_version_suffix/README.md`）。
 - （機能追加）config.toml の読み込み制御: `--config <FILE>` でユーザー `config.toml` の読み込みパスを任意に指定でき、`--no-config` でユーザー＋プロジェクトの config を無視できる（システム config や `-c key=value` は引き続き適用される）。
 - （機能追加）Codex home の切り替え: `--codex-home PATH` で `CODEX_HOME`（デフォルト `~/.codex`）を上書きできるようにする（詳細: `_docs/custom_notes/codex_home_cli_flag/README.md`）。
