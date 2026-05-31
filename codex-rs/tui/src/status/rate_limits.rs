@@ -191,12 +191,14 @@ pub(crate) fn compose_rate_limit_data_many(
             .map(|window| {
                 limit_label_for_window(window.window_minutes, /*is_secondary*/ false)
             })
-            .map(|label| capitalize_first(&label));
+            .as_deref()
+            .map(capitalize_first);
         let secondary_label = snapshot
             .secondary
             .as_ref()
             .map(|window| limit_label_for_window(window.window_minutes, /*is_secondary*/ true))
-            .map(|label| capitalize_first(&label));
+            .as_deref()
+            .map(capitalize_first);
         let window_count =
             usize::from(snapshot.primary.is_some()) + usize::from(snapshot.secondary.is_some());
         let combine_non_codex_single_limit = show_limit_prefix && window_count == 1;

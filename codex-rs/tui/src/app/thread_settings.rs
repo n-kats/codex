@@ -31,7 +31,7 @@ impl App {
         Some(ThreadSettingsUpdateParams {
             thread_id: thread_id.to_string(),
             model: Some(model),
-            collaboration_mode: Some(self.chat_widget.effective_collaboration_mode()),
+            collaboration_mode: Some(self.chat_widget.current_collaboration_mode().clone()),
             ..ThreadSettingsUpdateParams::default()
         })
     }
@@ -69,7 +69,7 @@ impl App {
         };
         let params = ThreadSettingsUpdateParams {
             thread_id: thread_id.to_string(),
-            collaboration_mode: Some(self.chat_widget.effective_collaboration_mode()),
+            collaboration_mode: Some(self.chat_widget.current_collaboration_mode().clone()),
             ..ThreadSettingsUpdateParams::default()
         };
         self.send_thread_settings_update(app_server, params).await;
@@ -110,6 +110,7 @@ impl App {
             service_tier,
             collaboration_mode,
             personality,
+            project_doc_paths: _,
         } = op
         else {
             return;

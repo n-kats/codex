@@ -520,6 +520,7 @@ async fn run_websocket_server_to_completion_with_args(
     listen_url: &str,
     extra_args: &[String],
 ) -> Result<std::process::Output> {
+    const EXIT_TIMEOUT: Duration = Duration::from_secs(60);
     let program = codex_utils_cargo_bin::cargo_bin("codex-app-server")
         .context("should find app-server binary")?;
     let mut cmd = Command::new(program);
@@ -531,8 +532,8 @@ async fn run_websocket_server_to_completion_with_args(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .env("CODEX_HOME", codex_home)
-        .env("RUST_LOG", "warn");
-    timeout(DEFAULT_READ_TIMEOUT, cmd.output())
+        .env("RUST_LOG", "debug");
+    timeout(EXIT_TIMEOUT, cmd.output())
         .await
         .context("timed out waiting for websocket app-server to exit")?
         .context("failed to run websocket app-server")

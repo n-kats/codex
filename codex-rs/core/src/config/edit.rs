@@ -202,6 +202,7 @@ pub fn model_availability_nux_count_edits(shown_count: &HashMap<String, u32>) ->
 
 struct ConfigDocument {
     doc: DocumentMut,
+    profile: Option<String>,
 }
 
 #[derive(Copy, Clone)]
@@ -211,8 +212,8 @@ enum TraversalMode {
 }
 
 impl ConfigDocument {
-    fn new(doc: DocumentMut) -> Self {
-        Self { doc }
+    fn new(doc: DocumentMut, profile: Option<String>) -> Self {
+        Self { doc, profile }
     }
 
     fn apply(&mut self, edit: &ConfigEdit) -> anyhow::Result<bool> {
@@ -344,17 +345,23 @@ impl ConfigDocument {
     }
 
     fn write_value(&mut self, segments: &[&str], value: TomlItem) -> bool {
-        let resolved = segments
+        let resolved = self
+            .profile
             .iter()
-            .map(|segment| (*segment).to_string())
+            .flat_map(|profile| ["profiles", profile.as_str()])
+            .chain(segments.iter().copied())
+            .map(str::to_string)
             .collect::<Vec<_>>();
         self.insert(&resolved, value)
     }
 
     fn clear(&mut self, segments: &[&str]) -> bool {
-        let resolved = segments
+        let resolved = self
+            .profile
             .iter()
-            .map(|segment| (*segment).to_string())
+            .flat_map(|profile| ["profiles", profile.as_str()])
+            .chain(segments.iter().copied())
+            .map(str::to_string)
             .collect::<Vec<_>>();
         self.remove(&resolved)
     }
@@ -690,11 +697,12 @@ fn write_skill_config_selector(table: &mut TomlTable, selector: &SkillConfigSele
 /// Persist edits using a blocking strategy.
 pub fn apply_blocking(codex_home: &Path, edits: &[ConfigEdit]) -> anyhow::Result<()> {
     let config_path = codex_home.join(CONFIG_TOML_FILE);
-    apply_blocking_to_resolved_file(&config_path, edits)
+    apply_blocking_to_resolved_file(&config_path, None, edits)
 }
 
 fn apply_blocking_to_resolved_file(
     resolved_config_file: &Path,
+    profile: Option<&str>,
     edits: &[ConfigEdit],
 ) -> anyhow::Result<()> {
     if edits.is_empty() {
@@ -717,7 +725,7 @@ fn apply_blocking_to_resolved_file(
         serialized.parse::<DocumentMut>()?
     };
 
-    let mut document = ConfigDocument::new(doc);
+    let mut document = ConfigDocument::new(doc, profile.map(ToOwned::to_owned));
     let mut mutated = false;
 
     for edit in edits {
@@ -743,7 +751,7 @@ fn apply_blocking_to_resolved_file(
 pub async fn apply(codex_home: &Path, edits: Vec<ConfigEdit>) -> anyhow::Result<()> {
     let codex_home = codex_home.to_path_buf();
     let config_path = codex_home.join(CONFIG_TOML_FILE);
-    task::spawn_blocking(move || apply_blocking_to_resolved_file(&config_path, &edits))
+    task::spawn_blocking(move || apply_blocking_to_resolved_file(&config_path, None, &edits))
         .await
         .context("config persistence task panicked")?
 }
@@ -752,6 +760,7 @@ pub async fn apply(codex_home: &Path, edits: Vec<ConfigEdit>) -> anyhow::Result<
 #[derive(Default)]
 pub struct ConfigEditsBuilder {
     config_path: PathBuf,
+    profile: Option<String>,
     edits: Vec<ConfigEdit>,
 }
 
@@ -772,8 +781,14 @@ impl ConfigEditsBuilder {
     pub fn for_config_path(config_path: &Path) -> Self {
         Self {
             config_path: config_path.to_path_buf(),
+            profile: None,
             edits: Vec::new(),
         }
+    }
+
+    pub fn with_profile(mut self, profile: Option<&str>) -> Self {
+        self.profile = profile.map(ToOwned::to_owned);
+        self
     }
 
     pub fn set_model(mut self, model: Option<&str>, effort: Option<ReasoningEffort>) -> Self {
@@ -972,13 +987,13 @@ impl ConfigEditsBuilder {
 
     /// Apply edits on a blocking thread.
     pub fn apply_blocking(self) -> anyhow::Result<()> {
-        apply_blocking_to_resolved_file(&self.config_path, &self.edits)
+        apply_blocking_to_resolved_file(&self.config_path, self.profile.as_deref(), &self.edits)
     }
 
     /// Apply edits asynchronously via a blocking offload.
     pub async fn apply(self) -> anyhow::Result<()> {
         task::spawn_blocking(move || {
-            apply_blocking_to_resolved_file(&self.config_path, &self.edits)
+            apply_blocking_to_resolved_file(&self.config_path, self.profile.as_deref(), &self.edits)
         })
         .await
         .context("config persistence task panicked")?

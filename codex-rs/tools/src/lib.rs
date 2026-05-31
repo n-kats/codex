@@ -71,6 +71,8 @@ pub use tool_call::TurnItemEmitter;
 pub use tool_config::ShellCommandBackendConfig;
 pub use tool_config::ToolEnvironmentMode;
 pub use tool_config::ToolUserShellType;
+pub use tool_config::ToolsConfig;
+pub use tool_config::ToolsConfigParams;
 pub use tool_config::UnifiedExecShellMode;
 pub use tool_config::ZshForkConfig;
 pub use tool_config::request_user_input_available_modes;

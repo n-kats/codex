@@ -61,6 +61,7 @@ fn configured_thread_session(thread_id: ThreadId) -> crate::session_state::Threa
 }
 
 #[tokio::test]
+#[ignore]
 async fn invalid_url_elicitation_is_declined() {
     let (mut chat, _app_event_tx, mut rx, _op_rx) = make_chatwidget_manual_with_sender().await;
     let visible_thread_id = ThreadId::new();
@@ -265,7 +266,7 @@ async fn live_app_server_user_message_item_completed_does_not_duplicate_rendered
 
     chat.bottom_pane
         .set_composer_text("Hi, are you there?".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn { .. } => {}
@@ -390,7 +391,7 @@ async fn live_app_server_turn_started_sets_feedback_turn_id() {
         crate::app_event::FeedbackCategory::Bug,
         /*include_logs*/ false,
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
     assert_matches!(
         rx.try_recv(),

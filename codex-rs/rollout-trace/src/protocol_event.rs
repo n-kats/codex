@@ -228,7 +228,6 @@ pub(crate) fn tool_runtime_trace_event(event: &EventMsg) -> Option<ToolRuntimeTr
         | EventMsg::ThreadRolledBack(_)
         | EventMsg::ThreadGoalUpdated(_)
         | EventMsg::TurnStarted(_)
-        | EventMsg::ThreadSettingsApplied(_)
         | EventMsg::TurnComplete(_)
         | EventMsg::TokenCount(_)
         | EventMsg::AgentMessage(_)
@@ -276,6 +275,7 @@ pub(crate) fn tool_runtime_trace_event(event: &EventMsg) -> Option<ToolRuntimeTr
         | EventMsg::ReasoningContentDelta(_)
         | EventMsg::ReasoningRawContentDelta(_)
         | EventMsg::CollabResumeBegin(_)
+        | EventMsg::ThreadSettingsApplied(_)
         | EventMsg::CollabResumeEnd(_) => None,
     }
 }
@@ -298,7 +298,6 @@ pub(crate) fn wrapped_protocol_event_type(event: &EventMsg) -> Option<&'static s
         | EventMsg::ModelReroute(_)
         | EventMsg::ModelVerification(_)
         | EventMsg::ContextCompacted(_)
-        | EventMsg::ThreadSettingsApplied(_)
         | EventMsg::TokenCount(_)
         | EventMsg::AgentMessage(_)
         | EventMsg::UserMessage(_)
@@ -355,6 +354,7 @@ pub(crate) fn wrapped_protocol_event_type(event: &EventMsg) -> Option<&'static s
         | EventMsg::CollabCloseBegin(_)
         | EventMsg::CollabCloseEnd(_)
         | EventMsg::CollabResumeBegin(_)
+        | EventMsg::ThreadSettingsApplied(_)
         | EventMsg::CollabResumeEnd(_) => None,
     }
 }

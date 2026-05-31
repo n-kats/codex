@@ -42,9 +42,9 @@ impl ToolExecutor<ToolInvocation> for Handler {
         } = invocation;
         let arguments = function_arguments(payload)?;
         let args: WaitArgs = parse_arguments(&arguments)?;
-        let min_timeout_ms = turn.config.multi_agent_v2.min_wait_timeout_ms;
-        let max_timeout_ms = turn.config.multi_agent_v2.max_wait_timeout_ms;
-        let default_timeout_ms = turn.config.multi_agent_v2.default_wait_timeout_ms;
+        let min_timeout_ms = self.options.min_timeout_ms;
+        let max_timeout_ms = self.options.max_timeout_ms;
+        let default_timeout_ms = self.options.default_timeout_ms;
         let timeout_ms = match args.timeout_ms {
             Some(ms) if ms < min_timeout_ms => {
                 return Err(FunctionCallError::RespondToModel(format!(

@@ -6,11 +6,21 @@
 
 use crate::function_tool::FunctionCallError;
 use crate::tools::context::FunctionToolOutput;
+use crate::tools::context::ToolInvocation;
+use crate::tools::registry::CoreToolRuntime;
+use crate::tools::registry::ToolExecutor;
 use codex_protocol::protocol::ThreadGoal;
 use codex_protocol::protocol::ThreadGoalStatus;
+use codex_tools::ToolName;
+use codex_tools::ToolSpec;
 use serde::Deserialize;
 use serde::Serialize;
 use std::fmt::Write as _;
+
+use crate::tools::handlers::goal_spec::CREATE_GOAL_TOOL_NAME;
+use crate::tools::handlers::goal_spec::GET_GOAL_TOOL_NAME;
+use crate::tools::handlers::goal_spec::UPDATE_GOAL_TOOL_NAME;
+use crate::tools::handlers::goal_spec::create_get_goal_tool;
 
 mod create_goal;
 mod get_goal;
@@ -19,6 +29,39 @@ mod update_goal;
 pub use create_goal::CreateGoalHandler;
 pub use get_goal::GetGoalHandler;
 pub use update_goal::UpdateGoalHandler;
+
+pub struct GoalHandler;
+
+#[async_trait::async_trait]
+impl ToolExecutor<ToolInvocation> for GoalHandler {
+    fn tool_name(&self) -> ToolName {
+        ToolName::plain("goal")
+    }
+
+    fn spec(&self) -> ToolSpec {
+        create_get_goal_tool()
+    }
+
+    async fn handle(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Box<dyn crate::tools::context::ToolOutput>, FunctionCallError> {
+        match invocation.tool_name.name.as_str() {
+            CREATE_GOAL_TOOL_NAME => CreateGoalHandler.handle(invocation).await,
+            GET_GOAL_TOOL_NAME => GetGoalHandler.handle(invocation).await,
+            UPDATE_GOAL_TOOL_NAME => UpdateGoalHandler.handle(invocation).await,
+            other => Err(FunctionCallError::RespondToModel(format!(
+                "unsupported goal tool `{other}`"
+            ))),
+        }
+    }
+}
+
+impl CoreToolRuntime for GoalHandler {
+    fn matches_kind(&self, payload: &crate::tools::context::ToolPayload) -> bool {
+        matches!(payload, crate::tools::context::ToolPayload::Function { .. })
+    }
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]

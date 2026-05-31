@@ -56,7 +56,7 @@ fn login_with_access_token_rejects_invalid_jwt() -> Result<()> {
     write_file_auth_config(codex_home.path())?;
 
     let mut cmd = codex_command(codex_home.path())?;
-    cmd.args(["login", "--with-access-token"])
+    cmd.args(["login", "--with-agent-identity"])
         .write_stdin("not-a-jwt\n")
         .assert()
         .failure()

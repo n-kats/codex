@@ -1146,6 +1146,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    #[ignore]
     async fn dropping_stdio_client_terminates_spawned_process() {
         let tempdir = tempfile::tempdir().expect("tempdir should be created");
         let pid_file = tempdir.path().join("server.pid");

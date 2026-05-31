@@ -71,6 +71,7 @@ async fn guardian_review_request_includes_patch_context() {
         },
         additional_permissions: None,
         permissions_preapproved: false,
+        run_as: None,
     };
 
     let guardian_request = ApplyPatchRuntime::build_guardian_review_request(&request, "call-1");
@@ -105,6 +106,7 @@ async fn permission_request_payload_uses_apply_patch_hook_name_and_aliases() {
         },
         additional_permissions: None,
         permissions_preapproved: false,
+        run_as: None,
     };
 
     let payload = runtime
@@ -199,6 +201,7 @@ async fn file_system_sandbox_context_uses_active_attempt() {
         },
         additional_permissions: Some(additional_permissions.clone()),
         permissions_preapproved: false,
+        run_as: None,
     };
     let file_system_policy = FileSystemSandboxPolicy::default();
     let permissions = PermissionProfile::from_runtime_permissions(
@@ -257,6 +260,7 @@ async fn no_sandbox_attempt_has_no_file_system_context() {
         },
         additional_permissions: None,
         permissions_preapproved: false,
+        run_as: None,
     };
     let permissions = PermissionProfile::Disabled;
     let manager = SandboxManager::new();

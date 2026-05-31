@@ -1,0 +1,40 @@
+# Sample config for local TUI testing in this fork.
+#
+# Usage:
+#   make run-tui
+# or:
+#   make run-tui RUN_TUI_CONFIG=sample_config.toml
+#
+# Edit this file to tweak test settings.
+
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+custom.user_shell.no_inject=true
+[memories]
+generate_memories = false
+use_memories = false
+
+[features]
+unified_exec = true
+
+[tui.keymap.composer]
+submit = ["ctrl-enter", "ctrl-j"]
+
+[tui.keymap.editor]
+insert_newline = "enter"
+
+[shell_environment_policy]
+# Required when enabling `[custom.exec]` in this fork.
+inherit = "core"
+
+[custom.exec]
+# Run model-triggered command execution as the dedicated OS user (uid 1500 in the docker image).
+worker_user = "assistant"
+
+[custom.theme.diff]
+# Optional: tweak TUI diff background colors while running `make run-tui`.
+add_line_bg = "#3a3a00"
+del_line_bg = "#4a3f00"
+
+[projects."/workspace"]
+trust_level = "trusted"

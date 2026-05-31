@@ -215,7 +215,11 @@ async fn run_remote_compact_task_inner_impl(
                 service_tier: if sess.services.auth_manager.auth_mode() == Some(AuthMode::ApiKey) {
                     None
                 } else {
-                    turn_context.config.service_tier.clone()
+                    turn_context
+                        .config
+                        .service_tier
+                        .clone()
+                        .map(|service_tier| service_tier.request_value().to_string())
                 },
             },
             &turn_context.session_telemetry,

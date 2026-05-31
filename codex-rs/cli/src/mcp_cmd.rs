@@ -8,15 +8,13 @@ use anyhow::bail;
 use clap::ArgGroup;
 use codex_config::types::AppToolApproval;
 use codex_config::types::McpServerConfig;
-use codex_config::types::McpServerOAuthConfig;
 use codex_config::types::McpServerTransportConfig;
 use codex_core::McpManager;
 use codex_core::config::Config;
-use codex_core::config::ConfigBuilder;
-use codex_core::config::LoaderOverrides;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_global_mcp_servers;
+use codex_core::config_loader::LoaderOverrides;
 use codex_core_plugins::PluginsManager;
 use codex_mcp::McpOAuthLoginSupport;
 use codex_mcp::ResolvedMcpOAuthScopes;
@@ -135,14 +133,6 @@ pub struct AddMcpStreamableHttpArgs {
         requires = "url"
     )]
     pub bearer_token_env_var: Option<String>,
-
-    /// Optional OAuth client identifier to use for this MCP server.
-    #[arg(long = "oauth-client-id", value_name = "CLIENT_ID", requires = "url")]
-    pub oauth_client_id: Option<String>,
-
-    /// Optional OAuth resource parameter to include during MCP login.
-    #[arg(long = "oauth-resource", value_name = "RESOURCE", requires = "url")]
-    pub oauth_resource: Option<String>,
 }
 
 #[derive(Debug, clap::Parser)]
@@ -174,28 +164,24 @@ impl McpCli {
             subcommand,
         } = self;
 
-        if loader_overrides.user_config_profile.is_some() {
-            validate_profile_v2_migration(&config_overrides, loader_overrides).await?;
-        }
-
         match subcommand {
             McpSubcommand::List(args) => {
-                run_list(&config_overrides, args).await?;
+                run_list(&config_overrides, loader_overrides.clone(), args).await?;
             }
             McpSubcommand::Get(args) => {
-                run_get(&config_overrides, args).await?;
+                run_get(&config_overrides, loader_overrides.clone(), args).await?;
             }
             McpSubcommand::Add(args) => {
-                run_add(&config_overrides, args).await?;
+                run_add(&config_overrides, loader_overrides.clone(), args).await?;
             }
             McpSubcommand::Remove(args) => {
-                run_remove(&config_overrides, args).await?;
+                run_remove(&config_overrides, loader_overrides.clone(), args).await?;
             }
             McpSubcommand::Login(args) => {
-                run_login(&config_overrides, args).await?;
+                run_login(&config_overrides, loader_overrides.clone(), args).await?;
             }
             McpSubcommand::Logout(args) => {
-                run_logout(&config_overrides, args).await?;
+                run_logout(&config_overrides, loader_overrides.clone(), args).await?;
             }
         }
 
@@ -254,28 +240,16 @@ async fn perform_oauth_login_retry_without_scopes(
     }
 }
 
-async fn validate_profile_v2_migration(
+async fn run_add(
     config_overrides: &CliConfigOverrides,
     loader_overrides: LoaderOverrides,
+    add_args: AddArgs,
 ) -> Result<()> {
-    let overrides = config_overrides
-        .parse_overrides()
-        .map_err(anyhow::Error::msg)?;
-    ConfigBuilder::default()
-        .cli_overrides(overrides)
-        .loader_overrides(loader_overrides)
-        .build()
-        .await
-        .context("failed to load configuration")?;
-    Ok(())
-}
-
-async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Result<()> {
     // Validate any provided overrides even though they are not currently applied.
     let overrides = config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
-    let config = Config::load_with_cli_overrides(overrides)
+    let config = Config::load_with_cli_overrides_and_loader_overrides(overrides, loader_overrides)
         .await
         .context("failed to load configuration")?;
 
@@ -291,7 +265,7 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
         .await
         .with_context(|| format!("failed to load MCP servers from {}", codex_home.display()))?;
 
-    let (transport, oauth_client_id, oauth_resource) = match transport_args {
+    let transport = match transport_args {
         AddMcpTransportArgs {
             stdio: Some(stdio), ..
         } => {
@@ -306,37 +280,27 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
             } else {
                 Some(stdio.env.into_iter().collect::<HashMap<_, _>>())
             };
-            (
-                McpServerTransportConfig::Stdio {
-                    command: command_bin,
-                    args: command_args,
-                    env: env_map,
-                    env_vars: Vec::new(),
-                    cwd: None,
-                },
-                None,
-                None,
-            )
+            McpServerTransportConfig::Stdio {
+                command: command_bin,
+                args: command_args,
+                env: env_map,
+                env_vars: Vec::new(),
+                cwd: None,
+            }
         }
         AddMcpTransportArgs {
             streamable_http:
                 Some(AddMcpStreamableHttpArgs {
                     url,
                     bearer_token_env_var,
-                    oauth_client_id,
-                    oauth_resource,
                 }),
             ..
-        } => (
-            McpServerTransportConfig::StreamableHttp {
-                url,
-                bearer_token_env_var,
-                http_headers: None,
-                env_http_headers: None,
-            },
-            oauth_client_id,
-            oauth_resource,
-        ),
+        } => McpServerTransportConfig::StreamableHttp {
+            url,
+            bearer_token_env_var,
+            http_headers: None,
+            env_http_headers: None,
+        },
         AddMcpTransportArgs { .. } => bail!("exactly one of --command or --url must be provided"),
     };
 
@@ -353,12 +317,8 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
         enabled_tools: None,
         disabled_tools: None,
         scopes: None,
-        oauth: oauth_client_id
-            .clone()
-            .map(|client_id| McpServerOAuthConfig {
-                client_id: Some(client_id),
-            }),
-        oauth_resource: oauth_resource.clone(),
+        oauth: None,
+        oauth_resource: None,
         tools: HashMap::new(),
     };
 
@@ -387,8 +347,8 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
                 oauth_config.http_headers,
                 oauth_config.env_http_headers,
                 &resolved_scopes,
-                oauth_client_id.as_deref(),
-                oauth_resource.as_deref(),
+                /*oauth_client_id*/ None,
+                /*oauth_resource*/ None,
                 config.mcp_oauth_callback_port,
                 config.mcp_oauth_callback_url.as_deref(),
             )
@@ -404,7 +364,11 @@ async fn run_add(config_overrides: &CliConfigOverrides, add_args: AddArgs) -> Re
     Ok(())
 }
 
-async fn run_remove(config_overrides: &CliConfigOverrides, remove_args: RemoveArgs) -> Result<()> {
+async fn run_remove(
+    config_overrides: &CliConfigOverrides,
+    _loader_overrides: LoaderOverrides,
+    remove_args: RemoveArgs,
+) -> Result<()> {
     config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
@@ -437,11 +401,15 @@ async fn run_remove(config_overrides: &CliConfigOverrides, remove_args: RemoveAr
     Ok(())
 }
 
-async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs) -> Result<()> {
+async fn run_login(
+    config_overrides: &CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
+    login_args: LoginArgs,
+) -> Result<()> {
     let overrides = config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
-    let config = Config::load_with_cli_overrides(overrides)
+    let config = Config::load_with_cli_overrides_and_loader_overrides(overrides, loader_overrides)
         .await
         .context("failed to load configuration")?;
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(
@@ -491,11 +459,15 @@ async fn run_login(config_overrides: &CliConfigOverrides, login_args: LoginArgs)
     Ok(())
 }
 
-async fn run_logout(config_overrides: &CliConfigOverrides, logout_args: LogoutArgs) -> Result<()> {
+async fn run_logout(
+    config_overrides: &CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
+    logout_args: LogoutArgs,
+) -> Result<()> {
     let overrides = config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
-    let config = Config::load_with_cli_overrides(overrides)
+    let config = Config::load_with_cli_overrides_and_loader_overrides(overrides, loader_overrides)
         .await
         .context("failed to load configuration")?;
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(
@@ -523,11 +495,15 @@ async fn run_logout(config_overrides: &CliConfigOverrides, logout_args: LogoutAr
     Ok(())
 }
 
-async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) -> Result<()> {
+async fn run_list(
+    config_overrides: &CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
+    list_args: ListArgs,
+) -> Result<()> {
     let overrides = config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
-    let config = Config::load_with_cli_overrides(overrides)
+    let config = Config::load_with_cli_overrides_and_loader_overrides(overrides, loader_overrides)
         .await
         .context("failed to load configuration")?;
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(
@@ -537,7 +513,7 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
     let effective_mcp_servers = mcp_manager.effective_servers(&config, /*auth*/ None).await;
 
     let mut entries: Vec<_> = mcp_servers.iter().collect();
-    entries.sort_by_key(|(name, _)| *name);
+    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
     let auth_statuses = compute_auth_statuses(
         effective_mcp_servers.iter(),
         config.mcp_oauth_credentials_store_mode,
@@ -779,11 +755,15 @@ async fn run_list(config_overrides: &CliConfigOverrides, list_args: ListArgs) ->
     Ok(())
 }
 
-async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Result<()> {
+async fn run_get(
+    config_overrides: &CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
+    get_args: GetArgs,
+) -> Result<()> {
     let overrides = config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
-    let config = Config::load_with_cli_overrides(overrides)
+    let config = Config::load_with_cli_overrides_and_loader_overrides(overrides, loader_overrides)
         .await
         .context("failed to load configuration")?;
     let mcp_manager = McpManager::new(Arc::new(PluginsManager::new(
@@ -906,7 +886,7 @@ async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Re
             let headers_display = match http_headers {
                 Some(map) if !map.is_empty() => {
                     let mut pairs: Vec<_> = map.iter().collect();
-                    pairs.sort_by_key(|(name, _)| *name);
+                    pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
                     pairs
                         .into_iter()
                         .map(|(k, _)| format!("{k}=*****"))
@@ -919,7 +899,7 @@ async fn run_get(config_overrides: &CliConfigOverrides, get_args: GetArgs) -> Re
             let env_headers_display = match env_http_headers {
                 Some(map) if !map.is_empty() => {
                     let mut pairs: Vec<_> = map.iter().collect();
-                    pairs.sort_by_key(|(name, _)| *name);
+                    pairs.sort_by(|(a, _), (b, _)| a.cmp(b));
                     pairs
                         .into_iter()
                         .map(|(k, var)| format!("{k}={var}"))

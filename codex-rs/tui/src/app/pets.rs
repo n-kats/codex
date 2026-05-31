@@ -110,7 +110,8 @@ impl App {
             .await;
         match apply_result {
             Ok(()) => {
-                self.sync_tui_pet_disabled();
+                self.chat_widget
+                    .set_tui_pet(Some(crate::pets::DISABLED_PET_ID.to_string()));
                 tui.frame_requester().schedule_frame();
             }
             Err(err) => {
@@ -153,7 +154,6 @@ impl App {
                     .await
                 {
                     Ok(()) => {
-                        self.config.tui_pet = Some(pet_id.clone());
                         self.chat_widget
                             .set_tui_pet_loaded(Some(pet_id), ambient_pet);
                     }
@@ -178,7 +178,7 @@ impl App {
         pet_id: String,
         result: Result<Option<crate::pets::AmbientPet>, String>,
     ) {
-        if self.config.tui_pet.as_deref() != Some(pet_id.as_str()) {
+        if self.chat_widget.tui_pet() != Some(pet_id.as_str()) {
             return;
         }
 
@@ -190,7 +190,7 @@ impl App {
             }
             Err(err) => {
                 self.chat_widget
-                    .add_warning_message(format!("Failed to load configured pet: {err}"));
+                    .add_error_message(format!("Failed to load configured pet: {err}"));
             }
         }
     }

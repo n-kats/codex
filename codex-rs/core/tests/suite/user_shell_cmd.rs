@@ -1,5 +1,9 @@
+#![allow(non_snake_case)]
+
 use anyhow::Context;
+use codex_config::types::ShellEnvironmentPolicyToml;
 use codex_features::Feature;
+use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
@@ -28,6 +32,7 @@ use core_test_support::wait_for_event_match;
 use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use regex_lite::escape;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::time::Duration;
@@ -137,6 +142,52 @@ async fn user_shell_cmd_can_be_interrupted() {
         unreachable!()
     };
     assert_eq!(ev.reason, TurnAbortReason::Interrupted);
+}
+
+#[tokio::test]
+#[cfg(not(target_os = "windows"))]
+async fn custom__user_shell_environment_policy__bang_uses_custom_user_policy() {
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_config(move |config| {
+        config.custom.assistant_shell_environment_policy = Some(ShellEnvironmentPolicyToml {
+            inherit: Some(ShellEnvironmentPolicyInherit::None),
+            r#set: Some(HashMap::from([(
+                "HOME".to_string(),
+                "/home/assistant-shell".to_string(),
+            )])),
+            ..Default::default()
+        });
+        config.custom.user_shell_environment_policy = Some(ShellEnvironmentPolicyToml {
+            inherit: Some(ShellEnvironmentPolicyInherit::None),
+            r#set: Some(HashMap::from([(
+                "HOME".to_string(),
+                "/home/user-shell".to_string(),
+            )])),
+            ..Default::default()
+        });
+    });
+    let fixture = builder
+        .build(&server)
+        .await
+        .expect("create new conversation");
+    let codex = fixture.codex.clone();
+
+    codex
+        .submit(Op::RunUserShellCommand {
+            command: "printf '%s' \"$HOME\"".to_string(),
+        })
+        .await
+        .unwrap();
+
+    let msg = wait_for_event(&codex, |ev| matches!(ev, EventMsg::ExecCommandEnd(_))).await;
+    let EventMsg::ExecCommandEnd(ExecCommandEndEvent {
+        stdout, exit_code, ..
+    }) = msg
+    else {
+        unreachable!()
+    };
+    assert_eq!(exit_code, 0);
+    assert_eq!(stdout.trim(), "/home/user-shell");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

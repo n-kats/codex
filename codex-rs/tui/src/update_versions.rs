@@ -1,5 +1,5 @@
 pub(crate) fn is_newer(latest: &str, current: &str) -> Option<bool> {
-    match (parse_version(latest), parse_version(current)) {
+    match (parse_version(latest), parse_current_version(current)) {
         (Some(l), Some(c)) => Some(l > c),
         _ => None,
     }
@@ -13,11 +13,23 @@ pub(crate) fn extract_version_from_latest_tag(latest_tag_name: &str) -> anyhow::
 }
 
 pub(crate) fn is_source_build_version(version: &str) -> bool {
-    parse_version(version) == Some((0, 0, 0))
+    parse_current_version(version) == Some((0, 0, 0))
 }
 
 fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
     let mut iter = v.trim().split('.');
+    let maj = iter.next()?.parse::<u64>().ok()?;
+    let min = iter.next()?.parse::<u64>().ok()?;
+    let pat = iter.next()?.parse::<u64>().ok()?;
+    if iter.next().is_some() {
+        return None;
+    }
+    Some((maj, min, pat))
+}
+
+fn parse_current_version(v: &str) -> Option<(u64, u64, u64)> {
+    let base = v.trim().split(['-', '+']).next().unwrap_or(v.trim());
+    let mut iter = base.split('.');
     let maj = iter.next()?.parse::<u64>().ok()?;
     let min = iter.next()?.parse::<u64>().ok()?;
     let pat = iter.next()?.parse::<u64>().ok()?;
@@ -65,6 +77,10 @@ mod tests {
     #[test]
     fn whitespace_is_ignored() {
         assert_eq!(parse_version(" 1.2.3 \n"), Some((1, 2, 3)));
+        assert_eq!(
+            parse_current_version(" 1.2.3-custom-2026-04-25 \n"),
+            Some((1, 2, 3))
+        );
         assert_eq!(is_newer(" 1.2.3 ", "1.2.2"), Some(true));
     }
 }

@@ -13,6 +13,7 @@ impl ChatWidget {
     ) -> Self {
         let ChatWidgetInit {
             config,
+            environment_manager,
             frame_requester,
             app_event_tx,
             workspace_command_runner,
@@ -64,11 +65,9 @@ impl ChatWidget {
         let active_cell = Some(Self::placeholder_session_header_cell(&config));
 
         let current_cwd = Some(config.cwd.to_path_buf());
-        let effective_service_tier = crate::service_tier_resolution::effective_service_tier(
-            &config,
-            &header_model,
-            &model_catalog.try_list_models().unwrap_or_default(),
-        );
+        let effective_service_tier = config.service_tier.clone();
+        let tui_pet = config.tui_pet();
+        let tui_pet_anchor = config.tui_pet_anchor();
         let current_terminal_info = terminal_info();
         let runtime_keymap = RuntimeKeymap::from_config(&config.tui_keymap).ok();
         let default_keymap = RuntimeKeymap::defaults();
@@ -85,6 +84,7 @@ impl ChatWidget {
             current_terminal_info,
         );
         pets::start_configured_pet_load_if_needed(
+            tui_pet.as_deref(),
             &config,
             /*ambient_pet_missing*/ true,
             frame_requester.clone(),
@@ -107,6 +107,9 @@ impl ChatWidget {
             transcript: TranscriptState::new(active_cell),
             raw_output_mode: config.tui_raw_output_mode,
             config,
+            tui_pet,
+            tui_pet_anchor,
+            environment_manager,
             effective_service_tier,
             skills_all: Vec::new(),
             skills_initial_state: None,
@@ -119,7 +122,6 @@ impl ChatWidget {
             initial_user_message,
             status_account_display,
             runtime_model_provider_base_url,
-            remote_connection: None,
             token_info: None,
             rate_limit_snapshots_by_limit_id: BTreeMap::new(),
             refreshing_status_outputs: Vec::new(),

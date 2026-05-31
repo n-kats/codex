@@ -109,12 +109,11 @@ pub async fn run_codex_tool_session(
                 // MCP tool prompts are plain text with no UI element ranges.
                 text_elements: Vec::new(),
             }],
+            additional_context: Default::default(),
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
-            additional_context: Default::default(),
             thread_settings: Default::default(),
         },
-        client_user_message_id: None,
         trace: None,
     };
 
@@ -161,9 +160,9 @@ pub async fn run_codex_tool_session_reply(
                 // MCP tool prompts are plain text with no UI element ranges.
                 text_elements: Vec::new(),
             }],
+            additional_context: Default::default(),
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
-            additional_context: Default::default(),
             thread_settings: Default::default(),
         })
         .await

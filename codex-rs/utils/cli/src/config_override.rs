@@ -2,10 +2,10 @@
 //!
 //! This module provides a [`CliConfigOverrides`] struct that can be embedded
 //! into a `clap`-derived CLI struct using `#[clap(flatten)]`. Each occurrence
-//! of `-c key=value` (or `--config key=value`) will be collected as a raw
-//! string. Helper methods are provided to convert the raw strings into
-//! key/value pairs as well as to apply them onto a mutable
-//! `serde_json::Value` representing the configuration tree.
+//! of `-c key=value` will be collected as a raw string. Helper methods are
+//! provided to convert the raw strings into key/value pairs as well as to
+//! apply them onto a mutable `serde_json::Value` representing the
+//! configuration tree.
 
 use clap::ArgAction;
 use clap::Parser;
@@ -28,7 +28,6 @@ pub struct CliConfigOverrides {
     ///   - `-c shell_environment_policy.inherit=all`
     #[arg(
         short = 'c',
-        long = "config",
         value_name = "key=value",
         action = ArgAction::Append,
         global = true,

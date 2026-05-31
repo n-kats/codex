@@ -170,6 +170,10 @@ pub struct ConfigToml {
     #[serde(default)]
     pub shell_environment_policy: ShellEnvironmentPolicyToml,
 
+    /// Custom fork-specific settings.
+    #[serde(default)]
+    pub custom: CustomConfigToml,
+
     /// Whether the model may request a login shell for shell-based tools.
     /// Default to `true`
     ///
@@ -538,6 +542,55 @@ pub enum ThreadStoreToml {
     },
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CustomConfigToml {
+    #[serde(default)]
+    pub exec: CustomExecToml,
+
+    #[serde(default)]
+    pub user_shell: CustomUserShellToml,
+
+    #[serde(default)]
+    pub theme: Option<CustomThemeToml>,
+
+    pub user_shell_environment_policy: Option<ShellEnvironmentPolicyToml>,
+
+    pub assistant_shell_environment_policy: Option<ShellEnvironmentPolicyToml>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CustomExecToml {
+    pub worker_user: Option<String>,
+    pub worker_uid: Option<u32>,
+    pub worker_gid: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CustomUserShellToml {
+    pub no_inject: Option<bool>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CustomThemeToml {
+    pub diff: Option<CustomThemeDiffToml>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CustomThemeDiffToml {
+    pub enabled: Option<bool>,
+    pub line_bg: Option<bool>,
+    pub gutter: Option<bool>,
+    pub sign: Option<bool>,
+    pub content: Option<bool>,
+    pub add_line_bg: Option<String>,
+    pub del_line_bg: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
 pub struct AutoReviewToml {
     /// Additional policy instructions inserted into the guardian prompt.
@@ -832,6 +885,21 @@ impl ConfigToml {
         }
 
         None
+    }
+
+    pub fn get_config_profile(
+        &self,
+        config_profile: Option<String>,
+    ) -> std::io::Result<ConfigProfile> {
+        Ok(match config_profile {
+            Some(profile_name) => self.profiles.get(&profile_name).cloned().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("unknown config profile `{profile_name}`"),
+                )
+            })?,
+            None => ConfigProfile::default(),
+        })
     }
 }
 

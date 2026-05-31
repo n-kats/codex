@@ -1,7 +1,7 @@
 use anyhow::Result;
+use codex_app_server_protocol::AdditionalContextEntry;
+use codex_app_server_protocol::AdditionalContextKind;
 use codex_protocol::items::TurnItem;
-use codex_protocol::protocol::AdditionalContextEntry;
-use codex_protocol::protocol::AdditionalContextKind;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::Op;

@@ -268,7 +268,6 @@ impl App {
         if chat_widget.last_terminal_title.is_none() {
             chat_widget.last_terminal_title = previous_terminal_title;
         }
-        chat_widget.remote_connection = self.chat_widget.remote_connection.clone();
         for (thread_id, entry) in self.agent_navigation.ordered_threads() {
             chat_widget.set_collab_agent_metadata(
                 thread_id,
@@ -490,6 +489,7 @@ impl App {
             }
         }
         self.config = config.clone();
+        self.sync_runtime_keymap_from_config();
         match app_server
             .start_thread_with_session_start_source(&config, session_start_source)
             .await
@@ -676,7 +676,7 @@ impl App {
         } else {
             match crate::session_resume::resolve_cwd_for_resume_or_fork(
                 tui,
-                self.state_db.as_deref(),
+                &self.config,
                 &current_cwd,
                 target_session.thread_id,
                 target_session.path.as_deref(),
@@ -721,6 +721,7 @@ impl App {
                 let resumed_thread_id = resumed.session.thread_id;
                 self.shutdown_current_thread(app_server).await;
                 self.config = resume_config;
+                self.sync_runtime_keymap_from_config();
                 tui.set_notification_settings(
                     self.config.tui_notifications.method,
                     self.config.tui_notifications.condition,

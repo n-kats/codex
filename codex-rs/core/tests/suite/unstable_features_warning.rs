@@ -52,13 +52,21 @@ async fn emits_warning_when_unstable_features_enabled_via_config() {
         .await
         .expect("spawn conversation");
 
-    let warning = wait_for_event(&conversation, |ev| matches!(ev, EventMsg::Warning(_))).await;
-    let EventMsg::Warning(WarningEvent { message }) = warning else {
-        panic!("expected warning event");
+    let unstable_warning = loop {
+        let warning = wait_for_event(&conversation, |ev| matches!(ev, EventMsg::Warning(_))).await;
+        let EventMsg::Warning(WarningEvent { message }) = warning else {
+            panic!("expected warning event");
+        };
+        if message.contains("custom.user_shell.no_inject is false")
+            || message.contains("custom.exec.* resolves to the current user")
+        {
+            continue;
+        }
+        break message;
     };
-    assert!(message.contains("child_agents_md"));
-    assert!(message.contains("Under-development features enabled"));
-    assert!(message.contains("suppress_unstable_features_warning = true"));
+    assert!(unstable_warning.contains("child_agents_md"));
+    assert!(unstable_warning.contains("Under-development features enabled"));
+    assert!(unstable_warning.contains("suppress_unstable_features_warning = true"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -99,10 +107,21 @@ async fn suppresses_warning_when_configured() {
         .await
         .expect("spawn conversation");
 
-    let warning = timeout(
-        Duration::from_millis(150),
-        wait_for_event(&conversation, |ev| matches!(ev, EventMsg::Warning(_))),
-    )
+    let warning = timeout(Duration::from_millis(150), async {
+        loop {
+            let warning =
+                wait_for_event(&conversation, |ev| matches!(ev, EventMsg::Warning(_))).await;
+            let EventMsg::Warning(WarningEvent { message }) = warning else {
+                panic!("expected warning event");
+            };
+            if message.contains("custom.user_shell.no_inject is false")
+                || message.contains("custom.exec.* resolves to the current user")
+            {
+                continue;
+            }
+            return message;
+        }
+    })
     .await;
     assert!(warning.is_err());
 }

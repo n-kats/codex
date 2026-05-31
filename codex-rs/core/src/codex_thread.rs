@@ -5,6 +5,7 @@ use crate::goals::GoalRuntimeEvent;
 use crate::session::Codex;
 use crate::session::SessionSettingsUpdate;
 use crate::session::SteerInputError;
+use codex_app_server_protocol::AdditionalContextEntry;
 use codex_features::Feature;
 use codex_otel::SessionTelemetry;
 use codex_protocol::config_types::ApprovalsReviewer;
@@ -20,7 +21,6 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AdditionalContextEntry;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::Op;
@@ -297,7 +297,7 @@ impl CodexThread {
         overrides: CodexThreadSettingsOverrides,
     ) -> ConstraintResult<ThreadConfigSnapshot> {
         let updates = self.thread_settings_update(overrides).await;
-        self.codex.session.preview_settings(&updates).await
+        self.codex.preview_settings(&updates).await
     }
 
     async fn thread_settings_update(

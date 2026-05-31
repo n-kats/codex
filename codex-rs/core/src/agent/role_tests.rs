@@ -245,7 +245,7 @@ service_tier = "priority"
 #[tokio::test]
 async fn apply_role_preserves_existing_service_tier_without_override() {
     let (home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
-    config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+    config.service_tier = Some(ServiceTier::Fast);
     let role_path = write_role_config(
         &home,
         "default-tier-role.toml",

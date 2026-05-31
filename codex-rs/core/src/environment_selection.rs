@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::ops::Deref;
 use std::sync::Arc;
 
 use codex_exec_server::EnvironmentManager;
@@ -49,6 +50,14 @@ impl ResolvedTurnEnvironments {
     pub(crate) fn primary_filesystem(&self) -> Option<Arc<dyn ExecutorFileSystem>> {
         self.primary()
             .map(|environment| environment.environment.get_filesystem())
+    }
+}
+
+impl Deref for ResolvedTurnEnvironments {
+    type Target = [TurnEnvironment];
+
+    fn deref(&self) -> &Self::Target {
+        &self.turn_environments
     }
 }
 

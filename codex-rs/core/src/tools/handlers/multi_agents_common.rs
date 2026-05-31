@@ -12,6 +12,7 @@ use codex_features::Feature;
 use codex_models_manager::manager::RefreshStrategy;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::error::CodexErr;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ResponseInputItem;
@@ -105,7 +106,7 @@ pub(crate) fn build_wait_agent_statuses(
             status: status.clone(),
         })
         .collect::<Vec<_>>();
-    extras.sort_by_key(|entry| entry.thread_id.to_string());
+    extras.sort_by(|left, right| left.thread_id.to_string().cmp(&right.thread_id.to_string()));
     entries.extend(extras);
     entries
 }
@@ -341,19 +342,20 @@ pub(crate) async fn apply_requested_spawn_agent_model_overrides(
 pub(crate) async fn apply_spawn_agent_service_tier(
     session: &Session,
     config: &mut Config,
-    parent_service_tier: Option<&str>,
+    parent_service_tier: Option<&ServiceTier>,
     requested_service_tier: Option<&str>,
 ) -> Result<(), FunctionCallError> {
-    let candidate_service_tiers = [
-        config.service_tier.clone(),
-        requested_service_tier.map(str::to_string),
-        parent_service_tier.map(str::to_string),
-    ];
-    if candidate_service_tiers.iter().all(Option::is_none) {
-        config.service_tier = None;
+    let candidate_service_tier = if let Some(requested_service_tier) = requested_service_tier {
+        ServiceTier::from_request_value(requested_service_tier).ok_or_else(|| {
+            FunctionCallError::RespondToModel(format!(
+                "unsupported service tier `{requested_service_tier}`"
+            ))
+        })?
+    } else if let Some(parent_service_tier) = parent_service_tier {
+        *parent_service_tier
+    } else {
         return Ok(());
-    }
-
+    };
     let model = config.model.clone().ok_or_else(|| {
         FunctionCallError::RespondToModel(
             "spawn_agent could not resolve the child model for service tier validation".to_string(),
@@ -365,32 +367,30 @@ pub(crate) async fn apply_spawn_agent_service_tier(
         .get_model_info(model.as_str(), &config.to_models_manager_config())
         .await;
 
-    if let Some(requested_service_tier) = requested_service_tier
-        && !model_info.supports_service_tier(requested_service_tier)
-    {
-        let supported_service_tiers = if model_info.service_tiers.is_empty() {
-            "none".to_string()
-        } else {
-            model_info
-                .service_tiers
-                .iter()
-                .map(|tier| tier.id.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        return Err(FunctionCallError::RespondToModel(format!(
-            "Service tier `{requested_service_tier}` is not supported for model `{model}`. Supported service tiers: {supported_service_tiers}"
-        )));
+    if model_info.supports_service_tier(candidate_service_tier.request_value()) {
+        config.service_tier = Some(candidate_service_tier);
+        return Ok(());
     }
 
-    config.service_tier =
-        candidate_service_tiers
-            .into_iter()
-            .flatten()
-            .find(|candidate_service_tier| {
-                model_info.supports_service_tier(candidate_service_tier.as_str())
-            });
-    Ok(())
+    if requested_service_tier.is_none() {
+        config.service_tier = None;
+        return Ok(());
+    }
+
+    let supported_service_tiers = if model_info.service_tiers.is_empty() {
+        "none".to_string()
+    } else {
+        model_info
+            .service_tiers
+            .iter()
+            .map(|tier| tier.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    Err(FunctionCallError::RespondToModel(format!(
+        "Service tier `{}` is not supported for model `{model}`. Supported service tiers: {supported_service_tiers}",
+        candidate_service_tier.request_value()
+    )))
 }
 
 fn find_spawn_agent_model_name(

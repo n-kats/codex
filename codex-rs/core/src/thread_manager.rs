@@ -1257,7 +1257,6 @@ impl ThreadManagerState {
             extensions: Arc::clone(&self.extensions),
             conversation_history: initial_history,
             session_source,
-            forked_from_thread_id,
             thread_source,
             agent_control,
             dynamic_tools,

@@ -143,7 +143,7 @@ impl ToolExecutor<ToolInvocation> for ExecCommandHandler {
         let resolved_command = get_command(
             &args,
             session.user_shell(),
-            &turn.unified_exec_shell_mode,
+            &turn.tools_config.unified_exec_shell_mode,
             turn.config.permissions.allow_login_shell,
         )
         .map_err(FunctionCallError::RespondToModel)?;

@@ -150,7 +150,8 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::TurnStarted(_)
         | EventMsg::TurnComplete(_)
         | EventMsg::WebSearchEnd(_)
-        | EventMsg::ImageGenerationEnd(_) => Some(EventPersistenceMode::Limited),
+        | EventMsg::ImageGenerationEnd(_)
+        | EventMsg::ThreadSettingsApplied(_) => Some(EventPersistenceMode::Limited),
         EventMsg::ItemCompleted(event) => {
             // Plan items are derived from streaming tags and are not part of the
             // raw ResponseItem history, so we persist their completion to replay
@@ -183,7 +184,6 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::AgentReasoningSectionBreak(_)
         | EventMsg::RawResponseItem(_)
         | EventMsg::SessionConfigured(_)
-        | EventMsg::ThreadSettingsApplied(_)
         | EventMsg::McpToolCallBegin(_)
         | EventMsg::ExecCommandBegin(_)
         | EventMsg::TerminalInteraction(_)
@@ -216,6 +216,7 @@ fn event_msg_persistence_mode(ev: &EventMsg) -> Option<EventPersistenceMode> {
         | EventMsg::CollabAgentInteractionBegin(_)
         | EventMsg::CollabWaitingBegin(_)
         | EventMsg::CollabCloseBegin(_)
-        | EventMsg::CollabResumeBegin(_) => None,
+        | EventMsg::CollabResumeBegin(_)
+        | EventMsg::ThreadSettingsApplied(_) => None,
     }
 }

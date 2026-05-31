@@ -177,7 +177,6 @@ async fn resolve_rollout_path(
                 message: format!("failed to check rollout path for thread id {thread_id}: {err}"),
             }
         })?
-        && (include_archived || !rollout_path_is_archived(store.config.codex_home.as_path(), &path))
     {
         return Ok(Some(path));
     }

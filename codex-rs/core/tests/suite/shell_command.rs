@@ -1,6 +1,8 @@
 use std::time::Duration;
 
 use anyhow::Result;
+use codex_config::types::ShellEnvironmentPolicyToml;
+use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
 use core_test_support::assert_regex_match;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -14,6 +16,7 @@ use core_test_support::test_codex::TestCodexBuilder;
 use core_test_support::test_codex::TestCodexHarness;
 use core_test_support::test_codex::test_codex;
 use serde_json::json;
+use std::collections::HashMap;
 use test_case::test_case;
 
 #[cfg(windows)]
@@ -250,6 +253,54 @@ async fn shell_command_times_out_with_timeout_ms() -> anyhow::Result<()> {
         .to_string();
     let expected_pattern = r"(?s)^Exit code: 124\nWall time: [0-9]+(?:\.[0-9]+)? seconds\nOutput:\ncommand timed out after [0-9]+ milliseconds\n?$";
     assert_regex_match(expected_pattern, &normalized_output);
+
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shell_command_uses_custom_assistant_shell_environment_policy() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let harness = shell_command_harness_with(|builder| {
+        builder
+            .with_config(|config| {
+                config.custom.assistant_shell_environment_policy =
+                    Some(ShellEnvironmentPolicyToml {
+                        inherit: Some(ShellEnvironmentPolicyInherit::None),
+                        r#set: Some(HashMap::from([(
+                            "HOME".to_string(),
+                            "/home/assistant-shell".to_string(),
+                        )])),
+                        ..Default::default()
+                    });
+                config.custom.user_shell_environment_policy = Some(ShellEnvironmentPolicyToml {
+                    inherit: Some(ShellEnvironmentPolicyInherit::None),
+                    r#set: Some(HashMap::from([(
+                        "HOME".to_string(),
+                        "/home/user-shell".to_string(),
+                    )])),
+                    ..Default::default()
+                });
+            })
+            .with_model("gpt-5.4")
+    })
+    .await?;
+
+    let call_id = "shell-command-custom-home";
+    mount_shell_responses(
+        &harness,
+        call_id,
+        "printf '%s' \"$HOME\"",
+        /*login*/ None,
+    )
+    .await;
+    harness
+        .submit("run shell command with split env policies")
+        .await?;
+
+    let output = harness.function_call_stdout(call_id).await;
+    assert_shell_command_output(&output, "/home/assistant-shell")?;
 
     Ok(())
 }

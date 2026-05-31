@@ -102,7 +102,7 @@ impl ChatWidget {
             .as_ref()
             .map(|p| describe_profile(&p.permission_profile))
             .unwrap_or_else(|| {
-                describe_profile(&self.config.permissions.effective_permission_profile())
+                describe_profile(&self.config.permissions.permission_profile())
             });
         let info_line = if failed_scan {
             Line::from(vec![

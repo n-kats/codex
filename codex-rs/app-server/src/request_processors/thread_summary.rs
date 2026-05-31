@@ -1,4 +1,13 @@
 use super::*;
+use codex_app_server_protocol::ApprovalsReviewer;
+use codex_app_server_protocol::AskForApproval;
+use codex_app_server_protocol::SandboxPolicy;
+use codex_app_server_protocol::ThreadSettings;
+use codex_core::ThreadConfigSnapshot;
+use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::protocol::ThreadSettingsOverrides;
 
 #[cfg(test)]
 use chrono::DateTime;
@@ -129,6 +138,63 @@ fn extract_conversation_summary(
     })
 }
 
+pub(crate) fn thread_settings_from_config_snapshot(
+    snapshot: &ThreadConfigSnapshot,
+) -> ThreadSettings {
+    ThreadSettings {
+        cwd: snapshot.cwd.clone(),
+        approval_policy: snapshot.approval_policy.into(),
+        approvals_reviewer: snapshot.approvals_reviewer.into(),
+        sandbox_policy: snapshot.sandbox_policy().into(),
+        active_permission_profile: snapshot.active_permission_profile.clone().map(Into::into),
+        model: snapshot.model.clone(),
+        model_provider: snapshot.model_provider_id.clone(),
+        service_tier: snapshot.service_tier.clone(),
+        effort: snapshot.reasoning_effort,
+        summary: snapshot.reasoning_summary,
+        collaboration_mode: snapshot.collaboration_mode.clone(),
+        personality: snapshot.personality,
+    }
+}
+
+pub(crate) fn thread_settings_from_core_snapshot(
+    snapshot: &ThreadSettingsOverrides,
+) -> ThreadSettings {
+    ThreadSettings {
+        cwd: snapshot
+            .cwd
+            .clone()
+            .map(|path| AbsolutePathBuf::try_from(path).expect("absolute path"))
+            .unwrap_or_else(|| AbsolutePathBuf::from_absolute_path("/").expect("absolute path")),
+        approval_policy: snapshot.approval_policy.unwrap_or_default().into(),
+        approvals_reviewer: snapshot.approvals_reviewer.unwrap_or_default().into(),
+        sandbox_policy: snapshot
+            .sandbox_policy
+            .clone()
+            .unwrap_or_else(|| codex_protocol::protocol::SandboxPolicy::ReadOnly {
+                network_access: false,
+            })
+            .into(),
+        active_permission_profile: snapshot.active_permission_profile.clone().map(Into::into),
+        model: snapshot.model.clone().unwrap_or_default(),
+        model_provider: String::new(),
+        service_tier: snapshot.service_tier.clone().flatten(),
+        effort: snapshot.effort.flatten(),
+        summary: snapshot.summary.clone(),
+        collaboration_mode: snapshot.collaboration_mode.clone().unwrap_or_else(|| {
+            codex_protocol::config_types::CollaborationMode {
+                mode: codex_protocol::config_types::ModeKind::Default,
+                settings: codex_protocol::config_types::Settings {
+                    model: snapshot.model.clone().unwrap_or_default(),
+                    reasoning_effort: snapshot.effort.flatten(),
+                    developer_instructions: None,
+                },
+            }
+        }),
+        personality: snapshot.personality,
+    }
+}
+
 #[cfg(test)]
 fn map_git_info(git_info: &CoreGitInfo) -> ConversationGitInfo {
     ConversationGitInfo {
@@ -169,13 +235,20 @@ pub(super) fn with_thread_spawn_agent_metadata(
     }
 }
 
-pub(crate) fn thread_response_active_permission_profile(
+pub(super) fn thread_response_active_permission_profile(
     active_permission_profile: Option<codex_protocol::models::ActivePermissionProfile>,
 ) -> Option<codex_app_server_protocol::ActivePermissionProfile> {
     active_permission_profile.map(Into::into)
 }
 
-pub(crate) fn thread_response_sandbox_policy(
+pub(super) fn apply_permission_profile_selection_to_config_overrides(
+    overrides: &mut ConfigOverrides,
+    permissions: Option<String>,
+) {
+    overrides.default_permissions = permissions;
+}
+
+pub(super) fn thread_response_sandbox_policy(
     permission_profile: &codex_protocol::models::PermissionProfile,
     cwd: &Path,
 ) -> codex_app_server_protocol::SandboxPolicy {
@@ -187,54 +260,6 @@ pub(crate) fn thread_response_sandbox_policy(
         cwd,
     );
     sandbox_policy.into()
-}
-
-pub(crate) fn thread_settings_from_config_snapshot(
-    config_snapshot: &ThreadConfigSnapshot,
-) -> ThreadSettings {
-    ThreadSettings {
-        cwd: config_snapshot.cwd.clone(),
-        approval_policy: config_snapshot.approval_policy.into(),
-        approvals_reviewer: config_snapshot.approvals_reviewer.into(),
-        sandbox_policy: thread_response_sandbox_policy(
-            &config_snapshot.permission_profile,
-            config_snapshot.cwd.as_path(),
-        ),
-        active_permission_profile: thread_response_active_permission_profile(
-            config_snapshot.active_permission_profile.clone(),
-        ),
-        model: config_snapshot.model.clone(),
-        model_provider: config_snapshot.model_provider_id.clone(),
-        service_tier: config_snapshot.service_tier.clone(),
-        effort: config_snapshot.reasoning_effort,
-        summary: config_snapshot.reasoning_summary,
-        collaboration_mode: config_snapshot.collaboration_mode.clone(),
-        personality: config_snapshot.personality,
-    }
-}
-
-pub(crate) fn thread_settings_from_core_snapshot(
-    snapshot: codex_protocol::protocol::ThreadSettingsSnapshot,
-) -> ThreadSettings {
-    ThreadSettings {
-        sandbox_policy: thread_response_sandbox_policy(
-            &snapshot.permission_profile,
-            snapshot.cwd.as_path(),
-        ),
-        cwd: snapshot.cwd,
-        approval_policy: snapshot.approval_policy.into(),
-        approvals_reviewer: snapshot.approvals_reviewer.into(),
-        active_permission_profile: thread_response_active_permission_profile(
-            snapshot.active_permission_profile,
-        ),
-        model: snapshot.model,
-        model_provider: snapshot.model_provider_id,
-        service_tier: snapshot.service_tier,
-        effort: snapshot.reasoning_effort,
-        summary: snapshot.reasoning_summary,
-        collaboration_mode: snapshot.collaboration_mode,
-        personality: snapshot.personality,
-    }
 }
 
 #[cfg(test)]

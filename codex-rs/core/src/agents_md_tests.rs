@@ -12,15 +12,14 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 async fn get_user_instructions(config: &Config) -> Option<String> {
-    let mut warnings = Vec::new();
     AgentsMdManager::new(config)
-        .user_instructions_with_fs(LOCAL_FS.as_ref(), &mut warnings)
+        .user_instructions_with_fs(LOCAL_FS.as_ref())
         .await
 }
 
 async fn agents_md_paths(config: &Config) -> std::io::Result<Vec<AbsolutePathBuf>> {
     AgentsMdManager::new(config)
-        .agents_md_paths(LOCAL_FS.as_ref())
+        .discover_project_doc_paths(LOCAL_FS.as_ref())
         .await
 }
 
@@ -120,9 +119,8 @@ async fn no_environment_returns_none() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let config = make_config(&tmp, /*limit*/ 4096, Some("user instructions")).await;
 
-    let mut warnings = Vec::new();
     let res = AgentsMdManager::new(&config)
-        .user_instructions(/*environment*/ None, &mut warnings)
+        .user_instructions(/*environment*/ None)
         .await;
 
     assert_eq!(res, None);
@@ -152,18 +150,11 @@ async fn global_doc_invalid_utf8_warns_and_uses_lossy_text() {
     let path = codex_home_abs.join(DEFAULT_AGENTS_MD_FILENAME);
     fs::write(&path, b"global\xFF doc").unwrap();
 
-    let mut warnings = Vec::new();
-    let loaded = AgentsMdManager::load_global_instructions(
-        LOCAL_FS.as_ref(),
-        Some(&codex_home_abs),
-        &mut warnings,
-    )
-    .await
-    .expect("global doc expected");
+    let loaded = AgentsMdManager::load_global_instructions(Some(&codex_home_abs))
+        .expect("global doc expected");
 
     assert_eq!(loaded.contents, "global\u{FFFD} doc");
     assert_eq!(loaded.path, path);
-    assert_invalid_utf8_warning(&warnings, "Global", path.as_path());
 }
 
 #[tokio::test]
@@ -173,15 +164,12 @@ async fn project_doc_invalid_utf8_warns_and_uses_lossy_text() {
     fs::write(&path, b"project\xFF doc").unwrap();
 
     let config = make_config(&tmp, /*limit*/ 4096, /*instructions*/ None).await;
-    let mut warnings = Vec::new();
     let res = AgentsMdManager::new(&config)
-        .user_instructions_with_fs(LOCAL_FS.as_ref(), &mut warnings)
+        .user_instructions_with_fs(LOCAL_FS.as_ref())
         .await
         .expect("doc expected");
 
     assert_eq!(res, "project\u{FFFD} doc");
-    let canonical_path = dunce::canonicalize(&path).expect("canonical doc path");
-    assert_invalid_utf8_warning(&warnings, "Project", &canonical_path);
 }
 
 /// Oversize file is truncated to `project_doc_max_bytes`.
@@ -445,6 +433,27 @@ async fn agents_md_preferred_over_fallbacks() {
             .to_string_lossy()
             .eq(DEFAULT_AGENTS_MD_FILENAME)
     );
+}
+
+#[tokio::test]
+async fn explicit_project_doc_paths_override_auto_discovery() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    fs::write(tmp.path().join("AGENTS.md"), "auto").unwrap();
+    fs::create_dir_all(tmp.path().join("docs")).unwrap();
+    fs::write(tmp.path().join("docs/custom.md"), "explicit").unwrap();
+
+    let mut cfg = make_config(&tmp, /*limit*/ 4096, /*instructions*/ None).await;
+    cfg.project_doc_paths = vec![PathBuf::from("docs/custom.md")];
+
+    let res = get_user_instructions(&cfg)
+        .await
+        .expect("explicit project doc expected");
+
+    assert_eq!(res, "explicit");
+
+    let discovery = agents_md_paths(&cfg).await.expect("discover paths");
+    assert_eq!(discovery.len(), 1);
+    assert_eq!(discovery[0], tmp.path().join("docs/custom.md").abs());
 }
 
 #[tokio::test]

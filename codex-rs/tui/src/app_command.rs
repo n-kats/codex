@@ -19,7 +19,9 @@ use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort as ReasoningEffortConfig;
+use codex_protocol::protocol::Op;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
+use codex_utils_approval_presets::builtin_permission_profile_for_active_permission_profile;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -64,6 +66,7 @@ pub(crate) enum AppCommand {
         service_tier: Option<Option<String>>,
         collaboration_mode: Option<CollaborationMode>,
         personality: Option<Personality>,
+        project_doc_paths: Option<Vec<PathBuf>>,
     },
     ExecApproval {
         id: String,
@@ -183,6 +186,7 @@ impl AppCommand {
         service_tier: Option<Option<String>>,
         collaboration_mode: Option<CollaborationMode>,
         personality: Option<Personality>,
+        project_doc_paths: Option<Vec<PathBuf>>,
     ) -> Self {
         Self::OverrideTurnContext {
             cwd,
@@ -197,6 +201,7 @@ impl AppCommand {
             service_tier,
             collaboration_mode,
             personality,
+            project_doc_paths,
         }
     }
 
@@ -278,6 +283,58 @@ impl AppCommand {
 
     pub(crate) fn is_review(&self) -> bool {
         matches!(self, Self::Review { .. })
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn into_core(self) -> Op {
+        match self {
+            Self::OverrideTurnContext {
+                cwd,
+                approval_policy,
+                approvals_reviewer,
+                permission_profile: _,
+                active_permission_profile,
+                windows_sandbox_level,
+                model,
+                effort,
+                summary,
+                service_tier,
+                collaboration_mode,
+                personality,
+                project_doc_paths,
+            } => Op::OverrideTurnContext {
+                cwd,
+                approval_policy: approval_policy.map(|policy| policy.to_core()),
+                approvals_reviewer,
+                sandbox_policy: None,
+                permission_profile: active_permission_profile
+                    .as_ref()
+                    .and_then(builtin_permission_profile_for_active_permission_profile),
+                windows_sandbox_level,
+                model,
+                effort,
+                summary,
+                service_tier,
+                collaboration_mode,
+                personality,
+                project_doc_paths,
+            },
+            other => panic!("AppCommand::into_core is not supported for {other:?}"),
+        }
+    }
+}
+
+impl From<Op> for AppCommand {
+    fn from(value: Op) -> Self {
+        let _ = value;
+        panic!("AppCommand::from(Op) is not supported after the enum refactor")
+    }
+}
+
+impl From<&Op> for AppCommand {
+    fn from(value: &Op) -> Self {
+        let _ = value;
+        panic!("AppCommand::from(&Op) is not supported after the enum refactor")
     }
 }
 

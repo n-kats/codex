@@ -64,7 +64,9 @@ pub(crate) fn build_pet_picker_params(
         .iter()
         .map(|entry| entry.selector.clone())
         .collect::<Vec<_>>();
-    let on_selection_changed: crate::bottom_pane::OnSelectionChangedCallback = Some(Box::new(
+    let on_selection_changed: Option<
+        Box<dyn Fn(usize, &crate::app_event_sender::AppEventSender) + Send + Sync + 'static>,
+    > = Some(Box::new(
         move |idx: usize, tx: &crate::app_event_sender::AppEventSender| {
             if let Some(pet_id) = preview_pet_ids.get(idx) {
                 tx.send(AppEvent::PetPreviewRequested {

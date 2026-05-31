@@ -708,6 +708,7 @@ mod tests {
             /*windows_sandbox_private_desktop*/ false,
             PermissionProfile::read_only(),
             /*arg0*/ None,
+            /*run_as*/ None,
         )
     }
 
@@ -825,6 +826,7 @@ mod tests {
                     /*windows_sandbox_private_desktop*/ false,
                     PermissionProfile::read_only(),
                     /*arg0*/ None,
+                    /*run_as*/ None,
                 ),
                 started_network_proxy: None,
                 tty: false,
@@ -915,6 +917,7 @@ mod tests {
                     /*windows_sandbox_private_desktop*/ false,
                     PermissionProfile::read_only(),
                     /*arg0*/ None,
+                    /*run_as*/ None,
                 ),
                 started_network_proxy: None,
                 tty: false,

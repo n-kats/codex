@@ -375,7 +375,6 @@ impl ToolExecutor<ToolInvocation> for ApplyPatchHandler {
                         emitter.begin(event_ctx).await;
 
                         let req = ApplyPatchRequest {
-                            turn_environment: turn_environment.clone(),
                             action: apply.action,
                             file_paths,
                             changes,
@@ -384,6 +383,12 @@ impl ToolExecutor<ToolInvocation> for ApplyPatchHandler {
                                 .additional_permissions,
                             permissions_preapproved: effective_additional_permissions
                                 .permissions_preapproved,
+                            turn_environment: turn_environment.clone(),
+                            run_as: turn.custom_exec_run_as().map_err(|err| {
+                                FunctionCallError::RespondToModel(format!(
+                                    "failed to resolve apply_patch run_as: {err}"
+                                ))
+                            })?,
                         };
 
                         let mut orchestrator = ToolOrchestrator::new();
@@ -526,7 +531,6 @@ pub(crate) async fn intercept_apply_patch(
                     emitter.begin(event_ctx).await;
 
                     let req = ApplyPatchRequest {
-                        turn_environment,
                         action: apply.action,
                         file_paths: approval_keys,
                         changes,
@@ -535,6 +539,12 @@ pub(crate) async fn intercept_apply_patch(
                             .additional_permissions,
                         permissions_preapproved: effective_additional_permissions
                             .permissions_preapproved,
+                        turn_environment,
+                        run_as: turn.custom_exec_run_as().map_err(|err| {
+                            FunctionCallError::RespondToModel(format!(
+                                "failed to resolve apply_patch run_as: {err}"
+                            ))
+                        })?,
                     };
 
                     let mut orchestrator = ToolOrchestrator::new();

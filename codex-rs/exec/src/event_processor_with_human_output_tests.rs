@@ -218,7 +218,7 @@ async fn config_summary_entries_include_runtime_workspace_roots() {
         service_tier: None,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: config.approvals_reviewer,
-        permission_profile: config.permissions.effective_permission_profile(),
+        permission_profile: config.permissions.permission_profile(),
         active_permission_profile: None,
         cwd,
         reasoning_effort: None,

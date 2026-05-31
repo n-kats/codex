@@ -6,7 +6,8 @@
 use crate::exec::is_likely_sandbox_denied;
 use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::review_approval_request;
-use crate::session::turn_context::TurnEnvironment;
+use crate::spawn::RunAsRetry;
+use crate::spawn::{self};
 use crate::tools::hook_names::HookToolName;
 use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalCtx;
@@ -34,24 +35,29 @@ use codex_sandboxing::SandboxablePreference;
 use codex_sandboxing::policy_transforms::effective_permission_profile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
+#[cfg(unix)]
+use std::collections::HashMap;
+#[cfg(unix)]
+use std::io;
+#[cfg(unix)]
+use std::io::Write;
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::process::Stdio;
 use std::time::Instant;
-
-#[derive(Clone, Debug, Eq, PartialEq, Hash, serde::Serialize)]
-pub(crate) struct ApplyPatchApprovalKey {
-    environment_id: String,
-    path: AbsolutePathBuf,
-}
+#[cfg(unix)]
+use tempfile::NamedTempFile;
 
 #[derive(Debug)]
 pub struct ApplyPatchRequest {
-    pub turn_environment: TurnEnvironment,
     pub action: ApplyPatchAction,
     pub file_paths: Vec<AbsolutePathBuf>,
     pub changes: std::collections::HashMap<PathBuf, FileChange>,
     pub exec_approval_requirement: ExecApprovalRequirement,
     pub additional_permissions: Option<AdditionalPermissionProfile>,
     pub permissions_preapproved: bool,
+    pub turn_environment: crate::session::turn_context::TurnEnvironment,
+    pub run_as: Option<crate::spawn::RunAsUser>,
 }
 
 #[derive(Default)]
@@ -104,6 +110,129 @@ impl ApplyPatchRuntime {
             use_legacy_landlock: attempt.use_legacy_landlock,
         })
     }
+
+    #[cfg(unix)]
+    fn configure_run_as(cmd: &mut tokio::process::Command, run_as: &crate::spawn::RunAsUser) {
+        let run_as = run_as.clone();
+        unsafe {
+            cmd.pre_exec(move || {
+                if let Some(supplementary_gids) = &run_as.supplementary_gids {
+                    let supplementary_gids = supplementary_gids
+                        .iter()
+                        .copied()
+                        .map(|gid| gid as libc::gid_t)
+                        .collect::<Vec<_>>();
+                    if libc::setgroups(supplementary_gids.len(), supplementary_gids.as_ptr()) != 0 {
+                        return Err(io::Error::last_os_error());
+                    }
+                }
+                if libc::setgid(run_as.gid as libc::gid_t) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if libc::setuid(run_as.uid as libc::uid_t) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+
+    async fn spawn_apply_patch_child_with_run_as(
+        req: &ApplyPatchRequest,
+        run_as: &crate::spawn::RunAsUser,
+        codex_self_exe: &std::path::Path,
+        stdin_file: std::fs::File,
+    ) -> io::Result<std::process::Output> {
+        let mut cmd = tokio::process::Command::new(codex_self_exe);
+        cmd.arg0("apply_patch");
+        cmd.current_dir(&req.action.cwd);
+        cmd.stdin(Stdio::from(stdin_file.try_clone()?));
+        cmd.stdout(Stdio::piped());
+        cmd.stderr(Stdio::piped());
+        Self::configure_run_as(&mut cmd, run_as);
+
+        match cmd.spawn() {
+            Ok(child) => child.wait_with_output().await,
+            Err(err)
+                if unsafe { libc::geteuid() } != 0
+                    && (err.kind() == io::ErrorKind::PermissionDenied
+                        || err.raw_os_error() == Some(libc::EPERM)) =>
+            {
+                let retry = RunAsRetry::new(
+                    run_as.clone(),
+                    Some("apply_patch".to_string()),
+                    codex_self_exe.to_string_lossy().to_string(),
+                    Vec::new(),
+                    req.action.cwd.clone().to_path_buf(),
+                    std::env::vars().collect::<HashMap<_, _>>(),
+                );
+                let Some(mut sudo_cmd) = spawn::build_run_as_sudo_command(&retry)? else {
+                    return Err(err);
+                };
+                sudo_cmd.current_dir(&req.action.cwd);
+                sudo_cmd.stdin(Stdio::from(stdin_file));
+                sudo_cmd.stdout(Stdio::piped());
+                sudo_cmd.stderr(Stdio::piped());
+
+                let child = sudo_cmd.spawn()?;
+                child.wait_with_output().await
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    #[cfg(unix)]
+    async fn run_apply_patch_under_run_as(
+        req: &ApplyPatchRequest,
+        run_as: &crate::spawn::RunAsUser,
+        codex_self_exe: &std::path::Path,
+    ) -> Result<ApplyPatchRuntimeOutput, ToolError> {
+        let mut patch_file = NamedTempFile::new().map_err(|err| {
+            ToolError::Codex(CodexErr::Io(io::Error::other(format!(
+                "failed to create temporary apply_patch input: {err}"
+            ))))
+        })?;
+        patch_file
+            .write_all(req.action.patch.as_bytes())
+            .map_err(|err| {
+                ToolError::Codex(CodexErr::Io(io::Error::other(format!(
+                    "failed to write temporary apply_patch input: {err}"
+                ))))
+            })?;
+        patch_file.flush().map_err(|err| {
+            ToolError::Codex(CodexErr::Io(io::Error::other(format!(
+                "failed to flush temporary apply_patch input: {err}"
+            ))))
+        })?;
+        let stdin_file = patch_file.reopen().map_err(|err| {
+            ToolError::Codex(CodexErr::Io(io::Error::other(format!(
+                "failed to reopen temporary apply_patch input: {err}"
+            ))))
+        })?;
+        let output =
+            Self::spawn_apply_patch_child_with_run_as(req, run_as, codex_self_exe, stdin_file)
+                .await
+                .map_err(|err| {
+                    ToolError::Codex(CodexErr::Io(io::Error::other(format!(
+                        "failed to spawn apply_patch helper under run_as: {err}"
+                    ))))
+                })?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let exit_code = output.status.code().unwrap_or(-1);
+        let exec_output = ExecToolCallOutput {
+            exit_code,
+            stdout: StreamOutput::new(stdout.clone()),
+            stderr: StreamOutput::new(stderr.clone()),
+            aggregated_output: StreamOutput::new(format!("{stdout}{stderr}")),
+            duration: Instant::now().elapsed(),
+            timed_out: false,
+        };
+        Ok(ApplyPatchRuntimeOutput {
+            exec_output,
+            delta: AppliedPatchDelta::default(),
+        })
+    }
 }
 
 impl Sandboxable for ApplyPatchRuntime {
@@ -116,17 +245,10 @@ impl Sandboxable for ApplyPatchRuntime {
 }
 
 impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
-    type ApprovalKey = ApplyPatchApprovalKey;
+    type ApprovalKey = AbsolutePathBuf;
 
     fn approval_keys(&self, req: &ApplyPatchRequest) -> Vec<Self::ApprovalKey> {
-        req.file_paths
-            .iter()
-            .cloned()
-            .map(|path| ApplyPatchApprovalKey {
-                environment_id: req.turn_environment.environment_id.clone(),
-                path,
-            })
-            .collect()
+        req.file_paths.clone()
     }
 
     fn start_approval_async<'a>(
@@ -213,18 +335,32 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
 }
 
 impl ToolRuntime<ApplyPatchRequest, ApplyPatchRuntimeOutput> for ApplyPatchRuntime {
-    fn sandbox_cwd<'a>(&self, req: &'a ApplyPatchRequest) -> Option<&'a AbsolutePathBuf> {
-        Some(&req.action.cwd)
-    }
-
     async fn run(
         &mut self,
         req: &ApplyPatchRequest,
         attempt: &SandboxAttempt<'_>,
-        _ctx: &ToolCtx,
+        ctx: &ToolCtx,
     ) -> Result<ApplyPatchRuntimeOutput, ToolError> {
+        let environment = ctx.turn.environments.primary().ok_or_else(|| {
+            ToolError::Rejected("apply_patch is unavailable in this session".to_string())
+        })?;
         let started_at = Instant::now();
-        let fs = req.turn_environment.environment.get_filesystem();
+        #[cfg(unix)]
+        if let Some(run_as) = req.run_as.as_ref()
+            && !environment.environment.is_remote()
+        {
+            let Some(codex_self_exe) = ctx.turn.codex_self_exe.as_ref() else {
+                return Err(ToolError::Rejected(
+                    "apply_patch requires codex_self_exe to honor custom.exec.worker_user"
+                        .to_string(),
+                ));
+            };
+            let mut output =
+                Self::run_apply_patch_under_run_as(req, run_as, codex_self_exe).await?;
+            output.exec_output.duration = started_at.elapsed();
+            return Ok(output);
+        }
+        let fs = environment.environment.get_filesystem();
         let sandbox = Self::file_system_sandbox_context_for_attempt(req, attempt);
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -239,13 +375,7 @@ impl ToolRuntime<ApplyPatchRequest, ApplyPatchRuntimeOutput> for ApplyPatchRunti
         .await;
         let stdout = String::from_utf8_lossy(&stdout).into_owned();
         let stderr = String::from_utf8_lossy(&stderr).into_owned();
-        let failed = result.is_err();
-        let exit_code = if failed { 1 } else { 0 };
-        let delta = match result {
-            Ok(delta) => delta,
-            Err(failure) => failure.into_parts().1,
-        };
-        self.committed_delta.append(delta);
+        let exit_code = if result.is_ok() { 0 } else { 1 };
         let output = ExecToolCallOutput {
             exit_code,
             stdout: StreamOutput::new(stdout.clone()),
@@ -254,7 +384,15 @@ impl ToolRuntime<ApplyPatchRequest, ApplyPatchRuntimeOutput> for ApplyPatchRunti
             duration: started_at.elapsed(),
             timed_out: false,
         };
-        if failed && is_likely_sandbox_denied(attempt.sandbox, &output) {
+        let result_is_err = result.is_err();
+        let delta = match result {
+            Ok(delta) => {
+                self.committed_delta.append(delta);
+                self.committed_delta.clone()
+            }
+            Err(failure) => failure.into_parts().1,
+        };
+        if result_is_err && is_likely_sandbox_denied(attempt.sandbox, &output) {
             return Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied {
                 output: Box::new(output),
                 network_policy_decision: None,
@@ -262,7 +400,7 @@ impl ToolRuntime<ApplyPatchRequest, ApplyPatchRuntimeOutput> for ApplyPatchRunti
         }
         Ok(ApplyPatchRuntimeOutput {
             exec_output: output,
-            delta: self.committed_delta.clone(),
+            delta,
         })
     }
 }

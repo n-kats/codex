@@ -176,3 +176,67 @@ pub async fn dismiss_version(config: &Config, version: &str) -> anyhow::Result<(
     tokio::fs::write(version_file, json_line).await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_version_from_brew_api_json() {
+        //
+        // https://formulae.brew.sh/api/cask/codex.json
+        let cask_json = r#"{
+            "token": "codex",
+            "full_token": "codex",
+            "tap": "homebrew/cask",
+            "version": "0.96.0",
+        }"#;
+        let HomebrewCaskInfo { version } = serde_json::from_str::<HomebrewCaskInfo>(cask_json)
+            .expect("failed to parse version from cask json");
+        assert_eq!(version, "0.96.0");
+    }
+
+    #[test]
+    fn extracts_version_from_latest_tag() {
+        assert_eq!(
+            extract_version_from_latest_tag("rust-v1.5.0").expect("failed to parse version"),
+            "1.5.0"
+        );
+    }
+
+    #[test]
+    fn latest_tag_without_prefix_is_invalid() {
+        assert!(extract_version_from_latest_tag("v1.5.0").is_err());
+    }
+
+    #[test]
+    fn prerelease_version_is_not_considered_newer() {
+        assert_eq!(is_newer("0.11.0-beta.1", "0.11.0"), None);
+        assert_eq!(is_newer("1.0.0-rc.1", "1.0.0"), None);
+    }
+
+    #[test]
+    fn plain_semver_comparisons_work() {
+        assert_eq!(is_newer("0.11.1", "0.11.0"), Some(true));
+        assert_eq!(is_newer("0.11.0", "0.11.1"), Some(false));
+        assert_eq!(is_newer("1.0.0", "0.9.9"), Some(true));
+        assert_eq!(is_newer("0.9.9", "1.0.0"), Some(false));
+    }
+
+    #[test]
+    fn whitespace_is_ignored() {
+        assert_eq!(parse_strict_version(" 1.2.3 \n"), Some((1, 2, 3)));
+        assert_eq!(
+            parse_current_version(" 1.2.3-custom-2026-04-25 \n"),
+            Some((1, 2, 3))
+        );
+        assert_eq!(is_newer(" 1.2.3 ", "1.2.2"), Some(true));
+    }
+
+    #[test]
+    fn custom_suffix_versions_are_comparable_against_plain_semver() {
+        assert_eq!(is_newer("1.2.4", "1.2.3-custom-2026-04-25"), Some(true));
+        assert_eq!(is_newer("1.2.3", "1.2.3-custom-2026-04-25"), Some(false));
+        assert_eq!(is_newer("1.2.3-custom-2026-04-25", "1.2.2"), None);
+    }
+}

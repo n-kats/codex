@@ -8,7 +8,6 @@ use anyhow::anyhow;
 use codex_analytics::GuardianReviewAnalyticsResult;
 use codex_analytics::GuardianReviewSessionKind;
 use codex_protocol::ThreadId;
-use codex_protocol::config_types::AutoCompactTokenLimitScope;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
 use codex_protocol::models::PermissionProfile;
@@ -141,7 +140,6 @@ struct GuardianReviewSessionReuseKey {
     model_provider: ModelProviderInfo,
     model_context_window: Option<i64>,
     model_auto_compact_token_limit: Option<i64>,
-    model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope,
     model_reasoning_effort: Option<ReasoningEffortConfig>,
     model_reasoning_summary: Option<ReasoningSummaryConfig>,
     permissions: Permissions,
@@ -166,7 +164,6 @@ impl GuardianReviewSessionReuseKey {
             model_provider: spawn_config.model_provider.clone(),
             model_context_window: spawn_config.model_context_window,
             model_auto_compact_token_limit: spawn_config.model_auto_compact_token_limit,
-            model_auto_compact_token_limit_scope: spawn_config.model_auto_compact_token_limit_scope,
             model_reasoning_effort: spawn_config.model_reasoning_effort,
             model_reasoning_summary: spawn_config.model_reasoning_summary,
             permissions: spawn_config.permissions.clone(),
@@ -946,10 +943,11 @@ pub(crate) fn build_guardian_review_session_config(
             .network
             .as_ref()
             .map(|network| network.value.clone());
+        let permission_profile = guardian_config.permissions.permission_profile();
         guardian_config.permissions.network = Some(NetworkProxySpec::from_config_and_constraints(
             live_network_config,
             network_constraints,
-            guardian_config.permissions.permission_profile(),
+            &permission_profile,
         )?);
     }
     for feature in [
@@ -1230,8 +1228,7 @@ mod tests {
             GuardianReviewSessionReuseKey::from_spawn_config(&cached_spawn_config);
 
         let mut changed_parent_config = parent_config;
-        changed_parent_config.model_auto_compact_token_limit_scope =
-            AutoCompactTokenLimitScope::BodyAfterPrefix;
+        changed_parent_config.model_auto_compact_token_limit = Some(123);
         let next_spawn_config = build_guardian_review_session_config(
             &changed_parent_config,
             /*live_network_config*/ None,

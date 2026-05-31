@@ -5,7 +5,6 @@ use super::rate_limit_snapshot_display;
 use crate::history_cell::HistoryCell;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::ConfigBuilder;
-use crate::legacy_core::config::PermissionProfileSnapshot;
 use crate::status::StatusAccountDisplay;
 use crate::status::remote_connection::RemoteConnectionStatus;
 use crate::test_support::PathBufExt;
@@ -99,10 +98,6 @@ async fn test_config(temp_home: &TempDir) -> Config {
 
 fn set_workspace_cwd(config: &mut Config, cwd: AbsolutePathBuf) {
     config.cwd = cwd.clone();
-    config.workspace_roots = vec![cwd];
-    config
-        .permissions
-        .set_workspace_roots(config.workspace_roots.clone());
 }
 
 fn test_status_account_display() -> Option<StatusAccountDisplay> {
@@ -306,10 +301,10 @@ async fn status_permissions_named_read_only_profile_shows_builtin_label() {
         .expect("set approval policy");
     config
         .permissions
-        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        .set_permission_profile_with_active_profile(
             PermissionProfile::read_only(),
-            ActivePermissionProfile::read_only(),
-        ))
+            Some(ActivePermissionProfile::read_only()),
+        )
         .expect("set permission profile");
 
     assert_eq!(
@@ -333,13 +328,13 @@ async fn status_permissions_read_only_profile_shows_additional_writable_roots() 
         .with_additional_writable_roots(config.cwd.as_path(), std::slice::from_ref(&extra_root));
     config
         .permissions
-        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        .set_permission_profile_with_active_profile(
             PermissionProfile::from_runtime_permissions(
                 &file_system_policy,
                 NetworkSandboxPolicy::Restricted,
             ),
-            ActivePermissionProfile::read_only(),
-        ))
+            Some(ActivePermissionProfile::read_only()),
+        )
         .expect("set permission profile");
 
     assert_eq!(
@@ -359,10 +354,12 @@ async fn status_permissions_named_workspace_profile_shows_builtin_label() {
         .expect("set approval policy");
     config
         .permissions
-        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        .set_permission_profile_with_active_profile(
             PermissionProfile::workspace_write(),
-            ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE),
-        ))
+            Some(ActivePermissionProfile::new(
+                BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
+            )),
+        )
         .expect("set permission profile");
 
     assert_eq!(
@@ -383,10 +380,12 @@ async fn status_permissions_workspace_auto_review_shows_reviewer_label() {
         .expect("set approval policy");
     config
         .permissions
-        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        .set_permission_profile_with_active_profile(
             PermissionProfile::workspace_write(),
-            ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE),
-        ))
+            Some(ActivePermissionProfile::new(
+                BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
+            )),
+        )
         .expect("set permission profile");
 
     assert_eq!(
@@ -407,15 +406,17 @@ async fn status_permissions_named_profile_shows_additional_writable_roots() {
     let extra_root = test_path_buf("/workspace/extra").abs();
     config
         .permissions
-        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        .set_permission_profile_with_active_profile(
             PermissionProfile::workspace_write_with(
                 std::slice::from_ref(&extra_root),
                 NetworkSandboxPolicy::Restricted,
                 /*exclude_tmpdir_env_var*/ false,
                 /*exclude_slash_tmp*/ false,
             ),
-            ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE),
-        ))
+            Some(ActivePermissionProfile::new(
+                BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
+            )),
+        )
         .expect("set permission profile");
 
     assert_eq!(
@@ -435,16 +436,17 @@ async fn status_permissions_workspace_roots_show_additional_directories() {
         .set(AskForApproval::OnRequest.to_core())
         .expect("set approval policy");
     let extra_root = test_path_buf("/workspace/extra").abs();
-    config.workspace_roots = vec![config.cwd.clone(), extra_root.clone()];
     config
         .permissions
-        .set_workspace_roots(config.workspace_roots.clone());
-    config
-        .permissions
-        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
-            PermissionProfile::workspace_write(),
-            ActivePermissionProfile::new(":workspace"),
-        ))
+        .set_permission_profile_with_active_profile(
+            PermissionProfile::workspace_write_with(
+                std::slice::from_ref(&extra_root),
+                NetworkSandboxPolicy::Restricted,
+                /*exclude_tmpdir_env_var*/ false,
+                /*exclude_slash_tmp*/ false,
+            ),
+            Some(ActivePermissionProfile::new(":workspace")),
+        )
         .expect("set permission profile");
 
     assert_eq!(
@@ -469,17 +471,14 @@ async fn status_permissions_workspace_roots_include_profile_defined_directories(
     let profile_root = test_path_buf("/workspace/shared").abs();
     config
         .permissions
-        .set_permission_profile_from_session_snapshot(
-            PermissionProfileSnapshot::active_with_profile_workspace_roots(
-                PermissionProfile::workspace_write_with(
-                    std::slice::from_ref(&profile_root),
-                    NetworkSandboxPolicy::Restricted,
-                    /*exclude_tmpdir_env_var*/ false,
-                    /*exclude_slash_tmp*/ false,
-                ),
-                ActivePermissionProfile::new(":workspace"),
-                vec![profile_root.clone()],
+        .set_permission_profile_with_active_profile(
+            PermissionProfile::workspace_write_with(
+                std::slice::from_ref(&profile_root),
+                NetworkSandboxPolicy::Restricted,
+                /*exclude_tmpdir_env_var*/ false,
+                /*exclude_slash_tmp*/ false,
             ),
+            Some(ActivePermissionProfile::new(":workspace")),
         )
         .expect("set permission profile");
 
@@ -503,15 +502,17 @@ async fn status_permissions_broadened_workspace_profile_shows_builtin_label() {
         .expect("set approval policy");
     config
         .permissions
-        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        .set_permission_profile_with_active_profile(
             PermissionProfile::workspace_write_with(
                 &[],
                 NetworkSandboxPolicy::Enabled,
                 /*exclude_tmpdir_env_var*/ false,
                 /*exclude_slash_tmp*/ false,
             ),
-            ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE),
-        ))
+            Some(ActivePermissionProfile::new(
+                BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
+            )),
+        )
         .expect("set permission profile");
 
     assert_eq!(
@@ -526,10 +527,10 @@ async fn status_permissions_user_defined_profile_shows_name() {
     let mut config = test_config(&temp_home).await;
     config
         .permissions
-        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        .set_permission_profile_with_active_profile(
             PermissionProfile::read_only(),
-            ActivePermissionProfile::new("locked"),
-        ))
+            Some(ActivePermissionProfile::new("locked")),
+        )
         .expect("set permission profile");
 
     assert_eq!(
@@ -546,10 +547,10 @@ async fn status_snapshot_shows_active_user_defined_profile() {
     set_workspace_cwd(&mut config, test_path_buf("/workspace/tests").abs());
     config
         .permissions
-        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        .set_permission_profile_with_active_profile(
             PermissionProfile::read_only(),
-            ActivePermissionProfile::new("locked"),
-        ))
+            Some(ActivePermissionProfile::new("locked")),
+        )
         .expect("set permission profile");
 
     let usage = TokenUsage::default();
@@ -701,10 +702,12 @@ async fn status_snapshot_shows_auto_review_permissions() {
     config.approvals_reviewer = ApprovalsReviewer::AutoReview;
     config
         .permissions
-        .set_permission_profile_from_session_snapshot(PermissionProfileSnapshot::active(
+        .set_permission_profile_with_active_profile(
             PermissionProfile::workspace_write(),
-            ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE),
-        ))
+            Some(ActivePermissionProfile::new(
+                BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
+            )),
+        )
         .expect("set permission profile");
 
     let usage = TokenUsage::default();

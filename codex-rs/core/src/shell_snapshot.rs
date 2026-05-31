@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::process::Stdio;
@@ -10,6 +11,7 @@ use crate::rollout::list::find_thread_path_by_id_str;
 use crate::shell::Shell;
 use crate::shell::ShellType;
 use crate::shell::get_shell;
+use crate::shell_startup_files::apply_shell_startup_files_env;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -287,6 +289,9 @@ async fn run_script_with_timeout(
     // returns a ref of handler.
     let mut handler = Command::new(&args[0]);
     handler.args(&args[1..]);
+    let mut shell_startup_env = HashMap::new();
+    apply_shell_startup_files_env(&mut shell_startup_env, shell.shell_type.clone());
+    handler.envs(shell_startup_env);
     handler.stdin(Stdio::null());
     handler.current_dir(cwd);
     #[cfg(unix)]

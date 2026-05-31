@@ -466,6 +466,7 @@ pub(crate) async fn execute_exec_request(
         network_sandbox_policy,
         windows_sandbox_filesystem_overrides,
         arg0,
+        run_as,
     } = exec_request;
 
     let params = ExecParams {
@@ -488,6 +489,7 @@ pub(crate) async fn execute_exec_request(
         network_sandbox_policy,
         stdout_stream,
         after_spawn,
+        run_as,
         sandbox,
         &permission_profile,
         &windows_sandbox_policy_cwd,
@@ -505,6 +507,7 @@ async fn get_raw_output_result(
     network_sandbox_policy: NetworkSandboxPolicy,
     stdout_stream: Option<StdoutStream>,
     after_spawn: Option<Box<dyn FnOnce() + Send>>,
+    run_as: Option<crate::spawn::RunAsUser>,
     #[cfg_attr(not(windows), allow(unused_variables))] sandbox: SandboxType,
     #[cfg_attr(not(windows), allow(unused_variables))] permission_profile: &PermissionProfile,
     #[cfg_attr(not(windows), allow(unused_variables))] windows_sandbox_policy_cwd: &AbsolutePathBuf,
@@ -526,7 +529,14 @@ async fn get_raw_output_result(
         .await;
     }
 
-    exec(params, network_sandbox_policy, stdout_stream, after_spawn).await
+    exec(
+        params,
+        network_sandbox_policy,
+        stdout_stream,
+        after_spawn,
+        run_as,
+    )
+    .await
 }
 
 #[cfg(target_os = "windows")]
@@ -954,6 +964,7 @@ async fn exec(
     network_sandbox_policy: NetworkSandboxPolicy,
     stdout_stream: Option<StdoutStream>,
     after_spawn: Option<Box<dyn FnOnce() + Send>>,
+    run_as: Option<crate::spawn::RunAsUser>,
 ) -> Result<RawExecToolCallOutput> {
     let ExecParams {
         command,
@@ -995,6 +1006,7 @@ async fn exec(
         network: None,
         stdio_policy: StdioPolicy::RedirectForShellTool,
         env,
+        run_as,
     })
     .await?;
     if let Some(after_spawn) = after_spawn {

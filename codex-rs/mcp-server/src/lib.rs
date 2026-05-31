@@ -6,7 +6,9 @@ use std::io::Result as IoResult;
 use std::sync::Arc;
 
 use codex_arg0::Arg0DispatchPaths;
-use codex_core::config::ConfigBuilder;
+use codex_core::config::Config;
+use codex_core::config_loader::LoaderOverrides;
+use codex_core::init_state_db;
 use codex_core::resolve_installation_id;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
@@ -59,8 +61,21 @@ type IncomingMessage = JsonRpcMessage<ClientRequest, Value, ClientNotification>;
 pub async fn run_main(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
-    strict_config: bool,
+    loader_overrides: LoaderOverrides,
 ) -> IoResult<()> {
+    let environment_manager = Arc::new(
+        EnvironmentManager::from_env(Some(ExecServerRuntimePaths::from_optional_paths(
+            arg0_paths.codex_self_exe.clone(),
+            arg0_paths.codex_linux_sandbox_exe.clone(),
+        )?))
+        .await
+        .map_err(|err| {
+            std::io::Error::new(
+                ErrorKind::InvalidData,
+                format!("error creating environment manager: {err}"),
+            )
+        })?,
+    );
     // Parse CLI overrides once and derive the base Config eagerly so later
     // components do not need to work with raw TOML values.
     let cli_kv_overrides = cli_config_overrides.parse_overrides().map_err(|e| {
@@ -69,15 +84,23 @@ pub async fn run_main(
             format!("error parsing -c overrides: {e}"),
         )
     })?;
-    let config = ConfigBuilder::default()
-        .cli_overrides(cli_kv_overrides)
-        .strict_config(strict_config)
-        .build()
+    let config =
+        Config::load_with_cli_overrides_and_loader_overrides(cli_kv_overrides, loader_overrides)
+            .await
+            .map_err(|e| {
+                std::io::Error::new(ErrorKind::InvalidData, format!("error loading config: {e}"))
+            })?;
+    let state_db = init_state_db(&config).await;
+    let installation_id = resolve_installation_id(&config.codex_home)
         .await
-        .map_err(|e| {
-            std::io::Error::new(ErrorKind::InvalidData, format!("error loading config: {e}"))
+        .map_err(|err| {
+            std::io::Error::new(
+                ErrorKind::InvalidData,
+                format!("error resolving installation id: {err}"),
+            )
         })?;
     set_default_client_residency_requirement(config.enforce_residency.value());
+
     let otel = codex_core::otel_init::build_provider(
         &config,
         env!("CARGO_PKG_VERSION"),
@@ -90,20 +113,6 @@ pub async fn run_main(
             format!("error loading otel config: {e}"),
         )
     })?;
-    codex_core::otel_init::record_process_start(otel.as_ref(), OTEL_SERVICE_NAME);
-    codex_core::otel_init::install_sqlite_telemetry(otel.as_ref(), OTEL_SERVICE_NAME);
-    let state_db = codex_core::init_state_db(&config).await;
-    let environment_manager = Arc::new(
-        EnvironmentManager::from_codex_home(
-            config.codex_home.clone(),
-            Some(ExecServerRuntimePaths::from_optional_paths(
-                arg0_paths.codex_self_exe.clone(),
-                arg0_paths.codex_linux_sandbox_exe.clone(),
-            )?),
-        )
-        .await
-        .map_err(std::io::Error::other)?,
-    );
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
@@ -120,7 +129,6 @@ pub async fn run_main(
     // Set up channels.
     let (incoming_tx, mut incoming_rx) = mpsc::channel::<IncomingMessage>(CHANNEL_CAPACITY);
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<OutgoingMessage>();
-    let installation_id = resolve_installation_id(&config.codex_home).await?;
 
     // Task: read from stdin, push to `incoming_tx`.
     let stdin_reader_handle = tokio::spawn({

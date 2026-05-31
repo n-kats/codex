@@ -633,13 +633,13 @@ impl ChatWidget {
                 format_tokens_compact(self.status_line_total_usage().output_tokens)
             )),
             StatusLineItem::SessionId => self.thread_id.map(|id| id.to_string()),
-            StatusLineItem::FastMode => Some(
-                if self.current_service_tier() == Some(ServiceTier::Fast.request_value()) {
+            StatusLineItem::FastMode => {
+                Some(if self.current_service_tier() == Some(ServiceTier::Fast) {
                     "Fast on".to_string()
                 } else {
                     "Fast off".to_string()
-                },
-            ),
+                })
+            }
             StatusLineItem::RawOutput => self.raw_output_mode().then(|| "raw output".to_string()),
             StatusLineItem::ThreadTitle => self.thread_name.as_ref().map_or_else(
                 || self.thread_id.map(|id| id.to_string()),
@@ -770,7 +770,7 @@ impl ChatWidget {
             .and_then(|service_tier| {
                 self.current_model_service_tier_commands()
                     .into_iter()
-                    .find(|tier| tier.id == service_tier)
+                    .find(|tier| tier.id == service_tier.request_value())
                     .map(|tier| tier.name)
             })
             .filter(|_| self.has_chatgpt_account)
@@ -788,7 +788,7 @@ impl ChatWidget {
             return "Starting".to_string();
         }
 
-        match self.status_state.terminal_title_status_kind {
+        match self.terminal_title_status_kind {
             TerminalTitleStatusKind::Working if !self.bottom_pane.is_task_running() => {
                 "Ready".to_string()
             }
@@ -864,7 +864,7 @@ impl ChatWidget {
 
     /// Formats the last `update_plan` progress snapshot for terminal-title display.
     pub(super) fn terminal_title_task_progress(&self) -> Option<String> {
-        let (completed, total) = self.transcript.last_plan_progress?;
+        let (completed, total) = self.last_plan_progress?;
         if total == 0 {
             return None;
         }
@@ -980,7 +980,7 @@ fn non_weekly_secondary_window_when_primary_is_weekly(
 fn matches_window_label(window: &RateLimitWindowDisplay, label: &str) -> bool {
     window
         .window_minutes
-        .and_then(get_limits_duration)
+        .and_then(crate::chatwidget::rate_limits::get_limits_duration)
         .as_deref()
         == Some(label)
 }
@@ -993,10 +993,8 @@ fn permissions_display(config: &Config) -> String {
         return active_permission_profile.id.clone();
     }
 
-    let permission_profile = config.permissions.effective_permission_profile();
-    let workspace_roots = config.effective_workspace_roots();
-    let summary =
-        summarize_permission_profile(&permission_profile, &config.cwd, workspace_roots.as_slice());
+    let permission_profile = config.permissions.permission_profile();
+    let summary = summarize_permission_profile(&permission_profile, &config.cwd, &[]);
     if let Some(details) = summary.strip_prefix("read-only")
         && !details.contains("(network access enabled)")
     {

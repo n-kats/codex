@@ -74,7 +74,14 @@ fn build_collaboration_mode_update_item(
     previous: Option<&TurnContextItem>,
     next: &TurnContext,
 ) -> Option<String> {
-    if !next.config.include_collaboration_mode_instructions {
+    let include_collaboration_mode_instructions = next
+        .config
+        .config_layer_stack
+        .effective_config()
+        .get("include_collaboration_mode_instructions")
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(true);
+    if !include_collaboration_mode_instructions {
         return None;
     }
 

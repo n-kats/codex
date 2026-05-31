@@ -13,7 +13,10 @@ impl App {
             return;
         };
 
-        let service_tier = self.chat_widget.current_service_tier().map(str::to_string);
+        let service_tier = self
+            .chat_widget
+            .current_service_tier()
+            .map(|tier| tier.request_value().to_string());
         let update_session = |session: &mut ThreadSessionState| {
             session.service_tier = service_tier.clone();
         };
@@ -94,7 +97,10 @@ impl App {
                 thread_name: None,
                 model: self.chat_widget.current_model().to_string(),
                 model_provider_id: self.config.model_provider_id.clone(),
-                service_tier: self.chat_widget.current_service_tier().map(str::to_string),
+                service_tier: self
+                    .chat_widget
+                    .current_service_tier()
+                    .map(|service_tier| service_tier.request_value().to_string()),
                 approval_policy: AskForApproval::from(
                     self.config.permissions.approval_policy.value(),
                 ),
@@ -102,7 +108,7 @@ impl App {
                 permission_profile: permission_profile.clone(),
                 active_permission_profile: active_permission_profile.clone(),
                 cwd: thread.cwd.clone(),
-                runtime_workspace_roots: self.config.workspace_roots.clone(),
+                runtime_workspace_roots: Vec::new(),
                 instruction_source_paths: Vec::new(),
                 reasoning_effort: self.chat_widget.current_reasoning_effort(),
                 collaboration_mode: None,
@@ -121,7 +127,7 @@ impl App {
         session.instruction_source_paths = Vec::new();
         session.rollout_path = thread.path.clone();
         if let Some(model) =
-            read_session_model(self.state_db.as_deref(), thread_id, thread.path.as_deref()).await
+            read_session_model(&self.config, thread_id, thread.path.as_deref()).await
         {
             session.model = model;
         } else if thread.path.is_some() {
@@ -150,10 +156,10 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::PermissionProfileSnapshot;
     use crate::app::side::SideThreadState;
     use crate::app::test_support::make_test_app;
     use crate::app::thread_events::ThreadEventChannel;
-    use crate::legacy_core::config::PermissionProfileSnapshot;
     use crate::test_support::PathBufExt;
     use crate::test_support::test_path_buf;
     use codex_app_server_protocol::AskForApproval;

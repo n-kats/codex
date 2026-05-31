@@ -84,7 +84,8 @@ async fn handle_spawn_agent(
     let mut config =
         build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref())?;
     if let Some(service_tier) = args.service_tier.as_ref() {
-        config.service_tier = Some(service_tier.clone());
+        config.service_tier =
+            codex_protocol::config_types::ServiceTier::from_request_value(service_tier);
     }
     if args.fork_context {
         reject_full_fork_spawn_overrides(role_name, args.model.as_deref(), args.reasoning_effort)?;
@@ -104,7 +105,7 @@ async fn handle_spawn_agent(
     apply_spawn_agent_service_tier(
         &session,
         &mut config,
-        turn.config.service_tier.as_deref(),
+        turn.config.service_tier.as_ref(),
         args.service_tier.as_deref(),
     )
     .await?;

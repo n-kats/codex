@@ -18,7 +18,6 @@ use crate::app_event::WindowsSandboxEnableMode;
 use crate::app_event_sender::AppEventSender;
 use crate::app_server_session::AppServerSession;
 use crate::app_server_session::AppServerStartedThread;
-use crate::app_server_session::TurnPermissionsOverride;
 use crate::app_server_session::app_server_rate_limit_snapshots;
 use crate::bottom_pane::AppLinkViewParams;
 use crate::bottom_pane::ApprovalRequest;
@@ -49,7 +48,6 @@ use crate::keymap::RuntimeKeymap;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
-use crate::legacy_core::config::PermissionProfileSnapshot;
 use crate::legacy_core::config::edit::ConfigEditsBuilder;
 #[cfg(target_os = "windows")]
 use crate::legacy_core::windows_sandbox::WindowsSandboxLevelExt;
@@ -206,7 +204,7 @@ mod history_ui;
 mod input;
 mod loaded_threads;
 mod pending_interactive_replay;
-mod pets;
+pub(crate) mod pets;
 mod platform_actions;
 mod plugin_mentions;
 mod replay_filter;
@@ -609,7 +607,7 @@ fn spawn_startup_thread_start(
     let thread_params_mode = app_server.thread_params_mode();
     let remote_cwd_override = app_server.remote_cwd_override().map(Path::to_path_buf);
     tokio::spawn(async move {
-        let result = crate::app_server_session::start_thread_with_request_handle(
+        let result = AppServerSession::start_thread_with_request_handle(
             request_handle,
             config,
             thread_params_mode,
@@ -688,7 +686,6 @@ impl App {
             config: cfg,
             frame_requester: tui.frame_requester(),
             app_event_tx: self.app_event_tx.clone(),
-            workspace_command_runner: self.workspace_command_runner.clone(),
             initial_user_message,
             enhanced_keys_supported: self.enhanced_keys_supported,
             has_chatgpt_account: self.chat_widget.has_chatgpt_account(),
@@ -705,6 +702,7 @@ impl App {
             startup_tooltip_override: None,
             status_line_invalid_items_warned: self.status_line_invalid_items_warned.clone(),
             terminal_title_invalid_items_warned: self.terminal_title_invalid_items_warned.clone(),
+            workspace_command_runner: self.workspace_command_runner.clone(),
             session_telemetry: self.session_telemetry.clone(),
         }
     }
@@ -779,10 +777,6 @@ impl App {
         let bootstrap_ms = bootstrap_started_at.elapsed().as_millis();
         let mut model = bootstrap.default_model;
         let available_models = bootstrap.available_models;
-        let remote_connection = crate::status::remote_connection::remote_connection_status_value(
-            &app_server_target,
-            app_server.server_version(),
-        );
         let exit_info = handle_model_migration_prompt_if_needed(
             tui,
             &mut config,
@@ -867,7 +861,6 @@ impl App {
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
                     app_event_tx: app_event_tx.clone(),
-                    workspace_command_runner: Some(workspace_command_runner.clone()),
                     initial_user_message: crate::chatwidget::create_initial_user_message(
                         initial_prompt.clone(),
                         initial_images.clone(),
@@ -887,6 +880,7 @@ impl App {
                     status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
                     terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
                         .clone(),
+                    workspace_command_runner: Some(workspace_command_runner.clone()),
                     session_telemetry: session_telemetry.clone(),
                 };
                 let mut chat_widget = ChatWidget::new_with_app_event(init);
@@ -902,7 +896,6 @@ impl App {
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
                     app_event_tx: app_event_tx.clone(),
-                    workspace_command_runner: Some(workspace_command_runner.clone()),
                     initial_user_message: crate::chatwidget::create_initial_user_message(
                         initial_prompt.clone(),
                         initial_images.clone(),
@@ -922,6 +915,7 @@ impl App {
                     status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
                     terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
                         .clone(),
+                    workspace_command_runner: Some(workspace_command_runner.clone()),
                     session_telemetry: session_telemetry.clone(),
                 };
                 (ChatWidget::new_with_app_event(init), Some(resumed))
@@ -940,7 +934,6 @@ impl App {
                     config: config.clone(),
                     frame_requester: tui.frame_requester(),
                     app_event_tx: app_event_tx.clone(),
-                    workspace_command_runner: Some(workspace_command_runner.clone()),
                     initial_user_message: crate::chatwidget::create_initial_user_message(
                         initial_prompt.clone(),
                         initial_images.clone(),
@@ -960,12 +953,12 @@ impl App {
                     status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
                     terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
                         .clone(),
+                    workspace_command_runner: Some(workspace_command_runner.clone()),
                     session_telemetry: session_telemetry.clone(),
                 };
                 (ChatWidget::new_with_app_event(init), Some(forked))
             }
         };
-        chat_widget.remote_connection = remote_connection;
         let thread_and_widget_ms = thread_and_widget_started_at.elapsed().as_millis();
         if let Some(message) = external_agent_config_migration_message {
             chat_widget.add_info_message(message, /*hint*/ None);
@@ -1053,7 +1046,7 @@ See the Codex keymap documentation for supported actions and examples."
         // world-writable dirs on Windows.
         #[cfg(target_os = "windows")]
         {
-            let startup_permission_profile = app.config.permissions.effective_permission_profile();
+            let startup_permission_profile = app.config.permissions.permission_profile();
             let should_check = WindowsSandboxLevel::from_config(&app.config)
                 != WindowsSandboxLevel::Disabled
                 && managed_filesystem_sandbox_is_restricted(&startup_permission_profile)

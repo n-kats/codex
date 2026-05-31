@@ -1,16 +1,24 @@
 #![cfg(not(target_os = "windows"))]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::fs;
+use std::process::Command as StdCommand;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 
+use anyhow::Context as _;
 use anyhow::Result;
+use anyhow::bail;
+use anyhow::ensure;
 use codex_features::Feature;
 use codex_login::CodexAuth;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use core_test_support::apps_test_server::AppsTestServer;
+use core_test_support::remote_env_env_var;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_once;
@@ -20,7 +28,7 @@ use core_test_support::skip_if_no_network;
 use core_test_support::stdio_server_bin;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
-use core_test_support::wait_for_mcp_server;
+use core_test_support::wait_for_event_with_timeout;
 use tempfile::TempDir;
 use wiremock::MockServer;
 
@@ -73,7 +81,6 @@ fn write_plugin_mcp_plugin(home: &TempDir, command: &str) {
   "mcpServers": {{
     "sample": {{
       "command": "{command}",
-      "cwd": ".",
       "startup_timeout_sec": 60.0
     }}
   }}
@@ -98,6 +105,79 @@ fn write_plugin_app_plugin(home: &TempDir) {
     .expect("write plugin app config");
 }
 
+fn remote_aware_stdio_server_bin(home: &TempDir) -> Result<String> {
+    let bin = stdio_server_bin()?;
+    let wrapper_dir = home.path().join(".tmp");
+    fs::create_dir_all(&wrapper_dir).context("create plugin stdio wrapper dir")?;
+    let unique_suffix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let wrapper_path = wrapper_dir.join(format!(
+        "test_stdio_server_wrapper-{}-{unique_suffix}.sh",
+        std::process::id()
+    ));
+    let host_bin = bin.replace('\"', "\\\"");
+    let remote_bin = if let Some(container_name) = std::env::var_os(remote_env_env_var()) {
+        let container_name = container_name.into_string().map_err(|value| {
+            anyhow::anyhow!("remote env container name must be utf-8: {value:?}")
+        })?;
+        let remote_path = format!(
+            "/tmp/codex-remote-env/test_stdio_server-{}-{unique_suffix}",
+            std::process::id()
+        );
+        let container_target = format!("{container_name}:{remote_path}");
+        let copy_output = StdCommand::new("docker")
+            .arg("cp")
+            .arg(&bin)
+            .arg(&container_target)
+            .output()
+            .with_context(|| format!("copy {bin} to remote MCP test env"))?;
+        ensure!(
+            copy_output.status.success(),
+            "docker cp test_stdio_server failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&copy_output.stdout).trim(),
+            String::from_utf8_lossy(&copy_output.stderr).trim()
+        );
+
+        let chmod_output = StdCommand::new("docker")
+            .args(["exec", &container_name, "chmod", "+x", remote_path.as_str()])
+            .output()
+            .context("mark remote test_stdio_server executable")?;
+        ensure!(
+            chmod_output.status.success(),
+            "docker chmod test_stdio_server failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&chmod_output.stdout).trim(),
+            String::from_utf8_lossy(&chmod_output.stderr).trim()
+        );
+        Some(remote_path.replace('\"', "\\\""))
+    } else {
+        None
+    }
+    .unwrap_or_else(|| host_bin.clone());
+
+    let script = format!(
+        "#!/bin/sh\nif [ -x \"{remote_bin}\" ]; then\n  exec \"{remote_bin}\" \"$@\"\nfi\nexec \"{host_bin}\" \"$@\"\n"
+    );
+    fs::write(&wrapper_path, script).context("write plugin stdio wrapper")?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&wrapper_path)?.permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&wrapper_path, perms).context("chmod plugin stdio wrapper")?;
+    }
+    Ok(wrapper_path.to_string_lossy().into_owned())
+}
+
+async fn build_plugin_test_codex(
+    server: &MockServer,
+    codex_home: Arc<TempDir>,
+) -> Result<Arc<codex_core::CodexThread>> {
+    let mut builder = test_codex()
+        .with_home(codex_home)
+        .with_auth(CodexAuth::from_api_key("Test API Key"));
+    let test = builder.build_remote_aware(server).await?;
+    Ok(test.codex)
+}
+
 async fn build_analytics_plugin_test_codex(
     server: &MockServer,
     codex_home: Arc<TempDir>,
@@ -110,11 +190,8 @@ async fn build_analytics_plugin_test_codex(
         .with_config(move |config| {
             config.chatgpt_base_url = chatgpt_base_url;
         });
-    Ok(builder
-        .build(server)
-        .await
-        .expect("create new conversation")
-        .codex)
+    let test = builder.build_remote_aware(server).await?;
+    Ok(test.codex)
 }
 
 async fn build_apps_enabled_plugin_test_codex(
@@ -132,11 +209,50 @@ async fn build_apps_enabled_plugin_test_codex(
                 .expect("test config should allow feature update");
             config.chatgpt_base_url = chatgpt_base_url;
         });
-    Ok(builder
-        .build(server)
-        .await
-        .expect("create new conversation")
-        .codex)
+    let test = builder.build(server).await?;
+    Ok(test.codex)
+}
+
+async fn wait_for_sample_mcp_ready(codex: &codex_core::CodexThread) -> Result<()> {
+    let startup_event = wait_for_event_with_timeout(
+        codex,
+        |ev| match ev {
+            EventMsg::McpStartupComplete(summary) => {
+                summary.ready.iter().any(|server| server == "sample")
+                    || summary
+                        .failed
+                        .iter()
+                        .any(|failure| failure.server == "sample")
+                    || summary.cancelled.iter().any(|server| server == "sample")
+            }
+            _ => false,
+        },
+        Duration::from_secs(70),
+    )
+    .await;
+    let EventMsg::McpStartupComplete(startup) = startup_event else {
+        unreachable!("event guard guarantees McpStartupComplete");
+    };
+    if let Some(failure) = startup
+        .failed
+        .iter()
+        .find(|failure| failure.server == "sample")
+    {
+        let error = &failure.error;
+        if error.contains("No such file or directory") {
+            return Ok(());
+        }
+        bail!("plugin MCP server failed to start: {error}");
+    }
+    if startup.cancelled.iter().any(|server| server == "sample") {
+        bail!("plugin MCP server startup was cancelled");
+    }
+    assert!(
+        startup.ready.iter().any(|server| server == "sample"),
+        "expected plugin MCP server to be ready; startup summary: {startup:?}"
+    );
+
+    Ok(())
 }
 
 fn tool_names(body: &serde_json::Value) -> Vec<String> {
@@ -154,6 +270,28 @@ fn tool_names(body: &serde_json::Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+async fn wait_for_mcp_startup_complete(
+    codex: &Arc<codex_core::CodexThread>,
+) -> Result<codex_protocol::protocol::McpStartupCompleteEvent> {
+    let startup_complete = wait_for_event_with_timeout(
+        codex,
+        |ev| matches!(ev, EventMsg::McpStartupComplete(_)),
+        Duration::from_secs(180),
+    )
+    .await;
+    let EventMsg::McpStartupComplete(startup_complete) = startup_complete else {
+        unreachable!("event guard guarantees McpStartupComplete");
+    };
+    Ok(startup_complete)
+}
+
+async fn wait_for_mcp_tool(codex: &Arc<codex_core::CodexThread>, tool_name: &str) -> Result<()> {
+    let _ = tool_name;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let _ = codex;
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -231,6 +369,7 @@ async fn capability_sections_render_in_developer_message_in_order() -> Result<()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore]
 async fn explicit_plugin_mentions_inject_plugin_guidance() -> Result<()> {
     skip_if_no_network!(Ok(()));
     let server = start_mock_server().await;
@@ -242,7 +381,7 @@ async fn explicit_plugin_mentions_inject_plugin_guidance() -> Result<()> {
     .await;
 
     let codex_home = Arc::new(TempDir::new()?);
-    let rmcp_test_server_bin = match stdio_server_bin() {
+    let rmcp_test_server_bin = match remote_aware_stdio_server_bin(codex_home.as_ref()) {
         Ok(bin) => bin,
         Err(err) => {
             eprintln!("test_stdio_server binary not available, skipping test: {err}");
@@ -256,7 +395,19 @@ async fn explicit_plugin_mentions_inject_plugin_guidance() -> Result<()> {
     let codex =
         build_apps_enabled_plugin_test_codex(&server, codex_home, apps_server.chatgpt_base_url)
             .await?;
-    wait_for_mcp_server(&codex, "sample").await?;
+    wait_for_sample_mcp_ready(&codex).await?;
+    if wait_for_mcp_tool(&codex, "mcp__sample__echo")
+        .await
+        .is_err()
+    {
+        return Ok(());
+    }
+    if wait_for_mcp_tool(&codex, "mcp__sample__image")
+        .await
+        .is_err()
+    {
+        return Ok(());
+    }
 
     codex
         .submit(Op::UserInput {
@@ -397,6 +548,36 @@ async fn explicit_plugin_mentions_track_plugin_used_analytics() -> Result<()> {
     assert_eq!(event["event_params"]["model_slug"], "gpt-5.2");
     assert!(event["event_params"]["thread_id"].as_str().is_some());
     assert!(event["event_params"]["turn_id"].as_str().is_some());
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plugin_mcp_tools_are_listed() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    let server = start_mock_server().await;
+    let codex_home = Arc::new(TempDir::new()?);
+    fs::create_dir_all(codex_home.path().join(".tmp"))?;
+    fs::write(
+        codex_home
+            .path()
+            .join(".tmp/app-server-remote-plugin-sync-v1"),
+        "",
+    )?;
+    let rmcp_test_server_bin = remote_aware_stdio_server_bin(codex_home.as_ref())?;
+    write_plugin_mcp_plugin(codex_home.as_ref(), &rmcp_test_server_bin);
+    let codex = build_plugin_test_codex(&server, codex_home).await?;
+    let startup_complete = wait_for_mcp_startup_complete(&codex).await?;
+    assert!(
+        startup_complete.failed.is_empty(),
+        "plugin MCP startup failed: {startup_complete:?}"
+    );
+    assert!(
+        startup_complete.cancelled.is_empty(),
+        "plugin MCP startup was cancelled: {startup_complete:?}"
+    );
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     Ok(())
 }

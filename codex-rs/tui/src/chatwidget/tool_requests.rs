@@ -122,14 +122,10 @@ impl ChatWidget {
         // Terminal assessments remove the matching pending footer entry first,
         // then render the final approved/denied history cell below.
         if self
-            .status_state
             .pending_guardian_review_status
             .finish(&ev.id)
         {
-            if let Some(status) = self
-                .status_state
-                .pending_guardian_review_status
-                .status_indicator_state()
+            if let Some(status) = self.pending_guardian_review_status.status_indicator_state()
             {
                 self.set_status(
                     status.header,
@@ -137,11 +133,11 @@ impl ChatWidget {
                     StatusDetailsCapitalization::Preserve,
                     status.details_max_lines,
                 );
-            } else if self.status_state.current_status.is_guardian_review() {
+            } else if self.current_status.is_guardian_review() {
                 self.set_status_header(String::from("Working"));
             }
-        } else if self.status_state.pending_guardian_review_status.is_empty()
-            && self.status_state.current_status.is_guardian_review()
+        } else if self.pending_guardian_review_status.is_empty()
+            && self.current_status.is_guardian_review()
         {
             self.set_status_header(String::from("Working"));
         }

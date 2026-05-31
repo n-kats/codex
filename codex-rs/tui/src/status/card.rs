@@ -266,8 +266,8 @@ impl StatusHistoryCell {
         refreshing_rate_limits: bool,
     ) -> (Self, StatusHistoryHandle) {
         let approval_policy = AskForApproval::from(config.permissions.approval_policy.value());
-        let permission_profile = config.permissions.effective_permission_profile();
-        let workspace_roots = config.effective_workspace_roots();
+        let permission_profile = config.permissions.permission_profile();
+        let workspace_roots = Vec::new();
         let mut config_entries = vec![
             ("workdir", config.cwd.display().to_string()),
             ("model", model_name.to_string()),

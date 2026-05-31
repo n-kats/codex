@@ -391,6 +391,7 @@ fn external_auth_tokens_without_chatgpt_metadata_cannot_seed_chatgpt_auth() {
 }
 
 #[tokio::test]
+#[serial(codex_auth_env)]
 async fn external_bearer_only_auth_manager_uses_cached_provider_token() {
     let script = ProviderAuthScript::new(&["provider-token", "next-token"]).unwrap();
     let manager = AuthManager::external_bearer_only(script.auth_config());
@@ -411,6 +412,7 @@ async fn external_bearer_only_auth_manager_uses_cached_provider_token() {
 }
 
 #[tokio::test]
+#[serial(codex_auth_env)]
 async fn external_bearer_only_auth_manager_disables_auto_refresh_when_interval_is_zero() {
     let script = ProviderAuthScript::new(&["provider-token", "next-token"]).unwrap();
     let mut auth_config = script.auth_config();
@@ -431,6 +433,7 @@ async fn external_bearer_only_auth_manager_disables_auto_refresh_when_interval_i
 }
 
 #[tokio::test]
+#[serial(codex_auth_env)]
 async fn external_bearer_only_auth_manager_returns_none_when_command_fails() {
     let script = ProviderAuthScript::new_failing().unwrap();
     let manager = AuthManager::external_bearer_only(script.auth_config());
@@ -439,6 +442,7 @@ async fn external_bearer_only_auth_manager_returns_none_when_command_fails() {
 }
 
 #[tokio::test]
+#[serial(codex_auth_env)]
 async fn unauthorized_recovery_uses_external_refresh_for_bearer_manager() {
     let script = ProviderAuthScript::new(&["provider-token", "refreshed-provider-token"]).unwrap();
     let mut auth_config = script.auth_config();
@@ -588,7 +592,7 @@ exit 1
             "args": self.args,
             // Process startup can be slow on loaded Windows CI workers, so leave enough slack to
             // avoid turning these auth-cache assertions into a process-launch timing test.
-            "timeout_ms": 10_000,
+            "timeout_ms": 30_000,
             "refresh_interval_ms": 60000,
             "cwd": self.tempdir.path(),
         }))

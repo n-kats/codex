@@ -186,6 +186,7 @@ impl ToolExecutor<ToolInvocation> for ShellCommandHandler {
         run_exec_like(RunExecLikeArgs {
             tool_name,
             exec_params,
+            freeform: false,
             cancellation_token,
             hook_command: params.command,
             shell_type,

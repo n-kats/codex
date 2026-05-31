@@ -23,9 +23,10 @@ impl ChatWidget {
         &mut self,
         snapshot: PermissionProfileSnapshot,
     ) -> ConstraintResult<()> {
-        self.config
-            .permissions
-            .set_permission_profile_from_session_snapshot(snapshot)?;
+        self.config.permissions.set_permission_profile_with_active_profile(
+            snapshot.permission_profile().clone(),
+            snapshot.active_permission_profile(),
+        )?;
         self.refresh_status_surfaces();
         Ok(())
     }
@@ -37,12 +38,7 @@ impl ChatWidget {
     ) -> ConstraintResult<()> {
         self.config
             .permissions
-            .set_permission_profile_from_session_snapshot(
-                PermissionProfileSnapshot::from_session_snapshot(
-                    profile,
-                    active_permission_profile,
-                ),
-            )?;
+            .set_permission_profile_with_active_profile(profile, active_permission_profile)?;
         self.refresh_status_surfaces();
         Ok(())
     }
@@ -520,26 +516,15 @@ impl ChatWidget {
             &settings.sandbox_policy.to_core(),
             settings.cwd.as_path(),
         );
-        let permission_snapshot = PermissionProfileSnapshot::from_session_snapshot(
+        if let Err(err) = self.config.permissions.set_permission_profile_with_active_profile(
             permission_profile,
             settings.active_permission_profile.take().map(Into::into),
-        );
-        if let Err(err) = self
-            .config
-            .permissions
-            .set_permission_profile_from_session_snapshot(permission_snapshot.clone())
-        {
+        ) {
             tracing::warn!(%err, "failed to sync permissions from ThreadSettingsUpdated");
-            if let Err(replace_err) = self
-                .config
-                .permissions
-                .replace_permission_profile_from_session_snapshot(permission_snapshot)
-            {
-                tracing::error!(
-                    %replace_err,
-                    "failed to replace permissions from ThreadSettingsUpdated after constraint fallback"
-                );
-            }
+            tracing::error!(
+                %err,
+                "failed to replace permissions from ThreadSettingsUpdated after constraint fallback"
+            );
         }
 
         settings.collaboration_mode.settings.model = settings.model;

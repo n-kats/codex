@@ -1128,6 +1128,7 @@ async fn resume_candidate_matches_cwd_reads_latest_turn_context() -> std::io::Re
         timestamp: "2025-01-03T13:00:01Z".to_string(),
         item: RolloutItem::TurnContext(TurnContextItem {
             turn_id: Some("turn-1".to_string()),
+            trace_id: None,
             cwd: latest_cwd.clone(),
             workspace_roots: None,
             current_date: None,
@@ -1143,6 +1144,10 @@ async fn resume_candidate_matches_cwd_reads_latest_turn_context() -> std::io::Re
             realtime_active: None,
             effort: None,
             summary: codex_protocol::config_types::ReasoningSummary::Auto,
+            user_instructions: None,
+            developer_instructions: None,
+            final_output_json_schema: None,
+            truncation_policy: None,
         }),
     };
     writeln!(file, "{}", serde_json::to_string(&turn_context)?)?;

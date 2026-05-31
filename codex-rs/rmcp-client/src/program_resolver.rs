@@ -66,39 +66,40 @@ mod tests {
     use crate::utils::create_env_for_mcp_server;
     use anyhow::Result;
     use std::fs;
+    use std::io::ErrorKind;
     use std::path::Path;
     use tempfile::TempDir;
     use tokio::process::Command;
+    use tokio::time::Duration;
+    use tokio::time::sleep;
 
     /// Unix: Verifies the OS handles script execution without file extensions.
     #[cfg(unix)]
     #[tokio::test]
     async fn test_unix_executes_script_without_extension() -> Result<()> {
         let env = TestExecutableEnv::new()?;
-        // Linux can transiently report ETXTBSY while the freshly written test
-        // script is becoming executable on the backing filesystem.
-        let mut retries = 0;
-        let output = loop {
-            let mut cmd = Command::new(&env.program_name);
-            cmd.envs(&env.mcp_env);
+        let mut cmd = Command::new(&env.program_name);
+        cmd.envs(&env.mcp_env);
 
-            let output = cmd.output().await;
-            if !output
-                .as_ref()
-                .is_err_and(|err| err.kind() == std::io::ErrorKind::ExecutableFileBusy)
-                || retries == 2
-            {
-                break output;
+        let mut last_error = None;
+        for _ in 0..5 {
+            match cmd.output().await {
+                Ok(output) => {
+                    assert!(
+                        output.status.success(),
+                        "Unix should execute PATH-resolved scripts directly: {output:?}"
+                    );
+                    return Ok(());
+                }
+                Err(err) if err.kind() == ErrorKind::ExecutableFileBusy => {
+                    last_error = Some(err);
+                    sleep(Duration::from_millis(50)).await;
+                }
+                Err(err) => return Err(err.into()),
             }
-            retries += 1;
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        };
+        }
 
-        assert!(
-            output.is_ok(),
-            "Unix should execute PATH-resolved scripts directly: {output:?}"
-        );
-        Ok(())
+        panic!("Unix should execute PATH-resolved scripts directly: {last_error:?}");
     }
 
     /// Windows: Verifies scripts fail to execute without the proper extension.
@@ -147,13 +148,25 @@ mod tests {
         // Verify resolved path executes successfully
         let mut cmd = Command::new(resolved);
         cmd.envs(&env.mcp_env);
-        let output = cmd.output().await;
+        let mut last_error = None;
+        for _ in 0..5 {
+            match cmd.output().await {
+                Ok(output) => {
+                    assert!(
+                        output.status.success(),
+                        "Resolved program should execute successfully"
+                    );
+                    return Ok(());
+                }
+                Err(err) if err.kind() == ErrorKind::ExecutableFileBusy => {
+                    last_error = Some(err);
+                    sleep(Duration::from_millis(50)).await;
+                }
+                Err(err) => return Err(err.into()),
+            }
+        }
 
-        assert!(
-            output.is_ok(),
-            "Resolved program should execute successfully"
-        );
-        Ok(())
+        panic!("Resolved program should execute successfully: {last_error:?}");
     }
 
     // Test fixture for creating temporary executables in a controlled environment.

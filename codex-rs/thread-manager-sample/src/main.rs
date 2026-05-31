@@ -15,7 +15,6 @@ use codex_core_api::Arg0DispatchPaths;
 use codex_core_api::AskForApproval;
 use codex_core_api::AuthCredentialsStoreMode;
 use codex_core_api::AuthManager;
-use codex_core_api::AutoCompactTokenLimitScope;
 use codex_core_api::CodexThread;
 use codex_core_api::Config;
 use codex_core_api::ConfigLayerStack;
@@ -42,6 +41,7 @@ use codex_core_api::RealtimeAudioConfig;
 use codex_core_api::RealtimeConfig;
 use codex_core_api::SessionPickerViewMode;
 use codex_core_api::SessionSource;
+use codex_core_api::ShellEnvironmentPolicy;
 use codex_core_api::TerminalResizeReflowConfig;
 use codex_core_api::ThreadManager;
 use codex_core_api::ThreadStoreConfig;
@@ -163,23 +163,26 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
 
     let mut config = Config {
         config_layer_stack: ConfigLayerStack::default(),
+        custom: codex_core_api::CustomConfigToml::default(),
         startup_warnings: Vec::new(),
-        bypass_hook_trust: false,
         model,
         service_tier: None,
         review_model: None,
         model_context_window: None,
         model_auto_compact_token_limit: None,
-        model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
         model_provider_id,
         model_provider,
         personality: None,
-        permissions: Permissions::from_approval_and_profile(
-            Constrained::allow_any(AskForApproval::Never),
-            Constrained::allow_any(PermissionProfile::read_only()),
-        )?,
-        explicit_permission_profile_mode: false,
-        custom_permission_profiles: Vec::new(),
+        permissions: Permissions {
+            approval_policy: Constrained::allow_any(AskForApproval::Never),
+            permission_profile: Constrained::allow_any(PermissionProfile::read_only()),
+            active_permission_profile: None,
+            network: None,
+            allow_login_shell: true,
+            shell_environment_policy: ShellEnvironmentPolicy::default(),
+            windows_sandbox_mode: None,
+            windows_sandbox_private_desktop: false,
+        },
         approvals_reviewer: ApprovalsReviewer::User,
         enforce_residency: Constrained::allow_any(/*initial_value*/ None),
         hide_agent_reasoning: false,
@@ -190,7 +193,6 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         guardian_policy_config: None,
         include_permissions_instructions: false,
         include_apps_instructions: false,
-        include_collaboration_mode_instructions: false,
         include_skill_instructions: false,
         include_environment_context: false,
         compact_prompt: None,
@@ -205,15 +207,11 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         tui_terminal_title: None,
         tui_theme: None,
         tui_raw_output_mode: false,
-        tui_pet: None,
-        tui_pet_anchor: TuiPetAnchor::Composer,
         terminal_resize_reflow: TerminalResizeReflowConfig::default(),
         tui_keymap: TuiKeymap::default(),
         tui_session_picker_view: SessionPickerViewMode::Dense,
         tui_vim_mode_default: false,
         cwd: cwd.clone(),
-        workspace_roots: vec![cwd],
-        workspace_roots_explicit: false,
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode::File,
         mcp_servers: Constrained::allow_any(HashMap::new()),
         mcp_oauth_credentials_store_mode: OAuthCredentialsStoreMode::File,
@@ -242,6 +240,9 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         codex_self_exe: arg0_paths.codex_self_exe,
         codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe,
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe,
+        commit_attribution: None,
+        include_apply_patch_tool: false,
+        windows_wsl_setup_acknowledged: false,
         zsh_path: None,
         model_reasoning_effort: None,
         plan_mode_reasoning_effort: None,
@@ -272,6 +273,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         multi_agent_v2: MultiAgentV2Config::default(),
         features: Default::default(),
         suppress_unstable_features_warning: false,
+        active_profile: None,
         active_project: ProjectConfig { trust_level: None },
         notices: Notice::default(),
         check_for_update_on_startup: false,
@@ -280,6 +282,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         feedback_enabled: false,
         tool_suggest: ToolSuggestConfig::default(),
         otel: OtelConfig::default(),
+        project_doc_paths: Vec::new(),
     };
     config
         .features
@@ -295,10 +298,10 @@ async fn run_turn(thread: &CodexThread, thread_id: &str, prompt: String) -> anyh
                 text: prompt,
                 text_elements: Vec::new(),
             }],
+            additional_context: Default::default(),
             environments: None,
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
-            additional_context: Default::default(),
             thread_settings: Default::default(),
         })
         .await

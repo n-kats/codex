@@ -1,15 +1,18 @@
 use anyhow::Result;
+use codex_features::Feature;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use codex_protocol::user_input::ByteRange;
 use codex_protocol::user_input::TextElement;
 use codex_protocol::user_input::UserInput;
+use core_test_support::responses::ev_apply_patch_custom_tool_call;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_reasoning_item;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::mount_sse_sequence;
+use core_test_support::responses::mount_sse_sequence_unchecked;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
@@ -18,10 +21,16 @@ use core_test_support::test_codex::TestCodexBuilder;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
+use serial_test::serial;
+#[cfg(unix)]
+use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
+use tokio::time::timeout;
 use wiremock::MockServer;
 
 async fn resume_until_initial_messages(
@@ -284,7 +293,7 @@ async fn resume_switches_models_preserves_base_instructions() -> Result<()> {
         .unwrap_or_default()
         .to_string();
 
-    let resumed_mock = mount_sse_sequence(
+    let resumed_mock = mount_sse_sequence_unchecked(
         &server,
         vec![
             sse(vec![
@@ -429,14 +438,24 @@ async fn resume_model_switch_is_not_duplicated_after_pre_turn_override() -> Resu
         config.model = Some("gpt-5.3-codex".to_string());
     });
     let resumed = resume_builder.resume(&server, home, rollout_path).await?;
-    core_test_support::submit_thread_settings(
-        &resumed.codex,
-        codex_protocol::protocol::ThreadSettingsOverrides {
+    resumed
+        .codex
+        .submit(Op::OverrideTurnContext {
+            cwd: None,
+            approval_policy: None,
+            approvals_reviewer: None,
+            sandbox_policy: None,
+            permission_profile: None,
+            windows_sandbox_level: None,
             model: Some("gpt-5.4".to_string()),
-            ..Default::default()
-        },
-    )
-    .await?;
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+            project_doc_paths: None,
+        })
+        .await?;
     resumed
         .codex
         .submit(Op::UserInput {
@@ -463,6 +482,166 @@ async fn resume_model_switch_is_not_duplicated_after_pre_turn_override() -> Resu
         .filter(|text| text.contains("<model_switch>"))
         .count();
     assert_eq!(model_switch_count, 1);
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn resolve_worker_user(worker_user: &str) -> Option<(u32, u32)> {
+    let Ok(c_user) = std::ffi::CString::new(worker_user) else {
+        return None;
+    };
+    // SAFETY: libc call, CString provides a NUL-terminated pointer.
+    let pw = unsafe { libc::getpwnam(c_user.as_ptr()) };
+    if pw.is_null() {
+        return None;
+    }
+    // SAFETY: `pw` is non-null and points to a valid passwd struct.
+    let (uid, gid) = unsafe { ((*pw).pw_uid, (*pw).pw_gid) };
+    Some((uid, gid))
+}
+
+#[cfg(unix)]
+fn assistant_worker_user() -> Option<(&'static str, u32, u32)> {
+    let worker_user = "assistant";
+    let (worker_uid, worker_gid) = resolve_worker_user(worker_user)?;
+    Some((worker_user, worker_uid, worker_gid))
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial]
+async fn resume_preserves_custom_exec_worker_user_for_apply_patch() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let Some((worker_user, worker_uid, worker_gid)) = assistant_worker_user() else {
+        return Ok(());
+    };
+
+    let server = start_mock_server().await;
+    let mut initial_builder = test_codex().with_config(|config| {
+        config
+            .features
+            .disable(Feature::ShellSnapshot)
+            .expect("test config should allow feature update");
+        config.include_apply_patch_tool = true;
+    });
+    let initial = initial_builder.build(&server).await?;
+    let codex = Arc::clone(&initial.codex);
+    let home = initial.home.clone();
+    let rollout_path = initial
+        .session_configured
+        .rollout_path
+        .clone()
+        .expect("rollout path");
+
+    mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-initial"),
+            ev_assistant_message("msg-initial", "Completed initial turn"),
+            ev_completed("resp-initial"),
+        ]),
+    )
+    .await;
+
+    codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "Create a resumable rollout".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_event(&codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
+
+    let mut resume_builder = test_codex().with_config(move |config| {
+        config
+            .features
+            .disable(Feature::ShellSnapshot)
+            .expect("test config should allow feature update");
+        config.include_apply_patch_tool = true;
+        config.custom.exec.worker_user = Some(worker_user.to_string());
+        config.custom.exec.worker_uid = Some(worker_uid);
+        config.custom.exec.worker_gid = Some(worker_gid);
+    });
+    let resumed = resume_builder.resume(&server, home, rollout_path).await?;
+    assert_eq!(
+        resumed.config.custom.exec.worker_user.as_deref(),
+        Some(worker_user)
+    );
+
+    let locked_path = resumed.workspace_path("locked.txt");
+    fs::write(&locked_path, "original\n")?;
+    fs::set_permissions(&locked_path, fs::Permissions::from_mode(0o600))?;
+
+    let call_id = "resume-apply-patch-worker-user";
+    let resumed_mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-resume-1"),
+                ev_apply_patch_custom_tool_call(
+                    call_id,
+                    "*** Begin Patch\n*** Update File: locked.txt\n@@\n-original\n+modified\n*** End Patch",
+                ),
+                ev_completed("resp-resume-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-resume-2"),
+                ev_assistant_message("msg-resume", "done"),
+                ev_completed("resp-resume-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    resumed
+        .codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "Apply the locked file patch after resume".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+
+    wait_for_event(&resumed.codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    timeout(Duration::from_secs(300), async {
+        loop {
+            if resumed_mock.requests().len() >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("expected resumed requests within timeout");
+
+    let output_text = resumed_mock
+        .function_call_output_text(call_id)
+        .unwrap_or_default()
+        .to_lowercase();
+    assert!(
+        output_text.contains("permission denied")
+            || output_text.contains("operation not permitted"),
+        "output={output_text}"
+    );
+    assert_eq!(fs::read_to_string(&locked_path)?, "original\n");
 
     Ok(())
 }

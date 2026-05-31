@@ -282,6 +282,7 @@ async fn exec_full_buffer_capture_ignores_expiration() -> Result<()> {
         NetworkSandboxPolicy::Enabled,
         /*stdout_stream*/ None,
         /*after_spawn*/ None,
+        None,
     )
     .await?;
 
@@ -318,6 +319,7 @@ async fn exec_full_buffer_capture_keeps_io_drain_timeout_when_descendant_holds_p
             NetworkSandboxPolicy::Enabled,
             /*stdout_stream*/ None,
             /*after_spawn*/ None,
+            None,
         ),
     )
     .await
@@ -1091,6 +1093,7 @@ async fn kill_child_process_group_kills_grandchildren_on_timeout() -> Result<()>
         NetworkSandboxPolicy::Restricted,
         /*stdout_stream*/ None,
         /*after_spawn*/ None,
+        None,
     )
     .await?;
     assert!(output.timed_out);
@@ -1105,11 +1108,8 @@ async fn kill_child_process_group_kills_grandchildren_on_timeout() -> Result<()>
     })?;
 
     let mut killed = false;
-    for _ in 0..20 {
-        // Use kill(pid, 0) to check if the process is alive.
-        if unsafe { libc::kill(pid, 0) } == -1
-            && let Some(libc::ESRCH) = std::io::Error::last_os_error().raw_os_error()
-        {
+    for _ in 0..30 {
+        if !process_is_running(pid)? {
             killed = true;
             break;
         }
@@ -1118,6 +1118,28 @@ async fn kill_child_process_group_kills_grandchildren_on_timeout() -> Result<()>
 
     assert!(killed, "grandchild process with pid {pid} is still alive");
     Ok(())
+}
+
+#[cfg(unix)]
+fn process_is_running(pid: i32) -> io::Result<bool> {
+    match unsafe { libc::kill(pid, 0) } {
+        0 => {
+            let output = std::process::Command::new("ps")
+                .arg("-o")
+                .arg("stat=")
+                .arg("-p")
+                .arg(pid.to_string())
+                .output()?;
+            let stat = String::from_utf8_lossy(&output.stdout);
+            Ok(!stat.contains('Z'))
+        }
+        -1 => match std::io::Error::last_os_error().raw_os_error() {
+            Some(libc::ESRCH) => Ok(false),
+            Some(libc::EPERM) => Ok(true),
+            _ => Err(std::io::Error::last_os_error()),
+        },
+        _ => Ok(true),
+    }
 }
 
 #[tokio::test]

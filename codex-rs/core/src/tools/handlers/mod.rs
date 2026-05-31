@@ -55,6 +55,7 @@ use codex_protocol::protocol::AskForApproval;
 pub use dynamic::DynamicToolHandler;
 pub use goal::CreateGoalHandler;
 pub use goal::GetGoalHandler;
+pub use goal::GoalHandler;
 pub use goal::UpdateGoalHandler;
 pub use list_available_plugins_to_install::ListAvailablePluginsToInstallHandler;
 pub use mcp::McpHandler;
@@ -67,21 +68,13 @@ pub use request_plugin_install::RequestPluginInstallHandler;
 pub use request_user_input::RequestUserInputHandler;
 pub use shell::ShellCommandHandler;
 pub(crate) use shell::ShellCommandHandlerOptions;
+pub use shell::ShellHandler;
 pub use test_sync::TestSyncHandler;
 pub use tool_search::ToolSearchHandler;
 pub use unified_exec::ExecCommandHandler;
 pub(crate) use unified_exec::ExecCommandHandlerOptions;
 pub use unified_exec::WriteStdinHandler;
 pub use view_image::ViewImageHandler;
-
-pub(crate) fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    serde_json::from_str(arguments).map_err(|err| {
-        FunctionCallError::RespondToModel(format!("failed to parse function arguments: {err}"))
-    })
-}
 
 fn updated_hook_command(updated_input: &Value) -> Result<&str, FunctionCallError> {
     updated_input
@@ -121,6 +114,15 @@ fn rewrite_function_string_argument(
 ) -> Result<String, FunctionCallError> {
     rewrite_function_arguments(arguments, tool_name, |arguments| {
         arguments.insert(field_name.to_string(), Value::String(value.to_string()));
+    })
+}
+
+fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    serde_json::from_str(arguments).map_err(|err| {
+        FunctionCallError::RespondToModel(format!("failed to parse function arguments: {err}"))
     })
 }
 

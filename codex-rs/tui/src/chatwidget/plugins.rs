@@ -66,12 +66,6 @@ pub(super) struct PluginListFetchState {
     pub(super) in_flight_cwd: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone)]
-pub(super) struct PluginInstallAuthFlowState {
-    plugin_display_name: String,
-    next_app_index: usize,
-}
-
 struct DelayedLoadingHeader {
     started_at: Instant,
     frame_requester: FrameRequester,
@@ -486,7 +480,7 @@ impl ChatWidget {
                             self.plugin_install_apps_needing_auth.len()
                         )),
                     );
-                    self.plugin_install_auth_flow = Some(PluginInstallAuthFlowState {
+                    self.plugin_install_auth_flow = Some(super::PluginInstallAuthFlowState {
                         plugin_display_name,
                         next_app_index: 0,
                     });

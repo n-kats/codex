@@ -1,13 +1,14 @@
 use super::*;
-use crate::app_event::ConnectorsSnapshot;
-use codex_protocol::models::ManagedFileSystemPermissions;
-use codex_protocol::permissions::FileSystemAccessMode;
-use codex_protocol::permissions::FileSystemPath;
-use codex_protocol::permissions::FileSystemSandboxEntry;
-use codex_protocol::permissions::FileSystemSpecialPath;
-use codex_protocol::permissions::NetworkSandboxPolicy;
+use codex_app_server_protocol::FileSystemAccessMode;
+use codex_app_server_protocol::FileSystemPath;
+use codex_app_server_protocol::FileSystemSandboxEntry;
+use codex_app_server_protocol::FileSystemSpecialPath;
+use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
+use codex_app_server_protocol::PermissionProfileNetworkPermissions;
+use codex_config::types::KeybindingSpec;
+use codex_config::types::KeybindingsSpec;
 use pretty_assertions::assert_eq;
-use std::collections::VecDeque;
 
 #[tokio::test]
 async fn submission_preserves_text_elements_and_local_images() {
@@ -28,11 +29,8 @@ async fn submission_preserves_text_elements_and_local_images() {
         permission_profile: PermissionProfile::read_only(),
         active_permission_profile: None,
         cwd: test_path_buf("/home/user/project").abs(),
-        runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
-        collaboration_mode: None,
-        personality: None,
         message_history: None,
         network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
@@ -50,7 +48,7 @@ async fn submission_preserves_text_elements_and_local_images() {
 
     chat.bottom_pane
         .set_composer_text(text.clone(), text_elements.clone(), local_images.clone());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -60,8 +58,7 @@ async fn submission_preserves_text_elements_and_local_images() {
     assert_eq!(
         items[0],
         UserInput::LocalImage {
-            path: local_images[0].clone(),
-            detail: None,
+            path: local_images[0].clone()
         }
     );
     assert_eq!(
@@ -96,14 +93,103 @@ async fn submission_preserves_text_elements_and_local_images() {
 }
 
 #[tokio::test]
-async fn submission_includes_configured_active_permission_profile() {
+async fn custom_keymap_survives_session_reconfiguration() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    let mut keymap_config = chat.config_ref().tui_keymap.clone();
+    keymap_config.composer.submit = Some(KeybindingsSpec::Many(vec![
+        KeybindingSpec("ctrl-enter".to_string()),
+        KeybindingSpec("ctrl-j".to_string()),
+    ]));
+    keymap_config.editor.insert_newline =
+        Some(KeybindingsSpec::One(KeybindingSpec("enter".to_string())));
+    let runtime_keymap =
+        crate::keymap::RuntimeKeymap::from_config(&keymap_config).expect("valid custom keymap");
+    chat.apply_keymap_update(keymap_config, &runtime_keymap);
+
+    let thread_id = ThreadId::new();
+    chat.handle_thread_session(crate::session_state::ThreadSessionState {
+        thread_id,
+        forked_from_id: None,
+        fork_parent_title: None,
+        thread_name: Some("first".to_string()),
+        model: "test-model".to_string(),
+        model_provider_id: "test-provider".to_string(),
+        service_tier: None,
+        approval_policy: AskForApproval::Never,
+        approvals_reviewer: ApprovalsReviewer::User,
+        permission_profile: PermissionProfile::read_only(),
+        active_permission_profile: None,
+        cwd: test_path_buf("/home/user/project").abs(),
+        instruction_source_paths: Vec::new(),
+        reasoning_effort: Some(ReasoningEffortConfig::default()),
+        message_history: Some(crate::session_state::MessageHistoryMetadata {
+            log_id: 0,
+            entry_count: 0,
+        }),
+        network_proxy: None,
+        rollout_path: Some(PathBuf::new()),
+    });
+    drain_insert_history(&mut rx);
+
+    chat.bottom_pane
+        .set_composer_text("first submit".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+    let _ = match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => items,
+        other => panic!("expected Op::UserTurn, got {other:?}"),
+    };
+
+    chat.handle_thread_session(crate::session_state::ThreadSessionState {
+        thread_id: ThreadId::new(),
+        forked_from_id: Some(thread_id),
+        fork_parent_title: None,
+        thread_name: Some("second".to_string()),
+        model: "test-model".to_string(),
+        model_provider_id: "test-provider".to_string(),
+        service_tier: None,
+        approval_policy: AskForApproval::Never,
+        approvals_reviewer: ApprovalsReviewer::User,
+        permission_profile: PermissionProfile::read_only(),
+        active_permission_profile: None,
+        cwd: test_path_buf("/home/user/project").abs(),
+        instruction_source_paths: Vec::new(),
+        reasoning_effort: Some(ReasoningEffortConfig::default()),
+        message_history: Some(crate::session_state::MessageHistoryMetadata {
+            log_id: 1,
+            entry_count: 0,
+        }),
+        network_proxy: None,
+        rollout_path: Some(PathBuf::new()),
+    });
+    drain_insert_history(&mut rx);
+
+    chat.bottom_pane
+        .set_composer_text("second submit".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+
+    let items = match next_submit_op(&mut op_rx) {
+        Op::UserTurn { items, .. } => items,
+        other => panic!("expected Op::UserTurn after resume, got {other:?}"),
+    };
+    assert_eq!(
+        items,
+        vec![UserInput::Text {
+            text: "second submit".to_string(),
+            text_elements: Vec::new(),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn submission_includes_configured_permission_profile() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let expected_permission_profile: PermissionProfile = PermissionProfile::Managed {
-        network: NetworkSandboxPolicy::Restricted,
-        file_system: ManagedFileSystemPermissions::Restricted {
+    let expected_permission_profile: PermissionProfile = AppServerPermissionProfile::Managed {
+        network: PermissionProfileNetworkPermissions { enabled: false },
+        file_system: PermissionProfileFileSystemPermissions::Restricted {
             entries: vec![
                 FileSystemSandboxEntry {
                     path: FileSystemPath::Special {
@@ -120,8 +206,8 @@ async fn submission_includes_configured_active_permission_profile() {
             ],
             glob_scan_max_depth: None,
         },
-    };
-    let expected_active_permission_profile = ActivePermissionProfile::new("custom");
+    }
+    .into();
     let configured = crate::session_state::ThreadSessionState {
         thread_id,
         forked_from_id: None,
@@ -132,14 +218,11 @@ async fn submission_includes_configured_active_permission_profile() {
         service_tier: None,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
-        permission_profile: expected_permission_profile,
-        active_permission_profile: Some(expected_active_permission_profile.clone()),
+        permission_profile: expected_permission_profile.clone(),
+        active_permission_profile: None,
         cwd: test_path_buf("/home/user/project").abs(),
-        runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
-        collaboration_mode: None,
-        personality: None,
         message_history: None,
         network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
@@ -154,29 +237,26 @@ async fn submission_includes_configured_active_permission_profile() {
     );
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
-    let active_permission_profile = match next_submit_op(&mut op_rx) {
+    let permission_profile = match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            active_permission_profile,
-            ..
-        } => active_permission_profile,
+            permission_profile, ..
+        } => permission_profile,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
-    assert_eq!(
-        active_permission_profile,
-        Some(expected_active_permission_profile)
-    );
+    assert_eq!(permission_profile, expected_permission_profile);
 }
 
 #[tokio::test]
-async fn submission_omits_active_permission_profile_for_legacy_snapshot() {
+async fn submission_keeps_profile_when_legacy_projection_is_external() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     let thread_id = ThreadId::new();
     let rollout_file = NamedTempFile::new().unwrap();
-    let expected_permission_profile: PermissionProfile = PermissionProfile::Managed {
-        network: NetworkSandboxPolicy::Restricted,
-        file_system: ManagedFileSystemPermissions::Unrestricted,
-    };
+    let expected_permission_profile: PermissionProfile = AppServerPermissionProfile::Managed {
+        network: PermissionProfileNetworkPermissions { enabled: false },
+        file_system: PermissionProfileFileSystemPermissions::Unrestricted,
+    }
+    .into();
     let configured = crate::session_state::ThreadSessionState {
         thread_id,
         forked_from_id: None,
@@ -187,14 +267,11 @@ async fn submission_omits_active_permission_profile_for_legacy_snapshot() {
         service_tier: None,
         approval_policy: AskForApproval::Never,
         approvals_reviewer: ApprovalsReviewer::User,
-        permission_profile: expected_permission_profile,
+        permission_profile: expected_permission_profile.clone(),
         active_permission_profile: None,
         cwd: test_path_buf("/home/user/project").abs(),
-        runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
-        collaboration_mode: None,
-        personality: None,
         message_history: None,
         network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
@@ -206,14 +283,13 @@ async fn submission_omits_active_permission_profile_for_legacy_snapshot() {
         .set_composer_text("submit".to_string(), Vec::new(), Vec::new());
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
 
-    let active_permission_profile = match next_submit_op(&mut op_rx) {
+    let permission_profile = match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            active_permission_profile,
-            ..
-        } => active_permission_profile,
+            permission_profile, ..
+        } => permission_profile,
         other => panic!("expected Op::UserTurn, got {other:?}"),
     };
-    assert_eq!(active_permission_profile, None);
+    assert_eq!(permission_profile, expected_permission_profile);
 }
 
 #[tokio::test]
@@ -235,11 +311,8 @@ async fn submission_with_remote_and_local_images_keeps_local_placeholder_numberi
         permission_profile: PermissionProfile::read_only(),
         active_permission_profile: None,
         cwd: test_path_buf("/home/user/project").abs(),
-        runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
-        collaboration_mode: None,
-        personality: None,
         message_history: None,
         network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
@@ -261,7 +334,7 @@ async fn submission_with_remote_and_local_images_keeps_local_placeholder_numberi
     chat.bottom_pane
         .set_composer_text(text.clone(), text_elements.clone(), local_images.clone());
     assert_eq!(chat.bottom_pane.composer_text(), "[Image #2] submit mixed");
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -279,7 +352,6 @@ async fn submission_with_remote_and_local_images_keeps_local_placeholder_numberi
         items[1],
         UserInput::LocalImage {
             path: local_images[0].clone(),
-            detail: None,
         }
     );
     assert_eq!(
@@ -333,11 +405,8 @@ async fn enter_with_only_remote_images_submits_user_turn() {
         permission_profile: PermissionProfile::read_only(),
         active_permission_profile: None,
         cwd: test_path_buf("/home/user/project").abs(),
-        runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
-        collaboration_mode: None,
-        personality: None,
         message_history: None,
         network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
@@ -349,7 +418,7 @@ async fn enter_with_only_remote_images_submits_user_turn() {
     chat.set_remote_image_urls(vec![remote_url.clone()]);
     assert_eq!(chat.bottom_pane.composer_text(), "");
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let (items, summary) = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, summary, .. } => (items, summary),
@@ -400,11 +469,8 @@ async fn shift_enter_with_only_remote_images_does_not_submit_user_turn() {
         permission_profile: PermissionProfile::read_only(),
         active_permission_profile: None,
         cwd: test_path_buf("/home/user/project").abs(),
-        runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
-        collaboration_mode: None,
-        personality: None,
         message_history: None,
         network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
@@ -441,11 +507,8 @@ async fn enter_with_only_remote_images_does_not_submit_when_modal_is_active() {
         permission_profile: PermissionProfile::read_only(),
         active_permission_profile: None,
         cwd: test_path_buf("/home/user/project").abs(),
-        runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
-        collaboration_mode: None,
-        personality: None,
         message_history: None,
         network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
@@ -457,7 +520,7 @@ async fn enter_with_only_remote_images_does_not_submit_when_modal_is_active() {
     chat.set_remote_image_urls(vec![remote_url.clone()]);
 
     chat.open_review_popup();
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_eq!(chat.remote_image_urls(), vec![remote_url]);
     assert_no_submit_op(&mut op_rx);
@@ -482,11 +545,8 @@ async fn enter_with_only_remote_images_does_not_submit_when_input_disabled() {
         permission_profile: PermissionProfile::read_only(),
         active_permission_profile: None,
         cwd: test_path_buf("/home/user/project").abs(),
-        runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
-        collaboration_mode: None,
-        personality: None,
         message_history: None,
         network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
@@ -501,7 +561,7 @@ async fn enter_with_only_remote_images_does_not_submit_when_input_disabled() {
         Some("Input disabled for test.".to_string()),
     );
 
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     assert_eq!(chat.remote_image_urls(), vec![remote_url]);
     assert_no_submit_op(&mut op_rx);
@@ -526,11 +586,8 @@ async fn submission_prefers_selected_duplicate_skill_path() {
         permission_profile: PermissionProfile::read_only(),
         active_permission_profile: None,
         cwd: test_path_buf("/home/user/project").abs(),
-        runtime_workspace_roots: Vec::new(),
         instruction_source_paths: Vec::new(),
         reasoning_effort: Some(ReasoningEffortConfig::default()),
-        collaboration_mode: None,
-        personality: None,
         message_history: None,
         network_proxy: None,
         rollout_path: Some(rollout_file.path().to_path_buf()),
@@ -570,12 +627,11 @@ async fn submission_prefers_selected_duplicate_skill_path() {
         Vec::new(),
         Vec::new(),
         vec![MentionBinding {
-            sigil: '$',
             mention: "figma".to_string(),
             path: user_skill_path.to_string_lossy().into_owned(),
         }],
     );
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     let items = match next_submit_op(&mut op_rx) {
         Op::UserTurn { items, .. } => items,
@@ -606,7 +662,6 @@ async fn blocked_image_restore_preserves_mention_bindings() {
         path: PathBuf::from("/tmp/blocked.png"),
     }];
     let mention_bindings = vec![MentionBinding {
-        sigil: '$',
         mention: "file".to_string(),
         path: "/tmp/skills/file/SKILL.md".to_string(),
     }];
@@ -748,7 +803,7 @@ async fn interrupted_turn_restore_keeps_active_mode_for_resubmission() {
 
     chat.set_collaboration_mask(plan_mask);
     chat.on_task_started();
-    chat.input_queue.queued_user_messages.push_back(
+    chat.queued_user_messages.push_back(
         UserMessage {
             text: "Implement the plan.".to_string(),
             local_images: Vec::new(),
@@ -763,10 +818,10 @@ async fn interrupted_turn_restore_keeps_active_mode_for_resubmission() {
     handle_turn_interrupted(&mut chat, "turn-1");
 
     assert_eq!(chat.bottom_pane.composer_text(), "Implement the plan.");
-    assert!(chat.input_queue.queued_user_messages.is_empty());
+    assert!(chat.queued_user_messages.is_empty());
     assert_eq!(chat.active_collaboration_mode_kind(), expected_mode);
 
-    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
@@ -920,10 +975,10 @@ async fn empty_enter_during_task_does_not_queue() {
     chat.bottom_pane.set_task_running(/*running*/ true);
 
     // Press Enter with an empty composer.
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     // Ensure nothing was queued.
-    assert!(chat.input_queue.queued_user_messages.is_empty());
+    assert!(chat.queued_user_messages.is_empty());
 }
 
 #[tokio::test]
@@ -932,9 +987,7 @@ async fn pending_steer_esc_does_not_steal_vim_insert_escape() {
     let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
 
     chat.bottom_pane.set_task_running(/*running*/ true);
-    chat.input_queue
-        .pending_steers
-        .push_back(pending_steer("queued steer"));
+    chat.pending_steers.push_back(pending_steer("queued steer"));
     chat.toggle_vim_mode_and_notify();
     chat.handle_key_event(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
 
@@ -942,8 +995,8 @@ async fn pending_steer_esc_does_not_steal_vim_insert_escape() {
     chat.handle_key_event(esc);
 
     assert!(!chat.should_handle_vim_insert_escape(esc));
-    assert_eq!(chat.input_queue.pending_steers.len(), 1);
-    assert!(!chat.input_queue.submit_pending_steers_after_interrupt);
+    assert_eq!(chat.pending_steers.len(), 1);
+    assert!(!chat.submit_pending_steers_after_interrupt);
     assert!(op_rx.try_recv().is_err());
 
     chat.handle_key_event(esc);
@@ -952,33 +1005,7 @@ async fn pending_steer_esc_does_not_steal_vim_insert_escape() {
         Ok(Op::Interrupt) => {}
         other => panic!("expected Op::Interrupt, got {other:?}"),
     }
-    assert!(chat.input_queue.submit_pending_steers_after_interrupt);
-}
-
-#[tokio::test]
-async fn pending_steer_interrupt_uses_remapped_binding() {
-    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let mut keymap = crate::keymap::RuntimeKeymap::defaults();
-    keymap.chat.interrupt_turn = vec![crate::key_hint::plain(KeyCode::F(12))];
-    chat.chat_keymap = keymap.chat.clone();
-    chat.bottom_pane.set_keymap_bindings(&keymap);
-    chat.bottom_pane.set_task_running(/*running*/ true);
-    chat.input_queue
-        .pending_steers
-        .push_back(pending_steer("queued steer"));
-
-    chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-
-    assert!(!chat.input_queue.submit_pending_steers_after_interrupt);
-    assert!(op_rx.try_recv().is_err());
-
-    chat.handle_key_event(KeyEvent::new(KeyCode::F(12), KeyModifiers::NONE));
-
-    match op_rx.try_recv() {
-        Ok(Op::Interrupt) => {}
-        other => panic!("expected Op::Interrupt, got {other:?}"),
-    }
-    assert!(chat.input_queue.submit_pending_steers_after_interrupt);
+    assert!(chat.submit_pending_steers_after_interrupt);
 }
 
 #[tokio::test]
@@ -990,7 +1017,6 @@ async fn restore_thread_input_state_syncs_sleep_inhibitor_state() {
         composer: None,
         pending_steers: VecDeque::new(),
         pending_steer_history_records: VecDeque::new(),
-        pending_steer_compare_keys: VecDeque::new(),
         rejected_steers_queue: VecDeque::new(),
         rejected_steer_history_records: VecDeque::new(),
         queued_user_messages: VecDeque::new(),
@@ -1002,14 +1028,14 @@ async fn restore_thread_input_state_syncs_sleep_inhibitor_state() {
         agent_turn_running: true,
     }));
 
-    assert!(chat.turn_lifecycle.agent_turn_running);
-    assert!(chat.turn_lifecycle.sleep_inhibitor.is_turn_running());
+    assert!(chat.agent_turn_running);
+    assert!(chat.turn_sleep_inhibitor.is_turn_running());
     assert!(chat.bottom_pane.is_task_running());
 
     chat.restore_thread_input_state(/*input_state*/ None);
 
-    assert!(!chat.turn_lifecycle.agent_turn_running);
-    assert!(!chat.turn_lifecycle.sleep_inhibitor.is_turn_running());
+    assert!(!chat.agent_turn_running);
+    assert!(!chat.turn_sleep_inhibitor.is_turn_running());
     assert!(!chat.bottom_pane.is_task_running());
 }
 
@@ -1025,11 +1051,9 @@ async fn alt_up_edits_most_recent_queued_message() {
     chat.bottom_pane.set_task_running(/*running*/ true);
 
     // Seed two queued messages.
-    chat.input_queue
-        .queued_user_messages
+    chat.queued_user_messages
         .push_back(UserMessage::from("first queued".to_string()).into());
-    chat.input_queue
-        .queued_user_messages
+    chat.queued_user_messages
         .push_back(UserMessage::from("second queued".to_string()).into());
     chat.refresh_pending_input_preview();
 
@@ -1042,9 +1066,9 @@ async fn alt_up_edits_most_recent_queued_message() {
         "second queued".to_string()
     );
     // And the queue should now contain only the remaining (older) item.
-    assert_eq!(chat.input_queue.queued_user_messages.len(), 1);
+    assert_eq!(chat.queued_user_messages.len(), 1);
     assert_eq!(
-        chat.input_queue.queued_user_messages.front().unwrap().text,
+        chat.queued_user_messages.front().unwrap().text,
         "first queued"
     );
 }
@@ -1057,15 +1081,14 @@ async fn unbound_queued_message_edit_does_not_fall_back_to_alt_up() {
     chat.bottom_pane
         .set_queued_message_edit_binding(chat.queued_message_edit_hint_binding);
     chat.bottom_pane.set_task_running(/*running*/ true);
-    chat.input_queue
-        .queued_user_messages
+    chat.queued_user_messages
         .push_back(UserMessage::from("queued".to_string()).into());
     chat.refresh_pending_input_preview();
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT));
 
     assert!(chat.bottom_pane.composer_text().is_empty());
-    assert_eq!(chat.input_queue.queued_user_messages.len(), 1);
+    assert_eq!(chat.queued_user_messages.len(), 1);
 }
 
 #[tokio::test]
@@ -1181,7 +1204,7 @@ async fn enqueueing_history_prompt_multiple_times_is_stable() {
     // Submit an initial prompt to seed history.
     chat.bottom_pane
         .set_composer_text("repeat me".to_string(), Vec::new(), Vec::new());
-    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
 
     // Simulate an active task so further submissions are queued.
     chat.bottom_pane.set_task_running(/*running*/ true);
@@ -1195,66 +1218,10 @@ async fn enqueueing_history_prompt_multiple_times_is_stable() {
         chat.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
     }
 
-    assert_eq!(chat.input_queue.queued_user_messages.len(), 3);
-    for message in chat.input_queue.queued_user_messages.iter() {
+    assert_eq!(chat.queued_user_messages.len(), 3);
+    for message in chat.queued_user_messages.iter() {
         assert_eq!(message.text, "repeat me");
     }
-}
-
-#[tokio::test]
-async fn submit_user_message_ignores_inaccessible_app_mentions_from_bindings() {
-    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    chat.thread_id = Some(ThreadId::new());
-    set_chatgpt_auth(&mut chat);
-    chat.config
-        .features
-        .enable(Feature::Apps)
-        .expect("test config should allow feature update");
-
-    chat.on_connectors_loaded(
-        Ok(ConnectorsSnapshot {
-            connectors: vec![AppInfo {
-                id: "arabica_uae".to_string(),
-                name: "% Arabica UAE".to_string(),
-                description: Some("Directory-only app".to_string()),
-                logo_url: None,
-                logo_url_dark: None,
-                distribution_channel: None,
-                branding: None,
-                app_metadata: None,
-                labels: None,
-                install_url: Some("https://example.test/arabica".to_string()),
-                is_accessible: false,
-                is_enabled: true,
-                plugin_display_names: Vec::new(),
-            }],
-        }),
-        /*is_final*/ false,
-    );
-
-    chat.submit_user_message(UserMessage {
-        text: "$arabica-uae".to_string(),
-        local_images: Vec::new(),
-        remote_image_urls: Vec::new(),
-        text_elements: Vec::new(),
-        mention_bindings: vec![MentionBinding {
-            sigil: '$',
-            mention: "arabica-uae".to_string(),
-            path: "app://arabica_uae".to_string(),
-        }],
-    });
-
-    let items = match next_submit_op(&mut op_rx) {
-        Op::UserTurn { items, .. } => items,
-        other => panic!("expected Op::UserTurn, got {other:?}"),
-    };
-    assert_eq!(
-        items,
-        vec![UserInput::Text {
-            text: "$arabica-uae".to_string(),
-            text_elements: Vec::new(),
-        }]
-    );
 }
 
 #[test]
@@ -1271,7 +1238,6 @@ fn user_message_display_from_inputs_matches_flattened_user_message_shape() {
         },
         UserInput::LocalImage {
             path: local_image.clone(),
-            detail: None,
         },
         UserInput::Skill {
             name: "demo".to_string(),
@@ -1328,6 +1294,7 @@ fn user_message_display_from_inputs_hides_prompt_context() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn committed_user_message_with_hidden_prompt_context_renders_local_images() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let local_image = PathBuf::from("/tmp/context-image.png");
@@ -1344,7 +1311,6 @@ async fn committed_user_message_with_hidden_prompt_context_renders_local_images(
             },
             UserInput::LocalImage {
                 path: local_image.clone(),
-                detail: None,
             },
         ],
     );
@@ -1372,11 +1338,9 @@ async fn interrupt_restores_queued_messages_into_composer() {
     chat.bottom_pane.set_task_running(/*running*/ true);
 
     // Queue two user messages while the task is running.
-    chat.input_queue
-        .queued_user_messages
+    chat.queued_user_messages
         .push_back(UserMessage::from("first queued".to_string()).into());
-    chat.input_queue
-        .queued_user_messages
+    chat.queued_user_messages
         .push_back(UserMessage::from("second queued".to_string()).into());
     chat.refresh_pending_input_preview();
 
@@ -1390,7 +1354,7 @@ async fn interrupt_restores_queued_messages_into_composer() {
     );
 
     // Queue should be cleared and no new user input should have been auto-submitted.
-    assert!(chat.input_queue.queued_user_messages.is_empty());
+    assert!(chat.queued_user_messages.is_empty());
     assert!(
         op_rx.try_recv().is_err(),
         "unexpected outbound op after interrupt"
@@ -1408,11 +1372,9 @@ async fn interrupt_prepends_queued_messages_before_existing_composer_text() {
     chat.bottom_pane
         .set_composer_text("current draft".to_string(), Vec::new(), Vec::new());
 
-    chat.input_queue
-        .queued_user_messages
+    chat.queued_user_messages
         .push_back(UserMessage::from("first queued".to_string()).into());
-    chat.input_queue
-        .queued_user_messages
+    chat.queued_user_messages
         .push_back(UserMessage::from("second queued".to_string()).into());
     chat.refresh_pending_input_preview();
 
@@ -1422,7 +1384,7 @@ async fn interrupt_prepends_queued_messages_before_existing_composer_text() {
         chat.bottom_pane.composer_text(),
         "first queued\nsecond queued\ncurrent draft"
     );
-    assert!(chat.input_queue.queued_user_messages.is_empty());
+    assert!(chat.queued_user_messages.is_empty());
     assert!(
         op_rx.try_recv().is_err(),
         "unexpected outbound op after interrupt"

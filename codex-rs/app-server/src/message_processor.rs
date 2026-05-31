@@ -69,6 +69,7 @@ use codex_chatgpt::workspace_settings;
 use codex_core::ThreadManager;
 use codex_core::config::Config;
 use codex_exec_server::EnvironmentManager;
+use codex_extension_api::empty_extension_registry;
 use codex_feedback::CodexFeedback;
 use codex_login::AuthManager;
 use codex_login::auth::ExternalAuth;

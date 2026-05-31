@@ -104,6 +104,30 @@ pub(crate) struct PendingRequestPermissions {
 }
 
 impl TurnState {
+    pub(crate) fn push_pending_input(&mut self, input: crate::session::TurnInput) {
+        self.pending_input.push(input);
+    }
+
+    pub(crate) fn prepend_pending_input(
+        &mut self,
+        input: Vec<codex_protocol::models::ResponseInputItem>,
+    ) {
+        self.pending_input.prepend(
+            input
+                .into_iter()
+                .map(|item| crate::session::TurnInput::ResponseItem(item.into()))
+                .collect(),
+        );
+    }
+
+    pub(crate) fn take_pending_input(&mut self) -> Vec<codex_protocol::models::ResponseInputItem> {
+        self.pending_input.take()
+    }
+
+    pub(crate) fn has_pending_input(&self) -> bool {
+        self.pending_input.has_items()
+    }
+
     pub(crate) fn insert_pending_approval(
         &mut self,
         key: String,

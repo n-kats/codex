@@ -1,6 +1,6 @@
 use crate::config::find_codex_home;
-use crate::config::is_builtin_permission_profile_name;
-use crate::config::reject_unknown_builtin_permission_profile;
+use crate::config::permissions::is_builtin_permission_profile_name;
+use crate::config::permissions::reject_unknown_builtin_permission_profile;
 use crate::config::resolve_permission_profile;
 use crate::exec_policy::ExecPolicyError;
 use crate::exec_policy::format_exec_policy_error_with_source;

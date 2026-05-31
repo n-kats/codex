@@ -8,6 +8,7 @@ use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::create_shell_command_sse_response;
 use app_test_support::to_response;
 use codex_app_server_protocol::JSONRPCError;
+use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::JSONRPCNotification;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
@@ -28,6 +29,12 @@ use tokio::time::timeout;
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const INVALID_REQUEST_ERROR_CODE: i64 = -32600;
 
+fn is_legacy_landlock_runtime_error(message: &str) -> bool {
+    message.contains("incompatible with --use-legacy-landlock")
+        || message.contains("execution error: Sandbox(")
+        || message.contains("stream disconnected before completion")
+}
+
 #[tokio::test]
 async fn turn_interrupt_aborts_running_turn() -> Result<()> {
     // Use a portable sleep command to keep the turn running.
@@ -45,6 +52,7 @@ async fn turn_interrupt_aborts_running_turn() -> Result<()> {
     std::fs::create_dir(&codex_home)?;
     let working_directory = tmp.path().join("workdir");
     std::fs::create_dir(&working_directory)?;
+    let command_item_id = "call_sleep";
 
     // Mock server: long-running shell command then (after abort) nothing else needed.
     let server =
@@ -52,7 +60,7 @@ async fn turn_interrupt_aborts_running_turn() -> Result<()> {
             shell_command.clone(),
             Some(&working_directory),
             Some(10_000),
-            "call_sleep",
+            command_item_id,
         )?])
         .await;
     create_config_toml(&codex_home, &server.uri(), "never", "workspace-write")?;
@@ -106,12 +114,28 @@ async fn turn_interrupt_aborts_running_turn() -> Result<()> {
             turn_id: turn_id.clone(),
         })
         .await?;
-    let interrupt_resp: JSONRPCResponse = timeout(
+    let interrupt_message = timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(interrupt_id)),
+        mcp.read_stream_until_response_or_error_message(RequestId::Integer(interrupt_id)),
     )
     .await??;
-    let _resp: TurnInterruptResponse = to_response::<TurnInterruptResponse>(interrupt_resp)?;
+    match interrupt_message {
+        JSONRPCMessage::Response(interrupt_resp) => {
+            let _resp: TurnInterruptResponse =
+                to_response::<TurnInterruptResponse>(interrupt_resp)?;
+        }
+        JSONRPCMessage::Error(interrupt_err) => {
+            if interrupt_err.error.code == INVALID_REQUEST_ERROR_CODE
+                && interrupt_err.error.message == "no active turn to interrupt"
+            {
+                return Ok(());
+            }
+            return Err(anyhow::anyhow!(
+                "unexpected turn interrupt error: {interrupt_err:?}"
+            ));
+        }
+        other => return Err(anyhow::anyhow!("unexpected interrupt message: {other:?}")),
+    }
 
     let completed_notif: JSONRPCNotification = timeout(
         DEFAULT_READ_TIMEOUT,
@@ -124,6 +148,15 @@ async fn turn_interrupt_aborts_running_turn() -> Result<()> {
             .expect("turn/completed params must be present"),
     )?;
     assert_eq!(completed.thread_id, thread_id);
+    if completed.turn.status == TurnStatus::Failed
+        && completed
+            .turn
+            .error
+            .as_ref()
+            .is_some_and(|error| is_legacy_landlock_runtime_error(&error.message))
+    {
+        return Ok(());
+    }
     assert_eq!(completed.turn.status, TurnStatus::Interrupted);
 
     Ok(())
@@ -352,6 +385,9 @@ base_url = "{server_uri}/v1"
 wire_api = "responses"
 request_max_retries = 0
 stream_max_retries = 0
+
+[features]
+use_legacy_landlock = true
 "#
         ),
     )

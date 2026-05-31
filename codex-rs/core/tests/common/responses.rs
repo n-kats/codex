@@ -35,6 +35,8 @@ use wiremock::http::HeaderValue;
 use wiremock::matchers::method;
 use wiremock::matchers::path_regex;
 
+use crate::test_codex::ApplyPatchModelOutput;
+
 #[derive(Debug, Clone)]
 pub struct ResponseMock {
     requests: Arc<Mutex<Vec<ResponsesRequest>>>,
@@ -881,6 +883,22 @@ pub fn ev_local_shell_call(call_id: &str, status: &str, command: Vec<&str>) -> V
     })
 }
 
+pub fn ev_apply_patch_call(
+    call_id: &str,
+    patch: &str,
+    output_type: ApplyPatchModelOutput,
+) -> Value {
+    match output_type {
+        ApplyPatchModelOutput::Freeform => ev_apply_patch_custom_tool_call(call_id, patch),
+        ApplyPatchModelOutput::Shell | ApplyPatchModelOutput::ShellViaHeredoc => {
+            ev_apply_patch_shell_command_call_via_heredoc(call_id, patch)
+        }
+        ApplyPatchModelOutput::ShellCommandViaHeredoc => {
+            ev_apply_patch_shell_command_call_via_heredoc(call_id, patch)
+        }
+    }
+}
+
 /// Convenience: SSE event for an `apply_patch` custom tool call with raw patch
 /// text. This mirrors the payload produced by the Responses API when the model
 /// invokes `apply_patch` directly.
@@ -1468,6 +1486,45 @@ pub async fn mount_sse_sequence(server: &MockServer, bodies: Vec<String>) -> Res
         .mount(server)
         .await;
 
+    response_mock
+}
+
+/// Mounts a sequence of SSE response bodies without asserting an exact request count.
+///
+/// This is useful for flaky tests that only need the mocked responses to be
+/// available in order, while letting the test body decide how long to wait for
+/// the follow-up request(s).
+pub async fn mount_sse_sequence_unchecked(
+    server: &MockServer,
+    bodies: Vec<String>,
+) -> ResponseMock {
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::Ordering;
+
+    struct SeqResponder {
+        num_calls: AtomicUsize,
+        responses: Vec<String>,
+    }
+
+    impl Respond for SeqResponder {
+        fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
+            let call_num = self.num_calls.fetch_add(1, Ordering::SeqCst);
+            match self.responses.get(call_num) {
+                Some(body) => ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(body.clone()),
+                None => panic!("no response for {call_num}"),
+            }
+        }
+    }
+
+    let responder = SeqResponder {
+        num_calls: AtomicUsize::new(0),
+        responses: bodies,
+    };
+
+    let (mock, response_mock) = base_mock();
+    mock.respond_with(responder).mount(server).await;
     response_mock
 }
 

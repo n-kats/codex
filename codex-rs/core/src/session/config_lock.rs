@@ -8,6 +8,7 @@ use codex_features::FeatureToml;
 use codex_features::FeaturesToml;
 use codex_features::MultiAgentV2ConfigToml;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ServiceTier;
 
 use crate::config::Config;
 use crate::config_lock::ConfigLockReplayOptions;
@@ -109,7 +110,10 @@ fn save_session_resolved_fields(sc: &SessionConfiguration, lock_config: &mut Con
     lock_config.model = Some(sc.collaboration_mode.model().to_string());
     lock_config.model_reasoning_effort = sc.collaboration_mode.reasoning_effort();
     lock_config.model_reasoning_summary = sc.model_reasoning_summary;
-    lock_config.service_tier = sc.service_tier.clone();
+    lock_config.service_tier = sc
+        .service_tier
+        .clone()
+        .map(|service_tier| service_tier.request_value().to_string());
     lock_config.instructions = Some(sc.base_instructions.clone());
     lock_config.developer_instructions = sc.developer_instructions.clone();
     lock_config.compact_prompt = sc.compact_prompt.clone();
@@ -133,8 +137,6 @@ fn save_config_resolved_fields(
     lock_config.model_verbosity = config.model_verbosity;
     lock_config.include_permissions_instructions = Some(config.include_permissions_instructions);
     lock_config.include_apps_instructions = Some(config.include_apps_instructions);
-    lock_config.include_collaboration_mode_instructions =
-        Some(config.include_collaboration_mode_instructions);
     lock_config.include_environment_context = Some(config.include_environment_context);
     lock_config.background_terminal_max_timeout = Some(config.background_terminal_max_timeout);
 
@@ -282,7 +284,7 @@ mod tests {
         sc.base_instructions = "catalog instructions".to_string();
         sc.developer_instructions = Some("catalog developer instructions".to_string());
         sc.compact_prompt = Some("catalog compact prompt".to_string());
-        sc.service_tier = Some("flex".to_string());
+        sc.service_tier = Some(ServiceTier::Flex);
 
         let lockfile = sc.to_config_lockfile_toml().expect("lock should serialize");
         let lock = &lockfile.config;

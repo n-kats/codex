@@ -570,7 +570,7 @@ pub(super) async fn handle_pending_thread_resume_request(
             &pending.history_items,
             thread.status.clone(),
             has_live_in_progress_turn,
-            active_turn,
+            active_turn.as_ref(),
             params,
         ) {
             Ok(page) => Some(page),

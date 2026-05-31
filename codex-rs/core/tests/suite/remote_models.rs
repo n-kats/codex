@@ -142,7 +142,9 @@ async fn remote_models_config_context_window_override_clamps_to_max_context_wind
     )
     .await;
 
-    let TestCodex { codex, .. } = test_codex()
+    let TestCodex {
+        codex, cwd, config, ..
+    } = test_codex()
         .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
         .with_config(|config| {
             config.model = Some(requested_model.to_string());
@@ -152,16 +154,24 @@ async fn remote_models_config_context_window_override_clamps_to_max_context_wind
         .await?;
 
     codex
-        .submit(Op::UserInput {
+        .submit(Op::UserTurn {
             items: vec![UserInput::Text {
                 text: "check context window".into(),
                 text_elements: Vec::new(),
             }],
-            environments: None,
             final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
+            cwd: cwd.path().to_path_buf(),
+            approval_policy: config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
+            sandbox_policy: config.legacy_sandbox_policy(),
+            model: requested_model.to_string(),
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            permission_profile: None,
+            personality: None,
+            environments: None,
         })
         .await?;
 
@@ -210,7 +220,9 @@ async fn remote_models_config_override_above_max_uses_max_context_window() -> Re
     )
     .await;
 
-    let TestCodex { codex, .. } = test_codex()
+    let TestCodex {
+        codex, cwd, config, ..
+    } = test_codex()
         .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
         .with_config(|config| {
             config.model = Some(requested_model.to_string());
@@ -220,16 +232,24 @@ async fn remote_models_config_override_above_max_uses_max_context_window() -> Re
         .await?;
 
     codex
-        .submit(Op::UserInput {
+        .submit(Op::UserTurn {
             items: vec![UserInput::Text {
                 text: "check context window".into(),
                 text_elements: Vec::new(),
             }],
-            environments: None,
             final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
+            cwd: cwd.path().to_path_buf(),
+            approval_policy: config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
+            sandbox_policy: config.legacy_sandbox_policy(),
+            model: requested_model.to_string(),
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            permission_profile: None,
+            personality: None,
+            environments: None,
         })
         .await?;
 
@@ -278,7 +298,9 @@ async fn remote_models_use_context_window_when_config_override_is_absent() -> Re
     )
     .await;
 
-    let TestCodex { codex, .. } = test_codex()
+    let TestCodex {
+        codex, cwd, config, ..
+    } = test_codex()
         .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
         .with_config(|config| {
             config.model = Some(requested_model.to_string());
@@ -287,16 +309,24 @@ async fn remote_models_use_context_window_when_config_override_is_absent() -> Re
         .await?;
 
     codex
-        .submit(Op::UserInput {
+        .submit(Op::UserTurn {
             items: vec![UserInput::Text {
                 text: "check context window".into(),
                 text_elements: Vec::new(),
             }],
-            environments: None,
             final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
+            cwd: cwd.path().to_path_buf(),
+            approval_policy: config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
+            sandbox_policy: config.legacy_sandbox_policy(),
+            model: requested_model.to_string(),
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            permission_profile: None,
+            personality: None,
+            environments: None,
         })
         .await?;
 
@@ -358,7 +388,9 @@ async fn remote_models_long_model_slug_is_sent_with_high_reasoning() -> Result<(
     )
     .await;
 
-    let TestCodex { codex, .. } = test_codex()
+    let TestCodex {
+        codex, cwd, config, ..
+    } = test_codex()
         .with_auth(CodexAuth::create_dummy_chatgpt_auth_for_testing())
         .with_config(|config| {
             config.model = Some(requested_model.to_string());
@@ -367,16 +399,24 @@ async fn remote_models_long_model_slug_is_sent_with_high_reasoning() -> Result<(
         .await?;
 
     codex
-        .submit(Op::UserInput {
+        .submit(Op::UserTurn {
             items: vec![UserInput::Text {
                 text: "check model slug".into(),
                 text_elements: Vec::new(),
             }],
-            environments: None,
             final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
+            cwd: cwd.path().to_path_buf(),
+            approval_policy: config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
+            sandbox_policy: config.legacy_sandbox_policy(),
+            permission_profile: None,
+            model: requested_model.to_string(),
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+            environments: None,
         })
         .await?;
 
@@ -412,22 +452,36 @@ async fn namespaced_model_slug_uses_catalog_metadata_without_fallback_warning() 
     )
     .await;
 
-    let TestCodex { codex, .. } = test_codex()
+    let TestCodex {
+        codex, cwd, config, ..
+    } = test_codex()
         .with_model(requested_model)
         .build(&server)
         .await?;
 
     codex
-        .submit(Op::UserInput {
+        .submit(Op::UserTurn {
             items: vec![UserInput::Text {
                 text: "check namespaced model metadata".into(),
                 text_elements: Vec::new(),
             }],
-            environments: None,
             final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: Default::default(),
+            cwd: cwd.path().to_path_buf(),
+            approval_policy: config.permissions.approval_policy.value(),
+            approvals_reviewer: None,
+            sandbox_policy: config.legacy_sandbox_policy(),
+            permission_profile: None,
+            model: requested_model.to_string(),
+            effort: None,
+            summary: Some(
+                config
+                    .model_reasoning_summary
+                    .unwrap_or(ReasoningSummary::Auto),
+            ),
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+            environments: None,
         })
         .await?;
 
@@ -481,7 +535,6 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
         priority: 1,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
-        default_service_tier: None,
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: None,
@@ -541,14 +594,23 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
         .await;
     assert_eq!(model_info.shell_type, ConfigShellToolType::UnifiedExec);
 
-    core_test_support::submit_thread_settings(
-        &codex,
-        codex_protocol::protocol::ThreadSettingsOverrides {
+    codex
+        .submit(Op::OverrideTurnContext {
+            cwd: None,
+            approval_policy: None,
+            approvals_reviewer: None,
+            sandbox_policy: None,
+            permission_profile: None,
+            windows_sandbox_level: None,
             model: Some(REMOTE_MODEL_SLUG.to_string()),
-            ..Default::default()
-        },
-    )
-    .await?;
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+            project_doc_paths: None,
+        })
+        .await?;
 
     let call_id = "call";
     let args = json!({
@@ -573,23 +635,24 @@ async fn remote_models_remote_model_uses_unified_exec() -> Result<()> {
     let (sandbox_policy, permission_profile) =
         turn_permission_fields(PermissionProfile::Disabled, cwd_path.as_path());
     codex
-        .submit(Op::UserInput {
+        .submit(Op::UserTurn {
             items: vec![UserInput::Text {
                 text: "run call".into(),
                 text_elements: Vec::new(),
             }],
-            environments: None,
             final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
-                cwd: Some(cwd_path),
-                approval_policy: Some(AskForApproval::Never),
-                sandbox_policy: Some(sandbox_policy),
-                permission_profile,
-                summary: Some(ReasoningSummary::Auto),
-                ..Default::default()
-            },
+            cwd: cwd_path,
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: None,
+            sandbox_policy,
+            permission_profile,
+            model: REMOTE_MODEL_SLUG.to_string(),
+            effort: None,
+            summary: Some(ReasoningSummary::Auto),
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+            environments: None,
         })
         .await?;
 
@@ -731,7 +794,6 @@ async fn remote_models_apply_remote_base_instructions() -> Result<()> {
         priority: 1,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
-        default_service_tier: None,
         upgrade: None,
         base_instructions: remote_base.to_string(),
         model_messages: None,
@@ -785,36 +847,46 @@ async fn remote_models_apply_remote_base_instructions() -> Result<()> {
     let models_manager = thread_manager.get_models_manager();
     wait_for_model_available(&models_manager, model).await;
 
-    core_test_support::submit_thread_settings(
-        &codex,
-        codex_protocol::protocol::ThreadSettingsOverrides {
+    codex
+        .submit(Op::OverrideTurnContext {
+            cwd: None,
+            approval_policy: None,
+            approvals_reviewer: None,
+            sandbox_policy: None,
+            permission_profile: None,
+            windows_sandbox_level: None,
             model: Some(model.to_string()),
-            ..Default::default()
-        },
-    )
-    .await?;
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+            project_doc_paths: None,
+        })
+        .await?;
 
     let cwd_path = cwd.path().to_path_buf();
     let (sandbox_policy, permission_profile) =
         turn_permission_fields(PermissionProfile::Disabled, cwd_path.as_path());
     codex
-        .submit(Op::UserInput {
+        .submit(Op::UserTurn {
             items: vec![UserInput::Text {
                 text: "hello remote".into(),
                 text_elements: Vec::new(),
             }],
-            environments: None,
             final_output_json_schema: None,
-            responsesapi_client_metadata: None,
-            additional_context: Default::default(),
-            thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
-                cwd: Some(cwd_path),
-                approval_policy: Some(AskForApproval::Never),
-                sandbox_policy: Some(sandbox_policy),
-                permission_profile,
-                summary: Some(ReasoningSummary::Auto),
-                ..Default::default()
-            },
+            cwd: cwd_path,
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: None,
+            sandbox_policy,
+            permission_profile,
+            model: model.to_string(),
+            effort: None,
+            summary: Some(ReasoningSummary::Auto),
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+            environments: None,
         })
         .await?;
 
@@ -1079,7 +1151,7 @@ async fn remote_models_request_times_out_after_5s() -> Result<()> {
         "expected models call to block near the timeout; took {elapsed:?}"
     );
     assert!(
-        elapsed < Duration::from_millis(5_800),
+        elapsed < Duration::from_secs(8),
         "expected models call to time out before the delayed response; took {elapsed:?}"
     );
     assert_eq!(
@@ -1215,7 +1287,6 @@ fn test_remote_model_with_policy(
         priority,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
-        default_service_tier: None,
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: None,

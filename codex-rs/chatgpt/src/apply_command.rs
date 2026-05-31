@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use codex_core::config::Config;
+use codex_core::config_loader::LoaderOverrides;
 use codex_git_utils::ApplyGitRequest;
 use codex_git_utils::apply_git_patch;
 use codex_utils_cli::CliConfigOverrides;
@@ -22,12 +23,14 @@ pub struct ApplyCommand {
 pub async fn run_apply_command(
     apply_cli: ApplyCommand,
     cwd: Option<PathBuf>,
+    loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
-    let config = Config::load_with_cli_overrides(
+    let config = Config::load_with_cli_overrides_and_loader_overrides(
         apply_cli
             .config_overrides
             .parse_overrides()
             .map_err(anyhow::Error::msg)?,
+        loader_overrides,
     )
     .await?;
 

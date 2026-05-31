@@ -371,6 +371,15 @@ impl Default for PermissionProfile {
     }
 }
 
+/// Changes that can be applied to an active permission profile without
+/// replacing the entire profile.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(tag = "type")]
+pub enum ActivePermissionProfileModification {
+    AdditionalWritableRoot { path: AbsolutePathBuf },
+}
+
 impl PermissionProfile {
     /// Managed read-only filesystem access with restricted network access.
     pub fn read_only() -> Self {

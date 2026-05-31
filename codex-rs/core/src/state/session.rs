@@ -3,6 +3,7 @@
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 
@@ -27,6 +28,7 @@ pub(crate) struct SessionState {
     pub(crate) server_reasoning_included: bool,
     pub(crate) mcp_dependency_prompted: HashSet<String>,
     pub(crate) additional_context: AdditionalContextStore,
+    dependency_env: HashMap<String, String>,
     /// Settings used by the latest regular user turn, used for turn-to-turn
     /// model/realtime handling on subsequent regular turns (including full-context
     /// reinjection after resume or `/compact`).
@@ -52,6 +54,7 @@ impl SessionState {
             server_reasoning_included: false,
             mcp_dependency_prompted: HashSet::new(),
             additional_context: AdditionalContextStore::default(),
+            dependency_env: HashMap::new(),
             previous_turn_settings: None,
             auto_compact_window: AutoCompactWindow::new(),
             startup_prewarm: None,
@@ -201,6 +204,14 @@ impl SessionState {
 
     pub(crate) fn take_session_startup_prewarm(&mut self) -> Option<SessionStartupPrewarmHandle> {
         self.startup_prewarm.take()
+    }
+
+    pub(crate) fn dependency_env(&self) -> HashMap<String, String> {
+        self.dependency_env.clone()
+    }
+
+    pub(crate) fn set_dependency_env(&mut self, values: HashMap<String, String>) {
+        self.dependency_env = values;
     }
 
     // Adds connector IDs to the active set and returns the merged selection.

@@ -290,7 +290,16 @@ pub async fn submit_thread_settings(
     use tokio::time::Duration;
     use tokio::time::timeout;
 
-    let submission_id = codex.submit(Op::ThreadSettings { thread_settings }).await?;
+    let submission_id = codex
+        .submit(Op::UserInput {
+            items: Vec::new(),
+            additional_context: Default::default(),
+            environments: None,
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            thread_settings,
+        })
+        .await?;
     loop {
         let ev = timeout(Duration::from_secs(10), codex.next_event())
             .await
@@ -326,7 +335,7 @@ where
     use tokio::time::timeout;
     loop {
         // Allow a bit more time to accommodate async startup work (e.g. config IO, tool discovery)
-        let ev = timeout(wait_time.max(Duration::from_secs(10)), codex.next_event())
+        let ev = timeout(wait_time.max(Duration::from_secs(30)), codex.next_event())
             .await
             .expect("timeout waiting for event")
             .expect("stream ended unexpectedly");

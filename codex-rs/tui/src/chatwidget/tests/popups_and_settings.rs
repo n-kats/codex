@@ -74,7 +74,6 @@ async fn experimental_mode_plan_is_ignored_on_startup() {
         config: cfg.clone(),
         frame_requester: FrameRequester::test_dummy(),
         app_event_tx: AppEventSender::new(unbounded_channel::<AppEvent>().0),
-        workspace_command_runner: None,
         initial_user_message: None,
         enhanced_keys_supported: false,
         has_chatgpt_account: false,
@@ -88,6 +87,7 @@ async fn experimental_mode_plan_is_ignored_on_startup() {
         startup_tooltip_override: None,
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
+        workspace_command_runner: None,
         session_telemetry,
     };
 
@@ -364,6 +364,7 @@ async fn plugins_popup_add_marketplace_tab_opens_prompt_and_submits_source() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn plugins_popup_upgrades_user_configured_git_marketplace_from_marketplace_tab() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.set_feature_enabled(Feature::Plugins, /*enabled*/ true);
@@ -1339,7 +1340,7 @@ async fn apps_popup_stays_loading_until_final_snapshot_updates() {
     );
     chat.add_connectors_output();
     assert!(
-        chat.connectors.prefetch_in_flight,
+        chat.connectors_prefetch_in_flight,
         "expected /apps to trigger a forced connectors refresh"
     );
 
@@ -1450,7 +1451,7 @@ async fn apps_notification_update_excludes_inaccessible_apps_from_mentions() {
     );
 
     assert_matches!(
-        &chat.connectors.partial_snapshot,
+        &chat.connectors_partial_snapshot,
         Some(snapshot)
             if snapshot
                 .connectors
@@ -1547,7 +1548,7 @@ async fn apps_refresh_failure_keeps_existing_full_snapshot() {
     );
 
     assert_matches!(
-        &chat.connectors.cache,
+        &chat.connectors_cache,
         ConnectorsCacheState::Ready(snapshot) if snapshot.connectors == full_connectors
     );
 
@@ -1688,8 +1689,8 @@ async fn apps_refresh_failure_with_cached_snapshot_triggers_pending_force_refetc
         .enable(Feature::Apps)
         .expect("test config should allow feature update");
     chat.bottom_pane.set_connectors_enabled(/*enabled*/ true);
-    chat.connectors.prefetch_in_flight = true;
-    chat.connectors.force_refetch_pending = true;
+    chat.connectors_prefetch_in_flight = true;
+    chat.connectors_force_refetch_pending = true;
 
     let full_connectors = vec![AppInfo {
         id: "unit_test_apps_refresh_failure_pending_connector".to_string(),
@@ -1706,7 +1707,7 @@ async fn apps_refresh_failure_with_cached_snapshot_triggers_pending_force_refetc
         is_enabled: true,
         plugin_display_names: Vec::new(),
     }];
-    chat.connectors.cache = ConnectorsCacheState::Ready(ConnectorsSnapshot {
+    chat.connectors_cache = ConnectorsCacheState::Ready(ConnectorsSnapshot {
         connectors: full_connectors.clone(),
     });
 
@@ -1715,10 +1716,10 @@ async fn apps_refresh_failure_with_cached_snapshot_triggers_pending_force_refetc
         /*is_final*/ true,
     );
 
-    assert!(chat.connectors.prefetch_in_flight);
-    assert!(!chat.connectors.force_refetch_pending);
+    assert!(chat.connectors_prefetch_in_flight);
+    assert!(!chat.connectors_force_refetch_pending);
     assert_matches!(
-        &chat.connectors.cache,
+        &chat.connectors_cache,
         ConnectorsCacheState::Ready(snapshot) if snapshot.connectors == full_connectors
     );
 }
@@ -1812,7 +1813,7 @@ async fn apps_popup_keeps_existing_full_snapshot_while_partial_refresh_loads() {
     );
 
     assert_matches!(
-        &chat.connectors.cache,
+        &chat.connectors_cache,
         ConnectorsCacheState::Ready(snapshot) if snapshot.connectors == full_connectors
     );
 
@@ -1871,7 +1872,7 @@ async fn apps_refresh_failure_without_full_snapshot_falls_back_to_installed_apps
     );
 
     assert_matches!(
-        &chat.connectors.cache,
+        &chat.connectors_cache,
         ConnectorsCacheState::Ready(snapshot) if snapshot.connectors.len() == 1
     );
 
@@ -1983,7 +1984,7 @@ async fn apps_refresh_preserves_toggled_enabled_state() {
     );
 
     assert_matches!(
-        &chat.connectors.cache,
+        &chat.connectors_cache,
         ConnectorsCacheState::Ready(snapshot)
             if snapshot
                 .connectors

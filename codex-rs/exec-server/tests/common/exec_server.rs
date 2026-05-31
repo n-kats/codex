@@ -151,19 +151,28 @@ impl ExecServerHarness {
         self.next_event_with_timeout(EVENT_TIMEOUT).await
     }
 
-    pub(crate) async fn wait_for_event<F>(
+    pub(crate) async fn wait_for_event<F>(&mut self, predicate: F) -> anyhow::Result<JSONRPCMessage>
+    where
+        F: FnMut(&JSONRPCMessage) -> bool,
+    {
+        self.wait_for_event_with_timeout(EVENT_TIMEOUT, predicate)
+            .await
+    }
+
+    pub(crate) async fn wait_for_event_with_timeout<F>(
         &mut self,
+        timeout_duration: Duration,
         mut predicate: F,
     ) -> anyhow::Result<JSONRPCMessage>
     where
         F: FnMut(&JSONRPCMessage) -> bool,
     {
-        let deadline = Instant::now() + EVENT_TIMEOUT;
+        let deadline = Instant::now() + timeout_duration;
         loop {
             let now = Instant::now();
             if now >= deadline {
                 return Err(anyhow!(
-                    "timed out waiting for matching exec-server event after {EVENT_TIMEOUT:?}"
+                    "timed out waiting for matching exec-server event after {timeout_duration:?}"
                 ));
             }
             let remaining = deadline.duration_since(now);

@@ -220,13 +220,13 @@ impl ConfigManager {
         fallback_cwd: Option<PathBuf>,
     ) -> std::io::Result<Config> {
         let mut request_overrides = request_overrides.unwrap_or_default();
-        if let Some(value) = request_overrides.remove("bypass_hook_trust") {
-            typesafe_overrides.bypass_hook_trust = Some(value.as_bool().ok_or_else(|| {
-                std::io::Error::new(
+        if let Some(value) = request_overrides.get("bypass_hook_trust") {
+            if !value.is_boolean() {
+                return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "`bypass_hook_trust` override must be a boolean",
-                )
-            })?);
+                ));
+            }
         }
         let merged_cli_overrides = cli_overrides
             .iter()
@@ -242,7 +242,6 @@ impl ConfigManager {
             .codex_home(self.codex_home.clone())
             .cli_overrides(merged_cli_overrides)
             .loader_overrides(self.loader_overrides.clone())
-            .strict_config(self.strict_config)
             .harness_overrides(typesafe_overrides)
             .fallback_cwd(fallback_cwd)
             .cloud_requirements(self.current_cloud_requirements())
@@ -271,10 +270,7 @@ impl ConfigManager {
             &self.codex_home,
             cwd,
             &self.current_cli_overrides(),
-            codex_config::ConfigLoadOptions {
-                loader_overrides: self.loader_overrides.clone(),
-                strict_config: self.strict_config,
-            },
+            self.loader_overrides.clone(),
             self.current_cloud_requirements(),
             thread_config_loader.as_ref(),
         )

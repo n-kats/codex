@@ -353,9 +353,15 @@ fn standalone_image_generation_available(
 fn wait_agent_timeout_options(turn_context: &TurnContext) -> WaitAgentTimeoutOptions {
     if multi_agent_v2_enabled(turn_context) {
         return WaitAgentTimeoutOptions {
-            default_timeout_ms: turn_context.config.multi_agent_v2.default_wait_timeout_ms,
+            default_timeout_ms: turn_context
+                .tools_config
+                .wait_agent_default_timeout_ms
+                .unwrap_or(DEFAULT_WAIT_TIMEOUT_MS),
             min_timeout_ms: turn_context.config.multi_agent_v2.min_wait_timeout_ms,
-            max_timeout_ms: turn_context.config.multi_agent_v2.max_wait_timeout_ms,
+            max_timeout_ms: turn_context
+                .tools_config
+                .wait_agent_max_timeout_ms
+                .unwrap_or(MAX_WAIT_TIMEOUT_MS),
         };
     }
 
@@ -652,20 +658,25 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mu
     let turn_context = context.turn_context;
     if collab_tools_enabled(turn_context) {
         if multi_agent_v2_enabled(turn_context) {
-            let exposure = if turn_context.config.multi_agent_v2.non_code_mode_only {
+            let exposure = if turn_context.tools_config.multi_agent_v2_non_code_mode_only {
                 ToolExposure::DirectModelOnly
             } else {
                 ToolExposure::Direct
             };
             let tool_namespace = namespace_tools_enabled(turn_context)
-                .then_some(turn_context.config.multi_agent_v2.tool_namespace.as_deref())
+                .then_some(
+                    turn_context
+                        .tools_config
+                        .multi_agent_v2_tool_namespace
+                        .as_deref(),
+                )
                 .flatten();
             let agent_type_description =
                 agent_type_description(turn_context, context.default_agent_type_description);
             planned_tools.add_arc(override_tool_exposure(
                 multi_agent_v2_handler(
                     SpawnAgentHandlerV2::new(SpawnAgentToolOptions {
-                        available_models: turn_context.available_models.clone(),
+                        available_models: turn_context.available_models().to_vec(),
                         agent_type_description,
                         hide_agent_type_model_reasoning: turn_context
                             .config
@@ -715,7 +726,7 @@ fn add_collaboration_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mu
                 };
             planned_tools.add_with_exposure(
                 SpawnAgentHandler::new(SpawnAgentToolOptions {
-                    available_models: turn_context.available_models.clone(),
+                    available_models: turn_context.available_models().to_vec(),
                     agent_type_description,
                     hide_agent_type_model_reasoning: turn_context
                         .config

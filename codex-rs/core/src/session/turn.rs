@@ -274,7 +274,7 @@ pub(crate) async fn run_turn(
                     auto_compact_scope_tokens = token_status.auto_compact_scope_tokens,
                     estimated_token_count = ?estimated_token_count,
                     auto_compact_scope_limit = token_status.auto_compact_scope_limit,
-                    auto_compact_limit_scope = ?turn_context.config.model_auto_compact_token_limit_scope,
+                    auto_compact_limit_scope = ?turn_context.config.model_auto_compact_token_limit,
                     auto_compact_window_ordinal = ?token_status.auto_compact_window_ordinal,
                     auto_compact_window_prefill_tokens = ?token_status.auto_compact_window_prefill_tokens,
                     full_context_window_limit = ?token_status.full_context_window_limit,
@@ -628,11 +628,7 @@ async fn track_turn_resolved_config_analytics(
             permission_profile_cwd: turn_context.cwd.to_path_buf(),
             reasoning_effort: turn_context.reasoning_effort,
             reasoning_summary: Some(turn_context.reasoning_summary),
-            service_tier: turn_context
-                .config
-                .service_tier
-                .as_deref()
-                .and_then(ServiceTier::from_request_value),
+            service_tier: turn_context.config.service_tier.clone(),
             approval_policy: turn_context.approval_policy.value(),
             approvals_reviewer: turn_context.config.approvals_reviewer,
             sandbox_network_access: turn_context.network_sandbox_policy().is_enabled(),
@@ -663,32 +659,17 @@ async fn auto_compact_token_status(
     let active_context_tokens = sess.get_total_token_usage().await;
     let mut auto_compact_window_ordinal = None;
     let mut auto_compact_window_prefill_tokens = None;
-    let (auto_compact_scope_tokens, auto_compact_scope_limit, full_context_window_limit) =
-        match turn_context.config.model_auto_compact_token_limit_scope {
-            AutoCompactTokenLimitScope::Total => (
-                active_context_tokens,
-                turn_context
-                    .model_info
-                    .auto_compact_token_limit()
-                    .unwrap_or(i64::MAX),
-                None,
-            ),
-            AutoCompactTokenLimitScope::BodyAfterPrefix => {
-                let window = sess.auto_compact_window_snapshot().await;
-                auto_compact_window_ordinal = Some(window.ordinal);
-                auto_compact_window_prefill_tokens = window.prefill_input_tokens;
-                let baseline = window.prefill_input_tokens.unwrap_or(active_context_tokens);
-                (
-                    active_context_tokens.saturating_sub(baseline),
-                    turn_context
-                        .config
-                        .model_auto_compact_token_limit
-                        .or_else(|| turn_context.model_info.auto_compact_token_limit())
-                        .unwrap_or(i64::MAX),
-                    turn_context.model_context_window(),
-                )
-            }
-        };
+    let window = sess.auto_compact_window_snapshot().await;
+    auto_compact_window_ordinal = Some(window.ordinal);
+    auto_compact_window_prefill_tokens = window.prefill_input_tokens;
+    let baseline = window.prefill_input_tokens.unwrap_or(active_context_tokens);
+    let auto_compact_scope_tokens = active_context_tokens.saturating_sub(baseline);
+    let auto_compact_scope_limit = turn_context
+        .config
+        .model_auto_compact_token_limit
+        .or_else(|| turn_context.model_info.auto_compact_token_limit())
+        .unwrap_or(i64::MAX);
+    let full_context_window_limit = turn_context.model_context_window();
     let full_context_window_limit_reached =
         full_context_window_limit.is_some_and(|full_context_window_limit| {
             active_context_tokens >= full_context_window_limit
@@ -755,20 +736,13 @@ async fn maybe_run_previous_model_inline_compact(
         return Ok(());
     };
     let active_context_tokens = sess.get_total_token_usage().await;
-    let previous_model_limit_reached = match turn_context
-        .config
-        .model_auto_compact_token_limit_scope
-    {
-        AutoCompactTokenLimitScope::Total => {
-            let new_auto_compact_limit = turn_context
-                .model_info
-                .auto_compact_token_limit()
-                .unwrap_or(i64::MAX);
-            active_context_tokens > new_auto_compact_limit
-                || active_context_tokens >= new_context_window
-        }
-        AutoCompactTokenLimitScope::BodyAfterPrefix => active_context_tokens >= new_context_window,
-    };
+    let previous_model_limit_reached = active_context_tokens
+        >= turn_context
+            .config
+            .model_auto_compact_token_limit
+            .or_else(|| turn_context.model_info.auto_compact_token_limit())
+            .unwrap_or(i64::MAX)
+        || active_context_tokens >= new_context_window;
     let should_run = previous_model_limit_reached
         && previous_model_turn_context.model_info.slug != turn_context.model_info.slug
         && old_context_window > new_context_window;
@@ -892,6 +866,63 @@ pub(super) fn collect_explicit_app_ids_from_skill_items(
     }
 
     connector_ids
+}
+
+#[cfg(test)]
+pub(crate) fn filter_connectors_for_input(
+    connectors: &[connectors::AppInfo],
+    input: &[ResponseItem],
+    explicitly_enabled_connectors: &HashSet<String>,
+    skill_name_counts_lower: &HashMap<String, usize>,
+) -> Vec<connectors::AppInfo> {
+    if connectors.is_empty() || input.is_empty() {
+        return Vec::new();
+    }
+
+    let user_messages = input
+        .iter()
+        .filter_map(|item| match item {
+            ResponseItem::Message { content, .. } => {
+                content.iter().find_map(|content_item| match content_item {
+                    ContentItem::InputText { text } => Some(text.clone()),
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if user_messages.is_empty() {
+        return Vec::new();
+    }
+
+    let mentions = collect_tool_mentions_from_messages(&user_messages);
+    if mentions
+        .paths
+        .iter()
+        .any(|path| tool_kind_for_path(path) == ToolMentionKind::Plugin)
+    {
+        return Vec::new();
+    }
+
+    let mention_names_lower = mentions
+        .plain_names
+        .iter()
+        .map(|name| name.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let connector_slug_counts = build_connector_slug_counts(connectors);
+    connectors
+        .iter()
+        .filter(|connector| {
+            connector.is_enabled || explicitly_enabled_connectors.contains(&connector.id)
+        })
+        .filter(|connector| {
+            let slug = codex_connectors::metadata::connector_mention_slug(connector);
+            let connector_count = connector_slug_counts.get(&slug).copied().unwrap_or(0);
+            let skill_count = skill_name_counts_lower.get(&slug).copied().unwrap_or(0);
+            connector_count == 1 && skill_count == 0 && mention_names_lower.contains(&slug)
+        })
+        .cloned()
+        .collect()
 }
 
 pub(crate) fn build_prompt(
@@ -1727,7 +1758,11 @@ async fn try_run_sampling_request(
             &turn_context.session_telemetry,
             turn_context.reasoning_effort,
             turn_context.reasoning_summary,
-            turn_context.config.service_tier.clone(),
+            turn_context
+                .config
+                .service_tier
+                .clone()
+                .map(|service_tier| service_tier.request_value().to_string()),
             turn_metadata_header,
             &inference_trace,
         )
@@ -1989,7 +2024,7 @@ async fn try_run_sampling_request(
             ResponseEvent::RateLimits(snapshot) => {
                 // Update internal state with latest rate limits, but defer sending until
                 // token usage is available to avoid duplicate TokenCount events.
-                sess.record_rate_limits_info(snapshot).await;
+                sess.update_rate_limits(&turn_context, snapshot).await;
                 should_emit_token_count = true;
             }
             ResponseEvent::ModelsEtag(etag) => {
@@ -2008,7 +2043,7 @@ async fn try_run_sampling_request(
                     &mut assistant_message_stream_parsers,
                 )
                 .await;
-                sess.record_token_usage_info(&turn_context, token_usage.as_ref())
+                sess.update_token_usage_info(&turn_context, token_usage.as_ref())
                     .await;
                 should_emit_token_count = true;
                 should_emit_turn_diff = true;

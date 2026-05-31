@@ -56,3 +56,7 @@ pub(crate) fn default_mode_mask(model_catalog: &ModelCatalog) -> Option<Collabor
 pub(crate) fn plan_mask(model_catalog: &ModelCatalog) -> Option<CollaborationModeMask> {
     mask_for_kind(model_catalog, ModeKind::Plan)
 }
+
+pub(crate) fn presets_for_tui(model_catalog: &ModelCatalog) -> Vec<CollaborationModeMask> {
+    filtered_presets(model_catalog)
+}

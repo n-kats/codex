@@ -249,7 +249,7 @@ impl UserMessageItem {
         // Legacy user-message events flatten only text inputs into `message` and
         // rebase text element ranges onto that concatenated text.
         EventMsg::UserMessage(UserMessageEvent {
-            client_id: self.client_id.clone(),
+            client_id: None,
             message: self.message(),
             images: Some(self.image_urls()),
             image_details: self.image_details(),
@@ -532,6 +532,7 @@ impl FileChangeItem {
 impl McpToolCallItem {
     pub fn as_legacy_begin_event(&self) -> EventMsg {
         EventMsg::McpToolCallBegin(McpToolCallBeginEvent {
+            plugin_id: None,
             call_id: self.id.clone(),
             invocation: McpInvocation {
                 server: self.server.clone(),
@@ -539,7 +540,6 @@ impl McpToolCallItem {
                 arguments: (!self.arguments.is_null()).then(|| self.arguments.clone()),
             },
             mcp_app_resource_uri: self.mcp_app_resource_uri.clone(),
-            plugin_id: self.plugin_id.clone(),
         })
     }
 
@@ -551,6 +551,7 @@ impl McpToolCallItem {
         };
 
         Some(EventMsg::McpToolCallEnd(McpToolCallEndEvent {
+            plugin_id: None,
             call_id: self.id.clone(),
             invocation: McpInvocation {
                 server: self.server.clone(),
@@ -558,7 +559,6 @@ impl McpToolCallItem {
                 arguments: (!self.arguments.is_null()).then(|| self.arguments.clone()),
             },
             mcp_app_resource_uri: self.mcp_app_resource_uri.clone(),
-            plugin_id: self.plugin_id.clone(),
             duration: self.duration?,
             result,
         }))

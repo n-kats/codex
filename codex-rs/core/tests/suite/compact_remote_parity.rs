@@ -520,7 +520,7 @@ async fn build_harness_inner(
         config.user_instructions = Some("PARITY_USER_INSTRUCTIONS".to_string());
         config.developer_instructions = Some("PARITY_DEVELOPER_INSTRUCTIONS".to_string());
         if settings.service_tier_fast {
-            config.service_tier = Some(ServiceTier::Fast.request_value().to_string());
+            config.service_tier = Some(ServiceTier::Fast);
         }
         config.model_auto_compact_token_limit = auto_compact_limit;
         if hooks {

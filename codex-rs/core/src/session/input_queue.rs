@@ -21,7 +21,79 @@ pub(crate) enum TurnInput {
 /// Turn-local pending input storage owned by the input queue flow.
 #[derive(Default)]
 pub(crate) struct TurnInputQueue {
-    items: Vec<TurnInput>,
+    pub(crate) items: Vec<TurnInput>,
+}
+
+impl TurnInputQueue {
+    pub(crate) fn push(&mut self, item: TurnInput) {
+        self.items.push(item);
+    }
+
+    pub(crate) fn prepend(&mut self, mut items: Vec<TurnInput>) {
+        items.append(&mut self.items);
+        self.items = items;
+    }
+
+    pub(crate) fn take(&mut self) -> Vec<codex_protocol::models::ResponseInputItem> {
+        self.items
+            .drain(..)
+            .flat_map(|item| match item {
+                TurnInput::UserInput { content, .. } => vec![content.into()],
+                TurnInput::ResponseItem(item) => {
+                    vec![match item {
+                        codex_protocol::models::ResponseItem::Message {
+                            role,
+                            content,
+                            phase,
+                            ..
+                        } => codex_protocol::models::ResponseInputItem::Message {
+                            role,
+                            content,
+                            phase,
+                        },
+                        codex_protocol::models::ResponseItem::FunctionCallOutput {
+                            call_id,
+                            output,
+                        } => codex_protocol::models::ResponseInputItem::FunctionCallOutput {
+                            call_id,
+                            output,
+                        },
+                        codex_protocol::models::ResponseItem::CustomToolCallOutput {
+                            call_id,
+                            name,
+                            output,
+                        } => codex_protocol::models::ResponseInputItem::CustomToolCallOutput {
+                            call_id,
+                            name,
+                            output,
+                        },
+                        codex_protocol::models::ResponseItem::ToolSearchOutput {
+                            call_id,
+                            status,
+                            execution,
+                            tools,
+                        } => codex_protocol::models::ResponseInputItem::ToolSearchOutput {
+                            call_id: call_id.unwrap_or_default(),
+                            status,
+                            execution,
+                            tools,
+                        },
+                        other => codex_protocol::models::ResponseInputItem::Message {
+                            role: "assistant".to_string(),
+                            content: vec![codex_protocol::models::ContentItem::OutputText {
+                                text: format!("{other:?}"),
+                            }],
+                            phase: None,
+                        },
+                    }]
+                }
+            })
+            .collect()
+    }
+
+    pub(crate) fn has_items(&self) -> bool {
+        !self.items.is_empty()
+    }
 }
 
 /// Session-scoped pending input storage and active-turn mailbox delivery coordination.
@@ -70,12 +142,14 @@ impl InputQueue {
             .any(|mail| mail.trigger_turn)
     }
 
-    pub(crate) async fn drain_mailbox_input_items(&self) -> Vec<ResponseItem> {
+    pub(crate) async fn drain_mailbox_input_items(
+        &self,
+    ) -> Vec<codex_protocol::models::ResponseInputItem> {
         self.mailbox_pending_mails
             .lock()
             .await
             .drain(..)
-            .map(|mail| ResponseItem::from(mail.to_response_input_item()))
+            .map(|mail| mail.to_response_input_item())
             .collect()
     }
 
@@ -193,7 +267,7 @@ impl InputQueue {
             .drain_mailbox_input_items()
             .await
             .into_iter()
-            .map(TurnInput::ResponseItem);
+            .map(|item| TurnInput::ResponseItem(ResponseItem::from(item)));
         if pending_input.is_empty() {
             mailbox_items.collect()
         } else {

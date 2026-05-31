@@ -61,7 +61,6 @@ impl HistoryEntry {
                 .mentions
                 .into_iter()
                 .map(|mention| MentionBinding {
-                    sigil: mention.sigil,
                     mention: mention.mention,
                     path: mention.path,
                 })

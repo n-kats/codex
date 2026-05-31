@@ -44,6 +44,7 @@ impl GoalMetrics {
                     codex_state::ThreadGoalStatus::Paused
                         | codex_state::ThreadGoalStatus::Blocked
                         | codex_state::ThreadGoalStatus::UsageLimited
+                        | codex_state::ThreadGoalStatus::BudgetLimited
                 )
             )
         {

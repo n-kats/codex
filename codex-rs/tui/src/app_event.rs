@@ -897,6 +897,9 @@ pub(crate) enum AppEvent {
     /// Open the custom prompt option from the review popup.
     OpenReviewCustomPrompt,
 
+    /// Update the active collaboration mode preset in the TUI.
+    UpdateCollaborationMode(CollaborationModeMask),
+
     /// Submit a user message with an explicit collaboration mask.
     SubmitUserMessageWithMode {
         text: String,

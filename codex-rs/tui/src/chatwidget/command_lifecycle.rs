@@ -10,7 +10,7 @@ impl ChatWidget {
         let Some(wait) = self.unified_exec_wait_streak.take() else {
             return;
         };
-        self.transcript.needs_final_message_separator = true;
+        self.needs_final_message_separator = true;
         let cell = history_cell::new_unified_exec_interaction(wait.command_display, String::new());
         self.app_event_tx
             .send(AppEvent::InsertHistoryCell(Box::new(cell)));
@@ -93,8 +93,7 @@ impl ChatWidget {
             self.bottom_pane.ensure_status_indicator();
             self.bottom_pane
                 .set_interrupt_hint_visible(/*visible*/ true);
-            self.status_state.terminal_title_status_kind =
-                TerminalTitleStatusKind::WaitingForBackgroundTerminal;
+        self.terminal_title_status_kind = TerminalTitleStatusKind::WaitingForBackgroundTerminal;
             self.set_status(
                 "Waiting for background terminal".to_string(),
                 command_display.clone(),
@@ -297,7 +296,7 @@ impl ChatWidget {
         } else {
             self.flush_active_cell();
 
-            self.transcript.active_cell = Some(Box::new(new_active_exec_command(
+            self.active_cell = Some(Box::new(new_active_exec_command(
                 id,
                 command,
                 parsed_cmd,
@@ -365,7 +364,7 @@ impl ChatWidget {
         let is_unified_exec_interaction =
             matches!(source, ExecCommandSource::UnifiedExecInteraction);
         let is_user_shell = source == ExecCommandSource::UserShell;
-        let end_target = match self.transcript.active_cell.as_ref() {
+        let end_target = match self.active_cell.as_ref() {
             Some(cell) => match cell.as_any().downcast_ref::<ExecCell>() {
                 Some(exec_cell) if exec_cell.iter_calls().any(|call| call.call_id == id) => {
                     ExecEndTarget::ActiveTracked
@@ -423,7 +422,7 @@ impl ChatWidget {
                 );
                 let completed = orphan.complete_call(&id, output, duration);
                 debug_assert!(completed, "new orphan exec cell should contain {id}");
-                self.transcript.needs_final_message_separator = true;
+                self.needs_final_message_separator = true;
                 self.app_event_tx
                     .send(AppEvent::InsertHistoryCell(Box::new(orphan)));
                 self.request_redraw();
@@ -443,14 +442,14 @@ impl ChatWidget {
                 if cell.should_flush() {
                     self.add_to_history(cell);
                 } else {
-                    self.transcript.active_cell = Some(Box::new(cell));
+                    self.active_cell = Some(Box::new(cell));
                     self.bump_active_cell_revision();
                     self.request_redraw();
                 }
             }
         }
         // Mark that actual work was done (command executed)
-        self.transcript.had_work_activity = true;
+        self.had_work_activity = true;
         if is_user_shell {
             self.maybe_send_next_queued_input();
         }
