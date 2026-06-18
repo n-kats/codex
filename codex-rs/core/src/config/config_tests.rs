@@ -113,6 +113,7 @@ use codex_config::test_support::CloudConfigBundleFixture;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -3552,6 +3553,30 @@ fn tui_theme_defaults_to_none() {
 }
 
 #[test]
+fn custom_theme_diff_deserializes_from_toml() {
+    let cfg = r##"
+[custom.theme.diff]
+enabled = true
+line_bg = false
+gutter = true
+sign = false
+content = true
+add_line_bg = "#102030"
+del_line_bg = "402010"
+"##;
+    let parsed = toml::from_str::<ConfigToml>(cfg).expect("TOML deserialization should succeed");
+    let diff = parsed.custom.theme.diff.expect("custom diff theme");
+
+    assert_eq!(diff.enabled, Some(true));
+    assert_eq!(diff.line_bg, Some(false));
+    assert_eq!(diff.gutter, Some(true));
+    assert_eq!(diff.sign, Some(false));
+    assert_eq!(diff.content, Some(true));
+    assert_eq!(diff.add_line_bg.as_deref(), Some("#102030"));
+    assert_eq!(diff.del_line_bg.as_deref(), Some("402010"));
+}
+
+#[test]
 fn tui_session_picker_view_deserializes_from_toml() {
     let cfg = r#"
 [tui]
@@ -5110,6 +5135,32 @@ async fn add_dir_override_extends_workspace_writable_roots() -> std::io::Result<
             other => panic!("expected workspace-write policy, got {other:?}"),
         }
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn agents_md_override_resolves_relative_paths_against_cwd() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let workspace = TempDir::new()?;
+
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: vec![PathBuf::from("docs/AGENTS.md")],
+            ..Default::default()
+        },
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.project_doc_paths,
+        vec![AbsolutePathBuf::try_from(
+            workspace.path().join("docs/AGENTS.md")
+        )?]
+    );
 
     Ok(())
 }

@@ -1,12 +1,48 @@
 //! Shared command-line flags used by both interactive and non-interactive Codex entry points.
 
 use crate::SandboxModeCliArg;
+use clap::ArgAction;
 use clap::Args;
 use codex_protocol::config_types::ProfileV2Name;
 use std::path::PathBuf;
 
 #[derive(Args, Clone, Debug, Default)]
 pub struct SharedCliOptions {
+    /// Override the Codex home directory used for config, logs, and caches.
+    #[arg(long = "codex-home", value_name = "DIR", global = true)]
+    pub codex_home: Option<PathBuf>,
+
+    /// Override the Codex memories directory used for writable memory roots.
+    #[arg(long = "codex-memory", value_name = "DIR", global = true)]
+    pub codex_memory: Option<PathBuf>,
+
+    /// Use these project doc files instead of auto-discovering `AGENTS.md`.
+    ///
+    /// When provided, Codex reads these files in order and errors if any path
+    /// is missing.
+    #[arg(
+        long = "agents-md",
+        value_name = "FILE",
+        value_hint = clap::ValueHint::FilePath,
+        action = ArgAction::Append,
+        global = true
+    )]
+    pub agents_md: Vec<PathBuf>,
+
+    /// Read user config from this file instead of `$CODEX_HOME/config.toml`.
+    #[arg(
+        long = "config-file",
+        alias = "config-toml-file",
+        value_name = "FILE",
+        global = true,
+        conflicts_with = "no_config"
+    )]
+    pub config_toml_file: Option<PathBuf>,
+
+    /// Skip user and project config layers for this invocation.
+    #[arg(long = "no-config-file", global = true, default_value_t = false)]
+    pub no_config: bool,
+
     /// Optional image(s) to attach to the initial prompt.
     #[arg(
         long = "image",
@@ -67,6 +103,11 @@ impl SharedCliOptions {
         let self_selected_sandbox_mode =
             self.sandbox_mode.is_some() || self.dangerously_bypass_approvals_and_sandbox;
         let Self {
+            codex_home,
+            codex_memory,
+            agents_md,
+            config_toml_file,
+            no_config,
             images,
             model,
             oss,
@@ -79,6 +120,11 @@ impl SharedCliOptions {
             add_dir,
         } = self;
         let Self {
+            codex_home: root_codex_home,
+            codex_memory: root_codex_memory,
+            agents_md: root_agents_md,
+            config_toml_file: root_config_toml_file,
+            no_config: root_no_config,
             images: root_images,
             model: root_model,
             oss: root_oss,
@@ -91,6 +137,21 @@ impl SharedCliOptions {
             add_dir: root_add_dir,
         } = root;
 
+        if codex_home.is_none() {
+            codex_home.clone_from(root_codex_home);
+        }
+        if codex_memory.is_none() {
+            codex_memory.clone_from(root_codex_memory);
+        }
+        if agents_md.is_empty() {
+            agents_md.clone_from(root_agents_md);
+        }
+        if config_toml_file.is_none() {
+            config_toml_file.clone_from(root_config_toml_file);
+        }
+        if !*no_config {
+            *no_config = *root_no_config;
+        }
         if model.is_none() {
             model.clone_from(root_model);
         }
@@ -132,6 +193,11 @@ impl SharedCliOptions {
         let subcommand_selected_sandbox_mode = subcommand.sandbox_mode.is_some()
             || subcommand.dangerously_bypass_approvals_and_sandbox;
         let Self {
+            codex_home,
+            codex_memory,
+            agents_md,
+            config_toml_file,
+            no_config,
             images,
             model,
             oss,
@@ -144,6 +210,21 @@ impl SharedCliOptions {
             add_dir,
         } = subcommand;
 
+        if let Some(codex_home) = codex_home {
+            self.codex_home = Some(codex_home);
+        }
+        if let Some(codex_memory) = codex_memory {
+            self.codex_memory = Some(codex_memory);
+        }
+        if !agents_md.is_empty() {
+            self.agents_md = agents_md;
+        }
+        if let Some(config_toml_file) = config_toml_file {
+            self.config_toml_file = Some(config_toml_file);
+        }
+        if no_config {
+            self.no_config = true;
+        }
         if let Some(model) = model {
             self.model = Some(model);
         }

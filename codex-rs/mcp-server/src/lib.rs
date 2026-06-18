@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use codex_arg0::Arg0DispatchPaths;
 use codex_core::config::ConfigBuilder;
+use codex_core::config::LoaderOverrides;
 use codex_core::resolve_installation_id;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
@@ -59,6 +60,7 @@ type IncomingMessage = JsonRpcMessage<ClientRequest, Value, ClientNotification>;
 pub async fn run_main(
     arg0_paths: Arg0DispatchPaths,
     cli_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
     strict_config: bool,
 ) -> IoResult<()> {
     // Parse CLI overrides once and derive the base Config eagerly so later
@@ -70,6 +72,7 @@ pub async fn run_main(
         )
     })?;
     let config = ConfigBuilder::default()
+        .loader_overrides(loader_overrides)
         .cli_overrides(cli_kv_overrides)
         .strict_config(strict_config)
         .build()

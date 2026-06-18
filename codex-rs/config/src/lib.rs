@@ -4,6 +4,7 @@ mod config_layer_source;
 mod config_requirements;
 pub mod config_toml;
 mod constraint;
+pub mod custom;
 mod diagnostics;
 mod fingerprint;
 mod hook_config;

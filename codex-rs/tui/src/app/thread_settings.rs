@@ -110,6 +110,7 @@ impl App {
             service_tier,
             collaboration_mode,
             personality,
+            project_doc_paths,
         } = op
         else {
             return;
@@ -129,6 +130,7 @@ impl App {
             service_tier: service_tier.clone(),
             collaboration_mode: collaboration_mode.clone(),
             personality: *personality,
+            project_doc_paths: project_doc_paths.clone(),
             ..ThreadSettingsUpdateParams::default()
         };
         self.send_thread_settings_update(app_server, params).await;
@@ -206,4 +208,5 @@ fn thread_settings_update_has_changes(params: &ThreadSettingsUpdateParams) -> bo
         || params.summary.is_some()
         || params.collaboration_mode.is_some()
         || params.personality.is_some()
+        || params.project_doc_paths.is_some()
 }

@@ -1057,6 +1057,7 @@ pub async fn run_main(
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
         show_raw_agent_reasoning: cli.oss.then_some(true),
         bypass_hook_trust: cli.bypass_hook_trust.then_some(true),
+        project_doc_paths: cli.shared.agents_md.clone(),
         additional_writable_roots: additional_dirs,
         ..Default::default()
     };
@@ -1691,6 +1692,11 @@ async fn run_ratatui_app(
     ) {
         config.startup_warnings.push(w);
     }
+    config
+        .startup_warnings
+        .extend(crate::diff_render::set_custom_diff_theme_override(
+            config.custom_theme_diff.as_ref(),
+        ));
 
     set_default_client_residency_requirement(config.enforce_residency.value());
     let should_show_trust_screen = should_show_trust_screen(&config);

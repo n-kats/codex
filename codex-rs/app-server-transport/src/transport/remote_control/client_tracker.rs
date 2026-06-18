@@ -709,19 +709,27 @@ mod tests {
                 .await
         });
 
-        tokio::task::yield_now().await;
-        tokio::time::advance(
-            REMOTE_CONTROL_TRANSPORT_EVENT_SEND_TIMEOUT + Duration::from_millis(1),
-        )
-        .await;
-
-        assert!(handle_message.await.expect("handle message task").is_err());
-        let connection_id = match transport_event_rx.recv().await.expect("open event") {
+        assert!(
+            timeout(Duration::from_secs(1), &mut handle_message)
+                .await
+                .expect("initialize timeout rollback should not wait for close delivery")
+                .expect("handle message task should not panic")
+                .is_err()
+        );
+        let connection_id = match timeout(Duration::from_secs(1), transport_event_rx.recv())
+            .await
+            .expect("open event")
+            .expect("open event channel should stay open")
+        {
             TransportEvent::ConnectionOpened { connection_id, .. } => connection_id,
             other => panic!("expected connection opened, got {other:?}"),
         };
 
-        match transport_event_rx.recv().await.expect("close event") {
+        match timeout(Duration::from_secs(1), transport_event_rx.recv())
+            .await
+            .expect("close event")
+            .expect("close event channel should stay open")
+        {
             TransportEvent::ConnectionClosed {
                 connection_id: closed_connection_id,
             } => assert_eq!(closed_connection_id, connection_id),

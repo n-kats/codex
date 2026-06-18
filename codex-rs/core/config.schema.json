@@ -857,6 +857,88 @@
       ],
       "type": "string"
     },
+    "CustomConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "assistant_shell_environment_policy": {
+          "$ref": "#/definitions/ShellEnvironmentPolicyToml"
+        },
+        "theme": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomThemeToml"
+            }
+          ],
+          "default": {
+            "diff": null
+          }
+        },
+        "user_shell": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomUserShellToml"
+            }
+          ],
+          "default": {
+            "no_inject": null
+          }
+        },
+        "user_shell_environment_policy": {
+          "$ref": "#/definitions/ShellEnvironmentPolicyToml"
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeDiffToml": {
+      "additionalProperties": false,
+      "properties": {
+        "add_line_bg": {
+          "type": "string"
+        },
+        "content": {
+          "type": "boolean"
+        },
+        "del_line_bg": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "gutter": {
+          "type": "boolean"
+        },
+        "line_bg": {
+          "type": "boolean"
+        },
+        "sign": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeToml": {
+      "additionalProperties": false,
+      "properties": {
+        "diff": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomThemeDiffToml"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "CustomUserShellToml": {
+      "additionalProperties": false,
+      "properties": {
+        "no_inject": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "DebugConfigLockToml": {
       "additionalProperties": false,
       "properties": {
@@ -4693,6 +4775,24 @@
     "compact_prompt": {
       "description": "Compact prompt used for history compaction.",
       "type": "string"
+    },
+    "custom": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/CustomConfigToml"
+        }
+      ],
+      "default": {
+        "assistant_shell_environment_policy": null,
+        "theme": {
+          "diff": null
+        },
+        "user_shell": {
+          "no_inject": null
+        },
+        "user_shell_environment_policy": null
+      },
+      "description": "Custom fork-specific settings."
     },
     "debug": {
       "allOf": [
