@@ -23,6 +23,7 @@ use codex_analytics::CompactionStatus;
 use codex_analytics::CompactionStrategy;
 use codex_analytics::CompactionTrigger;
 use codex_analytics::now_unix_seconds;
+use codex_hooks::SessionStartSource;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
@@ -167,6 +168,8 @@ async fn run_compact_task_inner(
             attempt.track(sess.as_ref(), status, error).await;
             return Err(CodexErr::TurnAborted);
         }
+        sess.queue_pending_session_start_source(SessionStartSource::Compact)
+            .await;
     }
     attempt.track(sess.as_ref(), status, error).await;
     result.map(|_| ())
@@ -584,6 +587,7 @@ async fn drain_to_completed(
             Ok(ResponseEvent::Completed { token_usage, .. }) => {
                 sess.update_token_usage_info(turn_context, token_usage.as_ref())
                     .await;
+                sess.send_token_count_event(turn_context).await;
                 return Ok(());
             }
             Ok(_) => continue,

@@ -90,6 +90,7 @@ async fn turn_start_shell_zsh_fork_executes_command_v2() -> Result<()> {
         &codex_home,
         &server.uri(),
         "never",
+        &zsh_path,
         &BTreeMap::from([
             (Feature::ShellZshFork, true),
             (Feature::UnifiedExec, false),
@@ -209,6 +210,7 @@ async fn turn_start_shell_zsh_fork_exec_approval_decline_v2() -> Result<()> {
         &codex_home,
         &server.uri(),
         "untrusted",
+        &zsh_path,
         &BTreeMap::from([
             (Feature::ShellZshFork, true),
             (Feature::UnifiedExec, false),
@@ -342,6 +344,7 @@ async fn turn_start_shell_zsh_fork_exec_approval_cancel_v2() -> Result<()> {
         &codex_home,
         &server.uri(),
         "untrusted",
+        &zsh_path,
         &BTreeMap::from([
             (Feature::ShellZshFork, true),
             (Feature::UnifiedExec, false),
@@ -501,6 +504,7 @@ async fn turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2()
         &codex_home,
         &server.uri(),
         "untrusted",
+        &zsh_path,
         &BTreeMap::from([
             (Feature::ShellZshFork, true),
             (Feature::UnifiedExec, false),
@@ -809,6 +813,7 @@ fn create_config_toml(
     codex_home: &Path,
     server_uri: &str,
     approval_policy: &str,
+    zsh_path: &Path,
     feature_flags: &BTreeMap<Feature, bool>,
 ) -> std::io::Result<()> {
     const STARTUP_REMOTE_PLUGIN_SYNC_MARKER_FILE: &str = ".tmp/app-server-remote-plugin-sync-v1";
@@ -840,6 +845,7 @@ fn create_config_toml(
 model = "mock-model"
 approval_policy = "{approval_policy}"
 sandbox_mode = "read-only"
+zsh_path = "{}"
 
 model_provider = "mock_provider"
 
@@ -852,7 +858,8 @@ base_url = "{server_uri}/v1"
 wire_api = "responses"
 request_max_retries = 0
 stream_max_retries = 0
-"#
+"#,
+            zsh_path.display()
         ),
     )
     .and_then(|_| {

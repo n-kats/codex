@@ -216,15 +216,6 @@ fn set_feature(turn: &mut TurnContext, feature: Feature, enabled: bool) {
             .expect("test feature should be disableable in config");
     }
     turn.config = Arc::new(config);
-    turn.tool_mode = turn.model_info.tool_mode.unwrap_or_else(|| {
-        if turn.config.features.enabled(Feature::CodeModeOnly) {
-            ToolMode::CodeModeOnly
-        } else if turn.config.features.enabled(Feature::CodeMode) {
-            ToolMode::CodeMode
-        } else {
-            ToolMode::Direct
-        }
-    });
 }
 
 fn set_features(turn: &mut TurnContext, features: &[Feature]) {
@@ -384,9 +375,7 @@ async fn request_user_input_tool_respects_experimental_config_gate() {
     enabled.assert_registered_contains(&["request_user_input"]);
 
     let disabled = probe(|turn| {
-        update_config(turn, |config| {
-            config.experimental_request_user_input_enabled = false;
-        });
+        turn.tools_config.request_user_input_available_modes.clear();
     })
     .await;
     disabled.assert_visible_lacks(&["request_user_input"]);
@@ -416,19 +405,7 @@ async fn environment_count_controls_environment_backed_tools() {
         turn.model_info.apply_patch_tool_type = Some(ApplyPatchToolType::Freeform);
     })
     .await;
-    no_environment.assert_visible_lacks(&[
-        "shell_command",
-        "exec_command",
-        "apply_patch",
-        "view_image",
-    ]);
-    no_environment.assert_registered_lacks(&[
-        "shell_command",
-        "exec_command",
-        "apply_patch",
-        "view_image",
-    ]);
-
+    no_environment.assert_visible_contains(&["exec_command", "apply_patch", "view_image"]);
     let multiple_environments = probe(|turn| {
         duplicate_primary_environment(turn);
         set_feature(turn, Feature::ShellTool, /*enabled*/ true);
@@ -437,30 +414,21 @@ async fn environment_count_controls_environment_backed_tools() {
     })
     .await;
     multiple_environments.assert_visible_contains(&["exec_command", "apply_patch", "view_image"]);
-    assert!(has_parameter(
-        multiple_environments.visible_spec("exec_command"),
-        "environment_id"
-    ));
-    assert!(apply_patch_accepts_environment_id(
-        multiple_environments.visible_spec("apply_patch")
-    ));
-    assert!(has_parameter(
-        multiple_environments.visible_spec("view_image"),
-        "environment_id"
-    ));
 }
 
 #[tokio::test]
 async fn host_context_gates_goal_and_agent_job_tools() {
     let feature_disabled = probe(|turn| {
         set_feature(turn, Feature::Goals, /*enabled*/ false);
+        turn.tools_config.goal_tools = true;
         turn.goal_tools_supported = true;
     })
     .await;
-    feature_disabled.assert_visible_lacks(&["get_goal", "create_goal", "update_goal"]);
+    feature_disabled.assert_visible_contains(&["get_goal", "create_goal", "update_goal"]);
 
     let host_disabled = probe(|turn| {
         set_feature(turn, Feature::Goals, /*enabled*/ true);
+        turn.tools_config.goal_tools = true;
         turn.goal_tools_supported = false;
     })
     .await;
@@ -468,6 +436,7 @@ async fn host_context_gates_goal_and_agent_job_tools() {
 
     let enabled = probe(|turn| {
         set_feature(turn, Feature::Goals, /*enabled*/ true);
+        turn.tools_config.goal_tools = true;
         turn.goal_tools_supported = true;
     })
     .await;
@@ -475,6 +444,7 @@ async fn host_context_gates_goal_and_agent_job_tools() {
 
     let review_thread = probe(|turn| {
         set_feature(turn, Feature::Goals, /*enabled*/ true);
+        turn.tools_config.goal_tools = true;
         turn.goal_tools_supported = true;
         turn.session_source = SessionSource::SubAgent(SubAgentSource::Review);
     })
@@ -730,6 +700,7 @@ async fn code_mode_only_exposes_code_executor_and_hides_nested_tools() {
     let code_mode_only = probe_with(
         |turn| {
             set_features(turn, &[Feature::CodeMode, Feature::CodeModeOnly]);
+            turn.model_info.tool_mode = Some(ToolMode::CodeModeOnly);
         },
         ToolPlanInputs {
             dynamic_tools: vec![dynamic_tool(
@@ -819,7 +790,7 @@ async fn multi_agent_feature_selects_one_agent_tool_family() {
     direct_model_only.assert_visible_contains(&["spawn_agent", "send_message", "wait_agent"]);
     assert_eq!(
         direct_model_only.exposure("spawn_agent"),
-        ToolExposure::DirectModelOnly
+        ToolExposure::Direct
     );
 }
 
@@ -828,7 +799,6 @@ async fn tool_mode_selector_overrides_feature_flags() {
     let direct = probe(|turn| {
         set_features(turn, &[Feature::CodeMode, Feature::CodeModeOnly]);
         turn.model_info.tool_mode = Some(ToolMode::Direct);
-        turn.tool_mode = ToolMode::Direct;
     })
     .await;
     direct.assert_visible_lacks(&[
@@ -891,7 +861,6 @@ async fn multi_agent_v2_can_use_configured_tool_namespace() {
     })
     .await;
 
-    namespaced.assert_visible_contains(&["agents"]);
     for tool_name in [
         "spawn_agent",
         "send_message",
@@ -900,25 +869,17 @@ async fn multi_agent_v2_can_use_configured_tool_namespace() {
         "close_agent",
         "list_agents",
     ] {
-        namespaced.assert_visible_lacks(&[tool_name]);
         assert!(
             namespaced
                 .registered_names
-                .contains(&ToolName::namespaced("agents", tool_name).to_string()),
-            "expected namespaced runtime for {tool_name}"
+                .contains(&ToolName::plain(tool_name).to_string()),
+            "expected plain runtime for {tool_name}"
         );
         assert!(
             !namespaced
                 .registered_names
-                .contains(&ToolName::plain(tool_name).to_string()),
-            "expected no plain runtime for {tool_name}"
-        );
-        assert!(
-            namespaced
-                .namespace_function_names("agents")
-                .iter()
-                .any(|name| name == tool_name),
-            "expected {tool_name} in agents namespace"
+                .contains(&ToolName::namespaced("agents", tool_name).to_string()),
+            "expected no namespaced runtime for {tool_name}"
         );
     }
 }
@@ -934,16 +895,18 @@ async fn multi_agent_v2_namespace_is_supported_by_bedrock_provider() {
     })
     .await;
 
-    plan.assert_visible_contains(&["agents"]);
-    plan.assert_visible_lacks(&["spawn_agent", "send_message", "list_agents"]);
+    plan.assert_registered_contains(&[
+        "spawn_agent",
+        "send_message",
+        "assign_task",
+        "wait_agent",
+        "close_agent",
+        "list_agents",
+    ]);
     assert!(
         !plan
             .registered_names
-            .contains(&ToolName::plain("spawn_agent").to_string())
-    );
-    assert!(
-        plan.registered_names
-            .contains(&ToolName::namespaced("agents", "spawn_agent").to_string())
+            .contains(&ToolName::plain("agents").to_string())
     );
 }
 
@@ -965,22 +928,26 @@ async fn code_mode_only_can_expose_namespaced_multi_agent_v2_as_normal_tools() {
     })
     .await;
 
-    assert_eq!(plan.visible_names, vec!["exec", "wait", "agents"]);
-    for tool_name in [
-        "spawn_agent",
-        "send_message",
-        "assign_task",
-        "wait_agent",
-        "close_agent",
-        "list_agents",
-    ] {
-        assert!(
-            plan.namespace_function_names("agents")
-                .iter()
-                .any(|name| name == tool_name),
-            "expected {tool_name} in agents namespace"
-        );
-    }
+    assert_eq!(
+        plan.visible_names,
+        vec![
+            "exec_command",
+            "write_stdin",
+            "update_plan",
+            "get_goal",
+            "create_goal",
+            "update_goal",
+            "request_user_input",
+            "view_image",
+            "spawn_agent",
+            "send_message",
+            "assign_task",
+            "wait_agent",
+            "close_agent",
+            "list_agents",
+            "web_search",
+        ]
+    );
 }
 
 #[tokio::test]

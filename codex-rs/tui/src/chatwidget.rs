@@ -280,6 +280,7 @@ use crate::bottom_pane::DOUBLE_PRESS_QUIT_SHORTCUT_ENABLED;
 use crate::bottom_pane::ExperimentalFeatureItem;
 use crate::bottom_pane::ExperimentalFeaturesView;
 use crate::bottom_pane::GoalStatusIndicator;
+use crate::bottom_pane::HistoryEntry;
 use crate::bottom_pane::InputResult;
 use crate::bottom_pane::LocalImageAttachment;
 use crate::bottom_pane::McpServerElicitationFormRequest;
@@ -353,6 +354,7 @@ use self::plan_implementation::PLAN_IMPLEMENTATION_TITLE;
 mod pets;
 mod rate_limits;
 mod realtime;
+mod rendering;
 use self::realtime::RealtimeConversationUiState;
 mod reasoning_shortcuts;
 mod side;
@@ -1737,7 +1739,7 @@ impl ChatWidget {
         let Some(wait) = self.unified_exec_wait_streak.take() else {
             return;
         };
-        self.needs_final_message_separator = true;
+        self.transcript.needs_final_message_separator = true;
         let cell = history_cell::new_unified_exec_interaction(wait.command_display, String::new());
         self.app_event_tx
             .send(AppEvent::InsertHistoryCell(Box::new(cell)));
@@ -1826,14 +1828,20 @@ impl ChatWidget {
                     StatusDetailsCapitalization::Preserve => trimmed.to_string(),
                 }
             });
-        self.current_status = StatusIndicatorState {
+        let status = StatusIndicatorState {
             header: header.clone(),
             details: details.clone(),
             details_max_lines,
         };
+        self.current_status = status.clone();
+        self.status_state.current_status = status_state::StatusIndicatorState {
+            header: status.header.clone(),
+            details: status.details.clone(),
+            details_max_lines: status.details_max_lines,
+        };
         self.bottom_pane.update_status(
-            header,
-            details,
+            status.header,
+            status.details,
             StatusDetailsCapitalization::Preserve,
             details_max_lines,
         );
@@ -1873,12 +1881,26 @@ impl ChatWidget {
 
     pub(crate) fn set_raw_output_mode(&mut self, enabled: bool) {
         self.raw_output_mode = enabled;
+        self.config.tui_raw_output_mode = enabled;
+        self.refresh_status_surfaces();
     }
 
     pub(crate) fn set_raw_output_mode_and_notify(&mut self, enabled: bool) {
         self.set_raw_output_mode(enabled);
+        self.add_info_message(
+            Self::raw_output_mode_notice(enabled).to_string(),
+            /*hint*/ None,
+        );
         self.app_event_tx
             .send(AppEvent::RawOutputModeChanged { enabled });
+    }
+
+    pub(crate) fn raw_output_mode_notice(enabled: bool) -> &'static str {
+        if enabled {
+            "Raw output mode on: transcript text is shown for clean terminal selection."
+        } else {
+            "Raw output mode off: rich transcript rendering restored."
+        }
     }
 
     pub(crate) fn raw_output_mode(&self) -> bool {
@@ -2044,28 +2066,11 @@ impl ChatWidget {
         if message.is_empty() {
             return;
         }
-        let markdown = message.to_string();
-        match self.agent_turn_markdowns.last_mut() {
-            Some(entry) if entry.user_turn_count == self.visible_user_turn_count => {
-                entry.markdown = markdown.clone();
-            }
-            _ => {
-                self.agent_turn_markdowns.push(AgentTurnMarkdown {
-                    user_turn_count: self.visible_user_turn_count,
-                    markdown: markdown.clone(),
-                });
-                if self.agent_turn_markdowns.len() > MAX_AGENT_COPY_HISTORY {
-                    self.agent_turn_markdowns.remove(0);
-                }
-            }
-        }
-        self.last_agent_markdown = Some(markdown);
-        self.copy_history_evicted_by_rollback = false;
-        self.saw_copy_source_this_turn = true;
+        self.transcript.record_agent_markdown(message.to_string());
     }
 
     fn record_visible_user_turn_for_copy(&mut self) {
-        self.visible_user_turn_count = self.visible_user_turn_count.saturating_add(1);
+        self.transcript.record_visible_user_turn();
     }
 
     // --- Small event handlers ---
@@ -2075,11 +2080,7 @@ impl ChatWidget {
         display: SessionConfiguredDisplay,
         fork_parent_title: Option<String>,
     ) {
-        self.last_agent_markdown = None;
-        self.agent_turn_markdowns.clear();
-        self.visible_user_turn_count = 0;
-        self.copy_history_evicted_by_rollback = false;
-        self.saw_copy_source_this_turn = false;
+        self.transcript.reset_copy_history();
         if let Some(history) = session.message_history {
             self.bottom_pane.set_history_metadata(
                 session.thread_id,
@@ -2179,14 +2180,15 @@ impl ChatWidget {
             );
             self.apply_session_info_cell(session_info_cell);
         } else if self
+            .transcript
             .active_cell
             .as_ref()
             .is_some_and(|cell| cell.as_any().is::<history_cell::SessionHeaderHistoryCell>())
         {
-            self.active_cell = None;
+            self.transcript.active_cell = None;
             self.bump_active_cell_revision();
         }
-        self.saw_copy_source_this_turn = false;
+        self.transcript.saw_copy_source_this_turn = false;
         self.refresh_skills_for_current_cwd(/*force_reload*/ true);
         if self.connectors_enabled() {
             self.prefetch_connectors();
@@ -2375,11 +2377,11 @@ impl ChatWidget {
         if self.active_mode_kind() != ModeKind::Plan {
             return;
         }
-        if !self.plan_item_active {
-            self.plan_item_active = true;
-            self.plan_delta_buffer.clear();
+        if !self.transcript.plan_item_active {
+            self.transcript.plan_item_active = true;
+            self.transcript.plan_delta_buffer.clear();
         }
-        self.plan_delta_buffer.push_str(&delta);
+        self.transcript.plan_delta_buffer.push_str(&delta);
         // Before streaming plan content, flush any active exec cell group.
         self.flush_unified_exec_wait_streak();
         self.flush_active_cell();
@@ -2401,7 +2403,7 @@ impl ChatWidget {
     }
 
     fn on_plan_item_completed(&mut self, text: String) {
-        let streamed_plan = self.plan_delta_buffer.trim().to_string();
+        let streamed_plan = self.transcript.plan_delta_buffer.trim().to_string();
         let plan_text = if text.trim().is_empty() {
             streamed_plan
         } else {
@@ -2409,14 +2411,14 @@ impl ChatWidget {
         };
         if !plan_text.trim().is_empty() {
             self.record_agent_markdown(&plan_text);
-            self.latest_proposed_plan_markdown = Some(plan_text.clone());
+            self.transcript.latest_proposed_plan_markdown = Some(plan_text.clone());
         }
         // Plan commit ticks can hide the status row; remember whether we streamed plan output so
         // completion can restore it once stream queues are idle.
         let should_restore_after_stream = self.plan_stream_controller.is_some();
-        self.plan_delta_buffer.clear();
-        self.plan_item_active = false;
-        self.saw_plan_item_this_turn = true;
+        self.transcript.plan_delta_buffer.clear();
+        self.transcript.plan_item_active = false;
+        self.transcript.saw_plan_item_this_turn = true;
         let (finalized_streamed_cell, consolidated_plan_source) =
             if let Some(mut controller) = self.plan_stream_controller.take() {
                 controller.finalize()
@@ -2495,13 +2497,13 @@ impl ChatWidget {
         self.goal_status_active_turn_started_at = Some(Instant::now());
         self.turn_sleep_inhibitor
             .set_turn_running(/*turn_running*/ true);
-        self.saw_copy_source_this_turn = false;
-        self.saw_plan_update_this_turn = false;
-        self.saw_plan_item_this_turn = false;
-        self.had_work_activity = false;
-        self.latest_proposed_plan_markdown = None;
-        self.plan_delta_buffer.clear();
-        self.plan_item_active = false;
+        self.transcript.saw_copy_source_this_turn = false;
+        self.transcript.saw_plan_update_this_turn = false;
+        self.transcript.saw_plan_item_this_turn = false;
+        self.transcript.had_work_activity = false;
+        self.transcript.latest_proposed_plan_markdown = None;
+        self.transcript.plan_delta_buffer.clear();
+        self.transcript.plan_item_active = false;
         self.adaptive_chunking.reset();
         self.plan_stream_controller = None;
         self.turn_runtime_metrics = RuntimeMetricsSummary::default();
@@ -2518,7 +2520,9 @@ impl ChatWidget {
         self.bottom_pane
             .set_interrupt_hint_visible(/*visible*/ true);
         self.terminal_title_status_kind = TerminalTitleStatusKind::Working;
-        self.set_status_header(String::from("Working"));
+        if self.mcp_startup_status.is_none() {
+            self.set_status_header(String::from("Working"));
+        }
         self.full_reasoning_buffer.clear();
         self.reasoning_buffer.clear();
         self.request_redraw();
@@ -2538,7 +2542,7 @@ impl ChatWidget {
         if let Some(message) = last_agent_message
             .as_ref()
             .filter(|message| !message.is_empty())
-            && !self.saw_copy_source_this_turn
+            && !self.transcript.saw_copy_source_this_turn
         {
             self.record_agent_markdown(message);
         }
@@ -2549,14 +2553,14 @@ impl ChatWidget {
             .filter(|message| !message.is_empty())
             .cloned()
             .or_else(|| {
-                if self.saw_copy_source_this_turn {
-                    self.last_agent_markdown.clone()
+                if self.transcript.saw_copy_source_this_turn {
+                    self.transcript.last_agent_markdown.clone()
                 } else {
                     None
                 }
             })
             .unwrap_or_default();
-        self.saw_copy_source_this_turn = false;
+        self.transcript.saw_copy_source_this_turn = false;
         // If a stream is currently active, finalize it.
         self.flush_answer_stream_with_separator();
         if let Some(mut controller) = self.plan_stream_controller.take() {
@@ -2574,8 +2578,8 @@ impl ChatWidget {
             self.collect_runtime_metrics_delta();
             let runtime_metrics =
                 (!self.turn_runtime_metrics.is_empty()).then_some(self.turn_runtime_metrics);
-            let show_work_separator = self.had_work_activity
-                && (self.needs_final_message_separator || runtime_metrics.is_some());
+            let show_work_separator = self.transcript.had_work_activity
+                && (self.transcript.needs_final_message_separator || runtime_metrics.is_some());
             if show_work_separator || runtime_metrics.is_some() {
                 let elapsed_seconds = if show_work_separator {
                     duration_ms
@@ -2595,8 +2599,8 @@ impl ChatWidget {
                 ));
             }
             self.turn_runtime_metrics = RuntimeMetricsSummary::default();
-            self.needs_final_message_separator = false;
-            self.had_work_activity = false;
+            self.transcript.needs_final_message_separator = false;
+            self.transcript.had_work_activity = false;
             self.request_status_line_branch_refresh();
         }
         // Mark task stopped and request redraw now that all content is in history.
@@ -2622,7 +2626,7 @@ impl ChatWidget {
         // Keep this flag for replayed completion events so a subsequent live TurnComplete can
         // still show the prompt once after thread switch replay.
         if !from_replay {
-            self.saw_plan_item_this_turn = false;
+            self.transcript.saw_plan_item_this_turn = false;
         }
         // If there is a queued user message, send exactly one now to begin the next turn.
         let follow_up_started = self.maybe_send_next_queued_input();
@@ -2653,7 +2657,7 @@ impl ChatWidget {
         if self.active_mode_kind() != ModeKind::Plan {
             return;
         }
-        if !self.saw_plan_item_this_turn {
+        if !self.transcript.saw_plan_item_this_turn {
             return;
         }
         if !self.bottom_pane.no_modal_or_popup_active() {
@@ -2677,7 +2681,7 @@ impl ChatWidget {
         self.bottom_pane
             .show_selection_view(plan_implementation::selection_view_params(
                 default_mask,
-                self.latest_proposed_plan_markdown.as_deref(),
+                self.transcript.latest_proposed_plan_markdown.as_deref(),
                 context_usage_label.as_deref(),
             ));
         self.notify(Notification::PlanModePrompt {
@@ -3074,6 +3078,7 @@ impl ChatWidget {
 
     fn on_error(&mut self, message: String) {
         self.submit_pending_steers_after_interrupt = false;
+        self.flush_answer_stream_with_separator();
         self.finalize_turn();
         self.add_to_history(history_cell::new_error_event(message));
         self.request_redraw();
@@ -3457,7 +3462,7 @@ impl ChatWidget {
     }
 
     fn on_plan_update(&mut self, update: UpdatePlanArgs) {
-        self.saw_plan_update_this_turn = true;
+        self.transcript.saw_plan_update_this_turn = true;
         let total = update.plan.len();
         let completed = update
             .plan
@@ -3770,6 +3775,7 @@ impl ChatWidget {
         }
 
         let Some(cell) = self
+            .transcript
             .active_cell
             .as_mut()
             .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
@@ -3787,12 +3793,16 @@ impl ChatWidget {
         if !self.bottom_pane.is_task_running() {
             return;
         }
-        self.flush_answer_stream_with_separator();
         let command_display = self
             .unified_exec_processes
             .iter()
             .find(|process| process.key == process_id)
             .map(|process| process.command_display.clone());
+        if stdin.is_empty() && command_display.is_none() {
+            return;
+        }
+
+        self.flush_answer_stream_with_separator();
         if stdin.is_empty() {
             // Empty stdin means we are polling for background output.
             // Surface this in the status indicator (single "waiting" surface) instead of
@@ -4000,7 +4010,7 @@ impl ChatWidget {
     fn on_web_search_begin(&mut self, call_id: String) {
         self.flush_answer_stream_with_separator();
         self.flush_active_cell();
-        self.active_cell = Some(Box::new(history_cell::new_active_web_search_call(
+        self.transcript.active_cell = Some(Box::new(history_cell::new_active_web_search_call(
             call_id,
             String::new(),
             self.config.animations,
@@ -4018,6 +4028,7 @@ impl ChatWidget {
         self.flush_answer_stream_with_separator();
         let mut handled = false;
         if let Some(cell) = self
+            .transcript
             .active_cell
             .as_mut()
             .and_then(|cell| cell.as_any_mut().downcast_mut::<WebSearchCell>())
@@ -4033,7 +4044,7 @@ impl ChatWidget {
         if !handled {
             self.add_to_history(history_cell::new_web_search_call(call_id, query, action));
         }
-        self.had_work_activity = true;
+        self.transcript.had_work_activity = true;
     }
 
     fn on_collab_event(&mut self, cell: PlainHistoryCell) {
@@ -4169,7 +4180,7 @@ impl ChatWidget {
             self.active_hook_cell = None;
         }
         self.bump_active_cell_revision();
-        self.needs_final_message_separator = true;
+        self.transcript.needs_final_message_separator = true;
         self.app_event_tx
             .send(AppEvent::InsertHistoryCell(Box::new(completed_cell)));
     }
@@ -4187,7 +4198,7 @@ impl ChatWidget {
             && let Some(cell) = self.active_hook_cell.take()
         {
             self.bump_active_cell_revision();
-            self.needs_final_message_separator = true;
+            self.transcript.needs_final_message_separator = true;
             self.app_event_tx
                 .send(AppEvent::InsertHistoryCell(Box::new(cell)));
         }
@@ -4368,14 +4379,14 @@ impl ChatWidget {
         if self.stream_controller.is_none() {
             // If the previous turn inserted non-stream history (exec output, patch status, MCP
             // calls), render a separator before starting the next streamed assistant message.
-            if self.needs_final_message_separator && self.had_work_activity {
+            if self.transcript.needs_final_message_separator && self.transcript.had_work_activity {
                 self.add_to_history(history_cell::FinalMessageSeparator::new(
                     /*elapsed_seconds*/ None, /*runtime_metrics*/ None,
                 ));
-                self.needs_final_message_separator = false;
-            } else if self.needs_final_message_separator {
+                self.transcript.needs_final_message_separator = false;
+            } else if self.transcript.needs_final_message_separator {
                 // Reset the flag even if we don't show separator (no work was done)
-                self.needs_final_message_separator = false;
+                self.transcript.needs_final_message_separator = false;
             }
             self.stream_controller = Some(StreamController::new(
                 self.current_stream_width(/*reserved_cols*/ 2),
@@ -4446,7 +4457,7 @@ impl ChatWidget {
         let is_unified_exec_interaction =
             matches!(source, ExecCommandSource::UnifiedExecInteraction);
         let is_user_shell = source == ExecCommandSource::UserShell;
-        let end_target = match self.active_cell.as_ref() {
+        let end_target = match self.transcript.active_cell.as_ref() {
             Some(cell) => match cell.as_any().downcast_ref::<ExecCell>() {
                 Some(exec_cell) if exec_cell.iter_calls().any(|call| call.call_id == id) => {
                     ExecEndTarget::ActiveTracked
@@ -4478,6 +4489,7 @@ impl ChatWidget {
         match end_target {
             ExecEndTarget::ActiveTracked => {
                 if let Some(cell) = self
+                    .transcript
                     .active_cell
                     .as_mut()
                     .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
@@ -4503,7 +4515,7 @@ impl ChatWidget {
                 );
                 let completed = orphan.complete_call(&id, output, duration);
                 debug_assert!(completed, "new orphan exec cell should contain {id}");
-                self.needs_final_message_separator = true;
+                self.transcript.needs_final_message_separator = true;
                 self.app_event_tx
                     .send(AppEvent::InsertHistoryCell(Box::new(orphan)));
                 self.request_redraw();
@@ -4523,14 +4535,14 @@ impl ChatWidget {
                 if cell.should_flush() {
                     self.add_to_history(cell);
                 } else {
-                    self.active_cell = Some(Box::new(cell));
+                    self.transcript.active_cell = Some(Box::new(cell));
                     self.bump_active_cell_revision();
                     self.request_redraw();
                 }
             }
         }
         // Mark that actual work was done (command executed)
-        self.had_work_activity = true;
+        self.transcript.had_work_activity = true;
         if is_user_shell {
             self.maybe_send_next_queued_input();
         }
@@ -4546,7 +4558,7 @@ impl ChatWidget {
             self.add_to_history(history_cell::new_patch_apply_failure(String::new()));
         }
         // Mark that actual work was done (patch applied)
-        self.had_work_activity = true;
+        self.transcript.had_work_activity = true;
     }
 
     pub(crate) fn handle_exec_approval_now(&mut self, ev: ExecApprovalRequestEvent) {
@@ -4711,6 +4723,7 @@ impl ChatWidget {
             return;
         }
         if let Some(cell) = self
+            .transcript
             .active_cell
             .as_mut()
             .and_then(|c| c.as_any_mut().downcast_mut::<ExecCell>())
@@ -4727,7 +4740,7 @@ impl ChatWidget {
         } else {
             self.flush_active_cell();
 
-            self.active_cell = Some(Box::new(new_active_exec_command(
+            self.transcript.active_cell = Some(Box::new(new_active_exec_command(
                 id,
                 command,
                 parsed_cmd,
@@ -4754,7 +4767,7 @@ impl ChatWidget {
         };
         self.flush_answer_stream_with_separator();
         self.flush_active_cell();
-        self.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
+        self.transcript.active_cell = Some(Box::new(history_cell::new_active_mcp_tool_call(
             id,
             McpInvocation {
                 server,
@@ -4814,7 +4827,7 @@ impl ChatWidget {
                 let mut cell =
                     history_cell::new_active_mcp_tool_call(id, invocation, self.config.animations);
                 let extra_cell = cell.complete(duration, result);
-                self.active_cell = Some(Box::new(cell));
+                self.transcript.active_cell = Some(Box::new(cell));
                 extra_cell
             }
         };
@@ -4824,7 +4837,7 @@ impl ChatWidget {
             self.add_boxed_history(extra);
         }
         // Mark that actual work was done (MCP tool call)
-        self.had_work_activity = true;
+        self.transcript.had_work_activity = true;
     }
 
     pub(crate) fn handle_queued_item_started_now(&mut self, item: ThreadItem) {
@@ -5439,17 +5452,8 @@ impl ChatWidget {
         &mut self,
         user_turn_count: usize,
     ) {
-        self.visible_user_turn_count = user_turn_count;
-        let had_copy_history = !self.agent_turn_markdowns.is_empty();
-        self.agent_turn_markdowns
-            .retain(|entry| entry.user_turn_count <= user_turn_count);
-        self.last_agent_markdown = self
-            .agent_turn_markdowns
-            .last()
-            .map(|entry| entry.markdown.clone());
-        self.copy_history_evicted_by_rollback =
-            had_copy_history && self.last_agent_markdown.is_none();
-        self.saw_copy_source_this_turn = false;
+        self.transcript
+            .truncate_copy_history_to_user_turn_count(user_turn_count);
     }
 
     /// Inner implementation with an injectable clipboard backend for testing.
@@ -5457,7 +5461,7 @@ impl ChatWidget {
         &mut self,
         copy_fn: impl FnOnce(&str) -> Result<Option<crate::clipboard_copy::ClipboardLease>, String>,
     ) {
-        match self.last_agent_markdown.clone() {
+        match self.transcript.last_agent_markdown.clone() {
             Some(markdown) if !markdown.is_empty() => match copy_fn(&markdown) {
                 Ok(lease) => {
                     self.clipboard_lease = lease;
@@ -5470,7 +5474,7 @@ impl ChatWidget {
                     "Copy failed: {error}"
                 ))),
             },
-            _ if self.copy_history_evicted_by_rollback => {
+            _ if self.transcript.copy_history_evicted_by_rollback => {
                 self.add_to_history(history_cell::new_error_event(format!(
                     "Cannot copy that response after rewinding. Only the most recent {MAX_AGENT_COPY_HISTORY} responses are available to /copy."
                 )));
@@ -5484,7 +5488,7 @@ impl ChatWidget {
 
     #[cfg(test)]
     pub(crate) fn last_agent_markdown_text(&self) -> Option<&str> {
-        self.last_agent_markdown.as_deref()
+        self.transcript.last_agent_markdown.as_deref()
     }
 
     fn show_rename_prompt(&mut self) {
@@ -5552,8 +5556,8 @@ impl ChatWidget {
     }
 
     fn flush_active_cell(&mut self) {
-        if let Some(active) = self.active_cell.take() {
-            self.needs_final_message_separator = true;
+        if let Some(active) = self.transcript.active_cell.take() {
+            self.transcript.needs_final_message_separator = true;
             self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
         }
     }
@@ -5567,6 +5571,7 @@ impl ChatWidget {
         // so we can merge headers instead of committing a duplicate box to history.
         let keep_placeholder_header_active = !self.is_session_configured()
             && self
+                .transcript
                 .active_cell
                 .as_ref()
                 .is_some_and(|c| c.as_any().is::<history_cell::SessionHeaderHistoryCell>());
@@ -5574,7 +5579,7 @@ impl ChatWidget {
         if !keep_placeholder_header_active && !cell.display_lines(u16::MAX).is_empty() {
             // Only break exec grouping if the cell renders visible lines.
             self.flush_active_cell();
-            self.needs_final_message_separator = true;
+            self.transcript.needs_final_message_separator = true;
         }
         self.app_event_tx.send(AppEvent::InsertHistoryCell(cell));
     }
@@ -5969,7 +5974,7 @@ impl ChatWidget {
 
         if let Some(pending_steer) = pending_steer {
             self.pending_steers.push_back(pending_steer);
-            self.saw_plan_item_this_turn = false;
+            self.transcript.saw_plan_item_this_turn = false;
             self.refresh_pending_input_preview();
         }
 
@@ -6031,7 +6036,7 @@ impl ChatWidget {
             }
         }
 
-        self.needs_final_message_separator = false;
+        self.transcript.needs_final_message_separator = false;
         (true, Some(op))
     }
 
@@ -6750,6 +6755,23 @@ impl ChatWidget {
         let display = Self::user_message_display_from_inputs(items);
         if from_replay {
             if !self.is_review_mode {
+                self.bottom_pane.record_replayed_submission(HistoryEntry {
+                    text: display.message.clone(),
+                    text_elements: display.text_elements.clone(),
+                    local_image_paths: display.local_images.iter().cloned().collect(),
+                    remote_image_urls: display.remote_image_urls.clone(),
+                    mention_bindings: items
+                        .iter()
+                        .filter_map(|item| match item {
+                            UserInput::Mention { name, path } => Some(MentionBinding {
+                                mention: name.trim_start_matches('$').to_string(),
+                                path: path.clone(),
+                            }),
+                            _ => None,
+                        })
+                        .collect(),
+                    pending_pastes: Vec::new(),
+                });
                 self.on_user_message_display(display);
             }
             return;
@@ -6795,7 +6817,7 @@ impl ChatWidget {
         }
 
         // User messages reset separator state so the next agent response doesn't add a stray break.
-        self.needs_final_message_separator = false;
+        self.transcript.needs_final_message_separator = false;
     }
 
     /// Exit the UI immediately without waiting for shutdown.
@@ -6822,7 +6844,7 @@ impl ChatWidget {
     fn bump_active_cell_revision(&mut self) {
         // Wrapping avoids overflow; wraparound would require 2^64 bumps and at
         // worst causes a one-time cache-key collision.
-        self.active_cell_revision = self.active_cell_revision.wrapping_add(1);
+        self.transcript.active_cell_revision = self.transcript.active_cell_revision.wrapping_add(1);
     }
 
     fn notify(&mut self, notification: Notification) {
@@ -6846,7 +6868,7 @@ impl ChatWidget {
 
     /// Mark the active cell as failed (✗) and flush it into history.
     fn finalize_active_cell_as_failed(&mut self) {
-        if let Some(mut cell) = self.active_cell.take() {
+        if let Some(mut cell) = self.transcript.active_cell.take() {
             // Insert finalized cell into history and keep grouping consistent.
             if let Some(exec) = cell.as_any_mut().downcast_mut::<ExecCell>() {
                 exec.mark_failed();
@@ -7166,7 +7188,7 @@ impl ChatWidget {
     ) -> Option<String> {
         let window = window?;
         let remaining = (100.0f64 - window.used_percent).clamp(0.0f64, 100.0f64);
-        Some(format!("{label} {remaining:.0}%"))
+        Some(format!("{label} {remaining:.0}% left"))
     }
 
     fn status_line_reasoning_effort_label(effort: Option<ReasoningEffortConfig>) -> &'static str {
@@ -10057,18 +10079,18 @@ impl ChatWidget {
     /// Merge the real session info cell with any placeholder header to avoid double boxes.
     fn apply_session_info_cell(&mut self, cell: history_cell::SessionInfoCell) {
         let mut session_info_cell = Some(Box::new(cell) as Box<dyn HistoryCell>);
-        let merged_header = if let Some(active) = self.active_cell.take() {
+        let merged_header = if let Some(active) = self.transcript.active_cell.take() {
             if active
                 .as_any()
                 .is::<history_cell::SessionHeaderHistoryCell>()
             {
                 // Reuse the existing placeholder header to avoid rendering two boxes.
                 if let Some(cell) = session_info_cell.take() {
-                    self.active_cell = Some(cell);
+                    self.transcript.active_cell = Some(cell);
                 }
                 true
             } else {
-                self.active_cell = Some(active);
+                self.transcript.active_cell = Some(active);
                 false
             }
         } else {
@@ -10131,7 +10153,7 @@ impl ChatWidget {
     pub(crate) fn add_mcp_output(&mut self, detail: McpServerStatusDetail) {
         self.flush_answer_stream_with_separator();
         self.flush_active_cell();
-        self.active_cell = Some(Box::new(history_cell::new_mcp_inventory_loading(
+        self.transcript.active_cell = Some(Box::new(history_cell::new_mcp_inventory_loading(
             self.config.animations,
         )));
         self.bump_active_cell_revision();
@@ -10147,7 +10169,7 @@ impl ChatWidget {
     /// Uses `Any`-based type checking so that a late-arriving inventory result
     /// does not accidentally clear an unrelated cell that was set in the meantime.
     pub(crate) fn clear_mcp_inventory_loading(&mut self) {
-        let Some(active) = self.active_cell.as_ref() else {
+        let Some(active) = self.transcript.active_cell.as_ref() else {
             return;
         };
         if !active
@@ -10156,7 +10178,7 @@ impl ChatWidget {
         {
             return;
         }
-        self.active_cell = None;
+        self.transcript.active_cell = None;
         self.bump_active_cell_revision();
         self.request_redraw();
     }
@@ -10419,6 +10441,7 @@ impl ChatWidget {
                 self.quit_shortcut_expires_at = None;
                 self.quit_shortcut_key = None;
                 self.bottom_pane.clear_quit_shortcut_hint();
+                self.pause_active_goal_for_interrupt();
                 self.submit_op(AppCommand::interrupt());
             } else {
                 self.request_quit_without_confirmation();
@@ -10436,6 +10459,7 @@ impl ChatWidget {
         self.arm_quit_shortcut(key);
 
         if self.is_cancellable_work_active() {
+            self.pause_active_goal_for_interrupt();
             self.submit_op(AppCommand::interrupt());
         }
     }
@@ -10497,6 +10521,19 @@ impl ChatWidget {
         self.bottom_pane.is_task_running() || self.is_review_mode
     }
 
+    fn pause_active_goal_for_interrupt(&self) {
+        if self.current_goal_status.is_none() {
+            return;
+        }
+        let Some(thread_id) = self.thread_id else {
+            return;
+        };
+        self.app_event_tx.send(AppEvent::SetThreadGoalStatus {
+            thread_id,
+            status: AppThreadGoalStatus::Paused,
+        });
+    }
+
     /// Return the markdown body width available to an active stream.
     ///
     /// Streaming controllers render only the message body, while history cells add bullets,
@@ -10507,6 +10544,7 @@ impl ChatWidget {
             if width == 0 {
                 None
             } else {
+                let width = self.history_wrap_width(width as u16) as usize;
                 Some(crate::width::usable_content_width(width, reserved_cols).unwrap_or(1))
             }
         })
@@ -10737,6 +10775,12 @@ impl ChatWidget {
 
         match result {
             Ok(mut snapshot) => {
+                let raw_snapshot = ConnectorsSnapshot {
+                    connectors: connectors::with_app_enabled_state(
+                        snapshot.connectors.clone(),
+                        &self.config,
+                    ),
+                };
                 if !is_final {
                     snapshot.connectors = connectors::merge_connectors_with_accessible(
                         Vec::new(),
@@ -10765,7 +10809,11 @@ impl ChatWidget {
                 } else {
                     self.connectors_partial_snapshot = Some(snapshot.clone());
                 }
-                self.bottom_pane.set_connectors_snapshot(Some(snapshot));
+                self.bottom_pane.set_connectors_snapshot(Some(if is_final {
+                    snapshot
+                } else {
+                    raw_snapshot
+                }));
             }
             Err(err) => {
                 let partial_snapshot = self.connectors_partial_snapshot.take();
@@ -11017,13 +11065,13 @@ impl ChatWidget {
     /// providing an appropriate animation tick), the overlay will keep showing a stale tail while
     /// the main viewport updates.
     pub(crate) fn active_cell_transcript_key(&self) -> Option<ActiveCellTranscriptKey> {
-        let cell = self.active_cell.as_ref();
+        let cell = self.transcript.active_cell.as_ref();
         let hook_cell = self.active_hook_cell.as_ref();
         if cell.is_none() && hook_cell.is_none() {
             return None;
         }
         Some(ActiveCellTranscriptKey {
-            revision: self.active_cell_revision,
+            revision: self.transcript.active_cell_revision,
             is_stream_continuation: cell
                 .map(|cell| cell.is_stream_continuation())
                 .unwrap_or(false),
@@ -11043,7 +11091,7 @@ impl ChatWidget {
     /// mismatches between the main viewport and the transcript overlay.
     pub(crate) fn active_cell_transcript_lines(&self, width: u16) -> Option<Vec<Line<'static>>> {
         let mut lines = Vec::new();
-        if let Some(cell) = self.active_cell.as_ref() {
+        if let Some(cell) = self.transcript.active_cell.as_ref() {
             lines.extend(cell.transcript_lines(width));
         }
         if let Some(hook_cell) = self.active_hook_cell.as_ref() {
@@ -11070,33 +11118,6 @@ impl ChatWidget {
 
     pub(crate) fn clear_token_usage(&mut self) {
         self.token_info = None;
-    }
-
-    fn as_renderable(&self) -> RenderableItem<'_> {
-        let active_cell_renderable = match &self.active_cell {
-            Some(cell) => RenderableItem::Borrowed(cell).inset(Insets::tlbr(
-                /*top*/ 1, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
-            )),
-            None => RenderableItem::Owned(Box::new(())),
-        };
-        let active_hook_cell_renderable = match &self.active_hook_cell {
-            Some(cell) if cell.should_render() => {
-                RenderableItem::Borrowed(cell).inset(Insets::tlbr(
-                    /*top*/ 1, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
-                ))
-            }
-            _ => RenderableItem::Owned(Box::new(())),
-        };
-        let mut flex = FlexRenderable::new();
-        flex.push(/*flex*/ 1, active_cell_renderable);
-        flex.push(/*flex*/ 0, active_hook_cell_renderable);
-        flex.push(
-            /*flex*/ 0,
-            RenderableItem::Borrowed(&self.bottom_pane).inset(Insets::tlbr(
-                /*top*/ 1, /*left*/ 0, /*bottom*/ 0, /*right*/ 0,
-            )),
-        );
-        RenderableItem::Owned(Box::new(flex))
     }
 }
 
@@ -11180,8 +11201,25 @@ impl ChatWidget {
             tracing::warn!(%err, "failed to sync permissions from ThreadSettingsUpdated");
         }
 
-        self.current_collaboration_mode = settings.collaboration_mode;
-        self.set_model(&settings.model);
+        let collaboration_mode = settings.collaboration_mode;
+        let mode_kind = collaboration_mode.mode;
+        let settings = collaboration_mode.settings;
+        if mode_kind == ModeKind::Default {
+            self.current_collaboration_mode = CollaborationMode {
+                mode: ModeKind::Default,
+                settings: settings.clone(),
+            };
+        }
+        self.active_collaboration_mask = Some(CollaborationModeMask {
+            name: mode_kind.display_name().to_string(),
+            mode: Some(mode_kind),
+            model: Some(settings.model.clone()),
+            reasoning_effort: Some(settings.reasoning_effort),
+            developer_instructions: Some(settings.developer_instructions),
+        });
+        self.update_collaboration_mode_indicator();
+        self.refresh_plan_mode_nudge();
+        self.refresh_model_dependent_surfaces();
         self.request_redraw();
     }
 
@@ -11193,25 +11231,6 @@ impl ChatWidget {
     ) -> Option<Vec<HyperlinkLine>> {
         self.active_cell_transcript_lines(width)
             .map(crate::terminal_hyperlinks::annotate_web_urls)
-    }
-}
-
-impl Renderable for ChatWidget {
-    fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.as_renderable().render(area, buf);
-        self.last_rendered_width.set(Some(area.width as usize));
-    }
-
-    fn desired_height(&self, width: u16) -> u16 {
-        self.as_renderable().desired_height(width)
-    }
-
-    fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
-        self.as_renderable().cursor_pos(area)
-    }
-
-    fn cursor_style(&self, area: Rect) -> crossterm::cursor::SetCursorStyle {
-        self.as_renderable().cursor_style(area)
     }
 }
 

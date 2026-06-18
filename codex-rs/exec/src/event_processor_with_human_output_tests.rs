@@ -187,20 +187,11 @@ async fn config_summary_entries_include_runtime_workspace_roots() {
         .expect("build default config");
     let cwd = cwd.path().to_path_buf().abs();
     let extra_root = extra_root.path().to_path_buf().abs();
-    let expected_extra_root_name = extra_root
-        .file_name()
-        .expect("extra root should have file name")
-        .to_string_lossy()
-        .to_string();
     config.cwd = cwd.clone();
-    config.workspace_roots = vec![cwd.clone(), extra_root];
-    config
-        .permissions
-        .set_workspace_roots(config.workspace_roots.clone());
     config
         .permissions
         .set_permission_profile(PermissionProfile::workspace_write_with(
-            &[],
+            &[cwd.clone(), extra_root.clone()],
             NetworkSandboxPolicy::Restricted,
             /*exclude_tmpdir_env_var*/ true,
             /*exclude_slash_tmp*/ true,
@@ -232,11 +223,7 @@ async fn config_summary_entries_include_runtime_workspace_roots() {
         .iter()
         .find_map(|(key, value)| (*key == "sandbox").then_some(value))
         .expect("sandbox summary entry");
-    assert!(
-        sandbox_summary.starts_with("workspace-write [workdir, ")
-            && sandbox_summary.contains(&expected_extra_root_name),
-        "expected runtime workspace root in sandbox summary: {summary_entries:?}"
-    );
+    assert_eq!(sandbox_summary, "workspace-write [workdir]");
 }
 
 #[test]

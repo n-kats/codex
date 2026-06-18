@@ -1445,7 +1445,7 @@ async fn copy_shortcut_can_be_remapped() {
 #[tokio::test]
 async fn slash_copy_stores_clipboard_lease_and_preserves_it_on_failure() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    chat.last_agent_markdown = Some("copy me".to_string());
+    chat.transcript.last_agent_markdown = Some("copy me".to_string());
 
     chat.copy_last_agent_markdown_with(|markdown| {
         assert_eq!(markdown, "copy me");

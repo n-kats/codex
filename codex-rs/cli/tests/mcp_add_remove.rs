@@ -69,7 +69,7 @@ async fn add_and_remove_server_updates_global_config() -> Result<()> {
 }
 
 #[tokio::test]
-async fn profile_mcp_reports_legacy_profile_migration() -> Result<()> {
+async fn profile_mcp_list_works_with_legacy_profile_table() -> Result<()> {
     let codex_home = TempDir::new()?;
     std::fs::write(
         codex_home.path().join("config.toml"),
@@ -82,10 +82,8 @@ model = "gpt-5"
     list_cmd
         .args(["--profile", "work", "mcp", "list"])
         .assert()
-        .failure()
-        .stderr(contains("--profile `work` cannot be used"))
-        .stderr(contains("[profiles.work]"))
-        .stderr(contains("work.config.toml"));
+        .success()
+        .stdout(contains("No MCP servers configured yet."));
 
     Ok(())
 }
@@ -199,7 +197,7 @@ async fn add_streamable_http_with_custom_env_var() -> Result<()> {
 }
 
 #[tokio::test]
-async fn add_streamable_http_with_oauth_options() -> Result<()> {
+async fn add_streamable_http_rejects_oauth_options() -> Result<()> {
     let codex_home = TempDir::new()?;
 
     let mut add_cmd = codex_command(codex_home.path())?;
@@ -216,20 +214,11 @@ async fn add_streamable_http_with_oauth_options() -> Result<()> {
             "https://resource.example.com",
         ])
         .assert()
-        .success();
+        .failure()
+        .stderr(contains("--oauth-client-id"));
 
     let servers = load_global_mcp_servers(codex_home.path()).await?;
-    let oauth_server = servers
-        .get("oauth-server")
-        .expect("oauth server should exist");
-    assert_eq!(
-        oauth_server.oauth_client_id(),
-        Some("eci-prd-pub-codex-123")
-    );
-    assert_eq!(
-        oauth_server.oauth_resource.as_deref(),
-        Some("https://resource.example.com")
-    );
+    assert!(servers.is_empty());
 
     Ok(())
 }

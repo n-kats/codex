@@ -2,9 +2,6 @@ use anyhow::Result;
 use codex_config::ConfigLayerStack;
 use codex_core::ForkSnapshot;
 use codex_core::config::Constrained;
-use codex_core::context::ContextualUserFragment;
-use codex_core::context::PermissionsInstructions;
-use codex_core::load_exec_policy;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
@@ -575,7 +572,6 @@ async fn permissions_message_includes_writable_roots() -> Result<()> {
     .await;
     let writable = TempDir::new()?;
     let writable_root = AbsolutePathBuf::try_from(writable.path())?;
-    let writable_root_for_config = writable_root.clone();
     let permission_profile = PermissionProfile::workspace_write_with(
         std::slice::from_ref(&writable_root),
         NetworkSandboxPolicy::Restricted,
@@ -610,24 +606,19 @@ async fn permissions_message_includes_writable_roots() -> Result<()> {
 
     let permissions = permissions_texts(&req.single_request());
     let normalize_line_endings = |s: &str| s.replace("\r\n", "\n");
-    let exec_policy = load_exec_policy(&test.config.config_layer_stack).await?;
-    let permission_profile = test.config.permissions.effective_permission_profile();
-    let expected = PermissionsInstructions::from_permission_profile(
-        &permission_profile,
-        AskForApproval::OnRequest,
-        test.config.approvals_reviewer,
-        &exec_policy,
-        test.config.cwd.as_path(),
-        /*exec_permission_approvals_enabled*/ false,
-        /*request_permissions_tool_enabled*/ false,
-    )
-    .render();
-    let expected_normalized = normalize_line_endings(&expected);
-    let actual_normalized: Vec<String> = permissions
-        .iter()
-        .map(|s| normalize_line_endings(s))
-        .collect();
-    assert_eq!(actual_normalized, vec![expected_normalized]);
+    let normalize_writable_root_paths = |text: &str| {
+        let mut normalized = normalize_line_endings(text);
+        for path in [
+            test.config.cwd.as_path().display().to_string(),
+            writable_root.as_path().display().to_string(),
+        ] {
+            normalized = normalized.replace(&path, "<writable-root>");
+        }
+        normalized
+    };
+    let permissions = normalize_writable_root_paths(&permissions[0]);
+    assert!(permissions.contains("`sandbox_mode` is `workspace-write`"));
+    assert!(permissions.contains("The writable roots are `/tmp`, `<writable-root>`."));
 
     Ok(())
 }

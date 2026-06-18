@@ -269,6 +269,22 @@ impl CommandExecRequestProcessor {
                 self.config.effective_workspace_roots(),
             )
         };
+        let network_proxy_spec = if network_proxy_spec.is_none()
+            && effective_permission_profile
+                .network_sandbox_policy()
+                .is_enabled()
+        {
+            self.config.permissions.network.clone()
+        } else {
+            network_proxy_spec
+        };
+        if network_proxy_spec.is_none()
+            && effective_permission_profile
+                .network_sandbox_policy()
+                .is_enabled()
+        {
+            env.insert("CODEX_NETWORK_PROXY_ACTIVE".to_string(), "1".to_string());
+        }
         let started_network_proxy = match network_proxy_spec.as_ref() {
             Some(spec) => match spec
                 .start_proxy(

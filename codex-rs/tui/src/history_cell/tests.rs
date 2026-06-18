@@ -4,6 +4,7 @@ use super::*;
 use crate::exec_cell::CommandOutput;
 use crate::exec_cell::ExecCall;
 use crate::exec_cell::ExecCell;
+use crate::history_cell::HistoryRenderMode;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::session_state::ThreadSessionState;

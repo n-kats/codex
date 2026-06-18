@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -7,6 +9,7 @@ use app_test_support::ChatGptAuthFixture;
 use app_test_support::McpProcess;
 use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
+use axum::Router;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::JSONRPCResponse;
@@ -23,9 +26,24 @@ use codex_app_server_protocol::WebSearchAction;
 use codex_config::types::AuthCredentialsStoreMode;
 use core_test_support::responses;
 use pretty_assertions::assert_eq;
+use rmcp::handler::server::ServerHandler;
+use rmcp::model::JsonObject;
+use rmcp::model::ListToolsResult;
+use rmcp::model::Meta;
+use rmcp::model::ServerCapabilities;
+use rmcp::model::ServerInfo;
+use rmcp::model::Tool;
+use rmcp::model::ToolAnnotations;
+use rmcp::service::RequestContext;
+use rmcp::service::RoleServer;
+use rmcp::transport::StreamableHttpServerConfig;
+use rmcp::transport::StreamableHttpService;
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use serde_json::Value;
 use serde_json::json;
 use tempfile::TempDir;
+use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use wiremock::Mock;
 use wiremock::MockServer;
@@ -43,11 +61,12 @@ const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(10);
 #[tokio::test]
 async fn standalone_web_search_round_trips_encrypted_output() -> Result<()> {
     let call_id = "web-run-1";
-    let server = responses::start_mock_server().await;
-    mount_search_response(&server).await;
+    let responses_server = responses::start_mock_server().await;
+    mount_search_response(&responses_server).await;
+    let (apps_server_url, apps_server_handle) = start_apps_server().await?;
 
     let response_mock = responses::mount_sse_sequence(
-        &server,
+        &responses_server,
         vec![
             responses::sse(vec![
                 responses::ev_response_created("resp-1"),
@@ -71,7 +90,7 @@ async fn standalone_web_search_round_trips_encrypted_output() -> Result<()> {
     .await;
 
     let codex_home = TempDir::new()?;
-    create_config_toml(codex_home.path(), &server.uri())?;
+    create_config_toml(codex_home.path(), &responses_server.uri(), &apps_server_url)?;
     write_chatgpt_auth(
         codex_home.path(),
         ChatGptAuthFixture::new("access-chatgpt"),
@@ -139,7 +158,7 @@ async fn standalone_web_search_round_trips_encrypted_output() -> Result<()> {
         "standalone web search should replace hosted web search"
     );
 
-    let search_body = search_request_body(&server).await?;
+    let search_body = search_request_body(&responses_server).await?;
     assert_eq!(search_body["model"], json!("mock-model"));
     assert_eq!(
         search_body["commands"],
@@ -216,6 +235,8 @@ async fn standalone_web_search_round_trips_encrypted_output() -> Result<()> {
         .collect();
     assert_eq!(persisted_web_searches, vec![&expected_completed_item]);
 
+    apps_server_handle.abort();
+    let _ = apps_server_handle.await;
     Ok(())
 }
 
@@ -284,7 +305,11 @@ async fn search_request_body(server: &MockServer) -> Result<Value> {
         .context("search request body should be JSON")
 }
 
-fn create_config_toml(codex_home: &Path, server_uri: &str) -> std::io::Result<()> {
+fn create_config_toml(
+    codex_home: &Path,
+    responses_server_uri: &str,
+    apps_server_uri: &str,
+) -> std::io::Result<()> {
     std::fs::write(
         codex_home.join("config.toml"),
         format!(
@@ -293,14 +318,14 @@ model = "mock-model"
 approval_policy = "never"
 sandbox_mode = "read-only"
 model_provider = "openai-custom"
-chatgpt_base_url = "{server_uri}"
+chatgpt_base_url = "{apps_server_uri}"
 
 [features]
 standalone_web_search = true
 
 [model_providers.openai-custom]
 name = "OpenAI"
-base_url = "{server_uri}/api/codex"
+base_url = "{responses_server_uri}/api/codex"
 wire_api = "responses"
 request_max_retries = 0
 stream_max_retries = 0
@@ -309,4 +334,61 @@ requires_openai_auth = true
 "#
         ),
     )
+}
+
+async fn start_apps_server() -> Result<(String, JoinHandle<()>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let apps_server_url = format!("http://{addr}");
+
+    let mcp_service = StreamableHttpService::new(
+        move || Ok(EmptyAppsMcpServer),
+        Arc::new(LocalSessionManager::default()),
+        StreamableHttpServerConfig::default(),
+    );
+    let router = Router::new().nest_service("/api/codex/apps", mcp_service);
+    let apps_server_handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    Ok((apps_server_url, apps_server_handle))
+}
+
+#[derive(Clone, Default)]
+struct EmptyAppsMcpServer;
+
+impl ServerHandler for EmptyAppsMcpServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(rmcp::model::ProtocolVersion::V_2025_06_18)
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        let input_schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "additionalProperties": false
+        }))
+        .map_err(|err| rmcp::ErrorData::internal_error(err.to_string(), None))?;
+
+        let mut tool = Tool::new(
+            Cow::Borrowed("noop"),
+            Cow::Borrowed("noop"),
+            Arc::new(input_schema),
+        );
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+        let mut meta = Meta::new();
+        meta.0.insert("connector_id".to_string(), json!("noop"));
+        meta.0.insert("connector_name".to_string(), json!("No-op"));
+        tool.meta = Some(meta);
+
+        Ok(ListToolsResult {
+            tools: vec![tool],
+            next_cursor: None,
+            meta: None,
+        })
+    }
 }

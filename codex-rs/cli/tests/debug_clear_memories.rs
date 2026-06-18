@@ -116,7 +116,8 @@ INSERT INTO jobs (
     cmd.args(["debug", "clear-memories"])
         .assert()
         .success()
-        .stdout(contains("Cleared memory state"));
+        .stdout(contains("Cleared memory state from"))
+        .stdout(contains("Cleared memory directories under"));
 
     let pool = SqlitePool::connect(&format!("sqlite://{}", memories_db_path.display())).await?;
     let stage1_outputs_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stage1_outputs")
@@ -175,13 +176,14 @@ INSERT INTO stage1_outputs (
     cmd.args(["debug", "clear-memories"])
         .assert()
         .success()
-        .stdout(contains("Cleared memory state"));
+        .stdout(contains("No state db found at"))
+        .stdout(contains("Cleared memory directories under"));
 
     let pool = SqlitePool::connect(&format!("sqlite://{}", memories_db_path.display())).await?;
     let stage1_outputs_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stage1_outputs")
         .fetch_one(&pool)
         .await?;
-    assert_eq!(stage1_outputs_count, 0);
+    assert_eq!(stage1_outputs_count, 1);
     pool.close().await;
     assert!(!db_path.exists());
 

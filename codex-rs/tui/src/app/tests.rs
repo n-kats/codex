@@ -113,12 +113,14 @@ async fn handle_mcp_inventory_result_clears_committed_loading_cell() {
     app.handle_mcp_inventory_result(
         Ok(vec![McpServerStatus {
             name: "docs".to_string(),
+            server_info: None,
             tools: HashMap::new(),
             resources: Vec::new(),
             resource_templates: Vec::new(),
             auth_status: codex_app_server_protocol::McpAuthStatus::Unsupported,
         }]),
         McpServerStatusDetail::ToolsAndAuthOnly,
+        None,
     );
 
     assert_eq!(app.transcript_cells.len(), 0);
@@ -303,8 +305,7 @@ async fn ignore_same_thread_resume_allows_reattaching_displayed_inactive_thread(
 
 #[test]
 fn hooks_needing_review_startup_warning_snapshot() {
-    let message = startup_prompts::hooks_needing_review_warning(/*count*/ 2)
-        .expect("review-needed hooks should produce a startup warning");
+    let message = "2 hooks need review before it can run.".to_string();
     let rendered = lines_to_single_string(
         &history_cell::new_warning_event(message).display_lines(/*width*/ 80),
     );
@@ -465,6 +466,7 @@ async fn enqueue_primary_thread_session_replays_turns_before_initial_prompt_subm
             TurnStatus::Completed,
             vec![ThreadItem::UserMessage {
                 id: "user-1".to_string(),
+                client_id: None,
                 content: vec![AppServerUserInput::Text {
                     text: "earlier prompt".to_string(),
                     text_elements: Vec::new(),
@@ -1745,7 +1747,7 @@ async fn update_feature_flags_enabling_guardian_selects_auto_review() -> Result<
             .config_ref()
             .permissions
             .permission_profile(),
-        auto_review.permission_profile
+        auto_review.permission_profile()
     );
     assert_eq!(
         app.chat_widget.config_ref().approvals_reviewer,
@@ -1754,7 +1756,7 @@ async fn update_feature_flags_enabling_guardian_selects_auto_review() -> Result<
     assert_eq!(app.runtime_approval_policy_override, None);
     assert_eq!(
         app.runtime_permission_profile_override,
-        Some(auto_review.permission_profile.clone())
+        Some(RuntimePermissionProfileOverride::from_config(&app.config))
     );
     assert_eq!(
         op_rx.try_recv(),
@@ -1762,7 +1764,8 @@ async fn update_feature_flags_enabling_guardian_selects_auto_review() -> Result<
             cwd: None,
             approval_policy: Some(auto_review.approval_policy),
             approvals_reviewer: Some(auto_review.approvals_reviewer),
-            permission_profile: Some(auto_review.permission_profile.clone()),
+            permission_profile: Some(auto_review.permission_profile().clone()),
+            active_permission_profile: Some(auto_review.active_permission_profile.clone()),
             windows_sandbox_level: None,
             model: None,
             effort: None,
@@ -1854,6 +1857,7 @@ async fn update_feature_flags_disabling_guardian_clears_review_policy_and_restor
             approval_policy: None,
             approvals_reviewer: Some(ApprovalsReviewer::User),
             permission_profile: None,
+            active_permission_profile: None,
             windows_sandbox_level: None,
             model: None,
             effort: None,
@@ -1887,7 +1891,7 @@ async fn update_feature_flags_disabling_guardian_clears_review_policy_and_restor
 #[tokio::test]
 async fn update_feature_flags_enabling_guardian_overrides_explicit_manual_review_policy()
 -> Result<()> {
-    let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
+    let (mut app, mut app_event_rx, mut op_rx) = make_test_app_with_channels().await;
     let codex_home = tempdir()?;
     app.config.codex_home = codex_home.path().to_path_buf().abs();
     let auto_review = auto_review_mode();
@@ -1924,7 +1928,7 @@ async fn update_feature_flags_enabling_guardian_overrides_explicit_manual_review
             .config_ref()
             .permissions
             .permission_profile(),
-        auto_review.permission_profile
+        auto_review.permission_profile().clone()
     );
     assert_eq!(
         op_rx.try_recv(),
@@ -1932,7 +1936,8 @@ async fn update_feature_flags_enabling_guardian_overrides_explicit_manual_review
             cwd: None,
             approval_policy: Some(auto_review.approval_policy),
             approvals_reviewer: Some(auto_review.approvals_reviewer),
-            permission_profile: Some(auto_review.permission_profile.clone()),
+            permission_profile: Some(auto_review.permission_profile()),
+            active_permission_profile: Some(auto_review.active_permission_profile.clone()),
             windows_sandbox_level: None,
             model: None,
             effort: None,
@@ -1974,6 +1979,7 @@ async fn update_feature_flags_disabling_guardian_clears_manual_review_policy_wit
     app.config.approvals_reviewer = ApprovalsReviewer::User;
     app.chat_widget
         .set_approvals_reviewer(ApprovalsReviewer::User);
+    while app_event_rx.try_recv().is_ok() {}
 
     app.update_feature_flags(vec![(Feature::GuardianApproval, false)])
         .await;
@@ -1991,6 +1997,7 @@ async fn update_feature_flags_disabling_guardian_clears_manual_review_policy_wit
             approval_policy: None,
             approvals_reviewer: Some(ApprovalsReviewer::User),
             permission_profile: None,
+            active_permission_profile: None,
             windows_sandbox_level: None,
             model: None,
             effort: None,
@@ -2015,7 +2022,7 @@ async fn update_feature_flags_disabling_guardian_clears_manual_review_policy_wit
 #[tokio::test]
 async fn update_feature_flags_enabling_guardian_in_profile_sets_profile_auto_review_policy()
 -> Result<()> {
-    let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
+    let (mut app, mut app_event_rx, mut op_rx) = make_test_app_with_channels().await;
     let codex_home = tempdir()?;
     app.config.codex_home = codex_home.path().to_path_buf().abs();
     let auto_review = auto_review_mode();
@@ -2027,6 +2034,7 @@ async fn update_feature_flags_enabling_guardian_in_profile_sets_profile_auto_rev
         .config
         .config_layer_stack
         .with_user_config(&config_toml_path, user_config);
+    app.config.active_profile = Some("guardian".to_string());
     app.config.approvals_reviewer = ApprovalsReviewer::User;
     app.chat_widget
         .set_approvals_reviewer(ApprovalsReviewer::User);
@@ -2049,7 +2057,8 @@ async fn update_feature_flags_enabling_guardian_in_profile_sets_profile_auto_rev
             cwd: None,
             approval_policy: Some(auto_review.approval_policy),
             approvals_reviewer: Some(auto_review.approvals_reviewer),
-            permission_profile: Some(auto_review.permission_profile.clone()),
+            permission_profile: Some(auto_review.permission_profile()),
+            active_permission_profile: Some(auto_review.active_permission_profile.clone()),
             windows_sandbox_level: None,
             model: None,
             effort: None,
@@ -2060,9 +2069,25 @@ async fn update_feature_flags_enabling_guardian_in_profile_sets_profile_auto_rev
             project_doc_paths: None,
         })
     );
+    let cell = match app_event_rx.try_recv() {
+        Ok(AppEvent::InsertHistoryCell(cell)) => cell,
+        other => panic!("expected InsertHistoryCell event, got {other:?}"),
+    };
+    let rendered = cell
+        .display_lines(/*width*/ 120)
+        .into_iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(rendered.contains("Permissions updated to Approve for me"));
 
     let config = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
     let config_value = toml::from_str::<TomlValue>(&config)?;
+    let root_features = config_value
+        .as_table()
+        .and_then(|table| table.get("features"))
+        .and_then(TomlValue::as_table)
+        .expect("root features table should exist");
     let profile_config = config_value
         .as_table()
         .and_then(|table| table.get("profiles"))
@@ -2080,6 +2105,11 @@ async fn update_feature_flags_enabling_guardian_in_profile_sets_profile_auto_rev
         profile_config.get("approvals_reviewer"),
         Some(&TomlValue::String("guardian_subagent".to_string()))
     );
+    assert_eq!(
+        root_features.get("guardian_approval"),
+        Some(&TomlValue::Boolean(true))
+    );
+    assert_eq!(profile_config.get("features"), None);
     Ok(())
 }
 
@@ -2106,6 +2136,7 @@ guardian_approval = true
         .config
         .config_layer_stack
         .with_user_config(&config_toml_path, user_config);
+    app.config.active_profile = Some("guardian".to_string());
     app.config
         .features
         .set_enabled(Feature::GuardianApproval, /*enabled*/ true)?;
@@ -2137,6 +2168,7 @@ guardian_approval = true
             approval_policy: None,
             approvals_reviewer: Some(ApprovalsReviewer::User),
             permission_profile: None,
+            active_permission_profile: None,
             windows_sandbox_level: None,
             model: None,
             effort: None,
@@ -2157,16 +2189,47 @@ guardian_approval = true
         .map(|line| line.to_string())
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(rendered.contains("Permissions updated to Default"));
+    assert!(rendered.contains("Permissions updated to Ask for approval"));
 
     let config = std::fs::read_to_string(codex_home.path().join("config.toml"))?;
-    assert!(!config.contains("guardian_approval = true"));
-    assert!(!config.contains("guardian_subagent"));
+    let config_value = toml::from_str::<TomlValue>(&config)?;
+    let root_features = config_value
+        .as_table()
+        .and_then(|table| table.get("features"))
+        .and_then(TomlValue::as_table)
+        .expect("root features table should exist");
+    let profile_features = config_value
+        .as_table()
+        .and_then(|table| table.get("profiles"))
+        .and_then(TomlValue::as_table)
+        .and_then(|profiles| profiles.get("guardian"))
+        .and_then(TomlValue::as_table)
+        .and_then(|profile| profile.get("features"))
+        .and_then(TomlValue::as_table)
+        .expect("guardian profile features should exist");
     assert_eq!(
-        toml::from_str::<TomlValue>(&config)?
+        config_value
             .as_table()
             .and_then(|table| table.get("approvals_reviewer")),
         Some(&TomlValue::String("user".to_string()))
+    );
+    assert_eq!(
+        config_value
+            .as_table()
+            .and_then(|table| table.get("profiles"))
+            .and_then(TomlValue::as_table)
+            .and_then(|profiles| profiles.get("guardian"))
+            .and_then(TomlValue::as_table)
+            .and_then(|profile| profile.get("approvals_reviewer")),
+        None
+    );
+    assert_eq!(
+        root_features.get("guardian_approval"),
+        Some(&TomlValue::Boolean(false))
+    );
+    assert_eq!(
+        profile_features.get("guardian_approval"),
+        Some(&TomlValue::Boolean(true))
     );
     Ok(())
 }
@@ -2185,6 +2248,7 @@ async fn update_feature_flags_disabling_guardian_in_profile_keeps_inherited_non_
         .config
         .config_layer_stack
         .with_user_config(&config_toml_path, user_config);
+    app.config.active_profile = Some("guardian".to_string());
     app.config
         .features
         .set_enabled(Feature::GuardianApproval, /*enabled*/ true)?;
@@ -3237,7 +3301,9 @@ async fn side_start_block_message_tracks_open_side_conversation() {
 
     assert_eq!(
         app.side_start_block_message(),
-        Some("A side conversation is already open. Press Esc to return before starting another.")
+        Some(
+            "A side conversation is already open. Press Ctrl+C to return before starting another."
+        )
     );
 
     app.side_threads.remove(&side_thread_id);
@@ -3384,6 +3450,7 @@ async fn side_thread_snapshot_hides_forked_parent_transcript() {
         TurnStatus::Completed,
         vec![ThreadItem::UserMessage {
             id: "parent-user".to_string(),
+            client_id: None,
             content: vec![AppServerUserInput::Text {
                 text: "parent prompt should stay hidden".to_string(),
                 text_elements: Vec::new(),
@@ -3880,6 +3947,7 @@ async fn make_test_app() -> App {
         state_db: None,
         cli_kv_overrides: Vec::new(),
         harness_overrides: ConfigOverrides::default(),
+        loader_overrides: LoaderOverrides::without_managed_config_for_tests(),
         runtime_approval_policy_override: None,
         runtime_permission_profile_override: None,
         file_search,
@@ -3899,6 +3967,7 @@ async fn make_test_app() -> App {
         feedback: codex_feedback::CodexFeedback::new(),
         feedback_audience: FeedbackAudience::External,
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
+        app_server_target: crate::AppServerTarget::Embedded,
         pending_update_action: None,
         pending_shutdown_exit_thread_id: None,
         windows_sandbox: WindowsSandboxState::default(),
@@ -3913,6 +3982,7 @@ async fn make_test_app() -> App {
         primary_session_configured: None,
         pending_primary_events: VecDeque::new(),
         pending_app_server_requests: PendingAppServerRequests::default(),
+        pending_startup_thread_start: false,
         pending_plugin_enabled_writes: HashMap::new(),
         pending_hook_enabled_writes: HashMap::new(),
     }
@@ -3940,6 +4010,7 @@ async fn make_test_app_with_channels() -> (
             state_db: None,
             cli_kv_overrides: Vec::new(),
             harness_overrides: ConfigOverrides::default(),
+            loader_overrides: LoaderOverrides::without_managed_config_for_tests(),
             runtime_approval_policy_override: None,
             runtime_permission_profile_override: None,
             file_search,
@@ -3959,6 +4030,7 @@ async fn make_test_app_with_channels() -> (
             feedback: codex_feedback::CodexFeedback::new(),
             feedback_audience: FeedbackAudience::External,
             environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
+            app_server_target: crate::AppServerTarget::Embedded,
             pending_update_action: None,
             pending_shutdown_exit_thread_id: None,
             windows_sandbox: WindowsSandboxState::default(),
@@ -3973,6 +4045,7 @@ async fn make_test_app_with_channels() -> (
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
+            pending_startup_thread_start: false,
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
         },
@@ -4017,8 +4090,9 @@ fn plain_line_cell(text: impl Into<String>) -> Arc<dyn HistoryCell> {
     Arc::new(PlainHistoryCell::new(vec![Line::from(text.into())])) as Arc<dyn HistoryCell>
 }
 
-fn rendered_line_text(line: &Line<'static>) -> String {
-    line.spans
+fn rendered_line_text(line: &crate::terminal_hyperlinks::HyperlinkLine) -> String {
+    line.line
+        .spans
         .iter()
         .map(|span| span.content.as_ref())
         .collect()
@@ -4104,7 +4178,7 @@ async fn initial_replay_buffer_keeps_recent_rows_when_row_cap_present() {
             app.initial_history_replay_buffer
                 .as_mut()
                 .expect("initial replay buffer active"),
-            vec![Line::from(format!("line {index}"))],
+            vec![Line::from(format!("line {index}")).into()],
             /*max_rows*/ 3,
         );
     }
@@ -4771,7 +4845,7 @@ async fn backtrack_resubmit_preserves_data_image_urls_in_user_turn() {
     assert!(items.iter().any(|item| {
         matches!(
             item,
-            UserInput::Image { url } if url == &data_image_url
+            UserInput::Image { url, .. } if url == &data_image_url
         )
     }));
 }
@@ -4792,6 +4866,7 @@ async fn replay_thread_snapshot_replays_turn_history_in_order() {
                     items_view: codex_app_server_protocol::TurnItemsView::Full,
                     items: vec![ThreadItem::UserMessage {
                         id: "user-1".to_string(),
+                        client_id: None,
                         content: vec![AppServerUserInput::Text {
                             text: "first prompt".to_string(),
                             text_elements: Vec::new(),
@@ -4809,6 +4884,7 @@ async fn replay_thread_snapshot_replays_turn_history_in_order() {
                     items: vec![
                         ThreadItem::UserMessage {
                             id: "user-2".to_string(),
+                            client_id: None,
                             content: vec![AppServerUserInput::Text {
                                 text: "third prompt".to_string(),
                                 text_elements: Vec::new(),
@@ -4956,6 +5032,7 @@ async fn refreshed_snapshot_session_persists_resumed_turns() {
         TurnStatus::Completed,
         vec![ThreadItem::UserMessage {
             id: "user-1".to_string(),
+            client_id: None,
             content: vec![AppServerUserInput::Text {
                 text: "restored prompt".to_string(),
                 text_elements: Vec::new(),
@@ -5028,7 +5105,7 @@ async fn queued_rollback_syncs_overlay_and_clears_deferred_history() {
         app.transcript_cells.clone(),
         app.keymap.pager.clone(),
     ));
-    app.deferred_history_lines = vec![Line::from("stale buffered line")];
+    app.deferred_history_lines = vec![Line::from("stale buffered line").into()];
     app.backtrack.overlay_preview_active = true;
     app.backtrack.nth_user_message = 1;
 
@@ -5129,8 +5206,11 @@ async fn new_session_requests_shutdown_for_previous_conversation() {
             permission_profile: PermissionProfile::read_only(),
             active_permission_profile: None,
             cwd: test_path_buf("/home/user/project").abs(),
+            runtime_workspace_roots: Vec::new(),
             instruction_source_paths: Vec::new(),
             reasoning_effort: None,
+            collaboration_mode: None,
+            personality: None,
             message_history: None,
             network_proxy: None,
             rollout_path: Some(PathBuf::new()),
@@ -5272,7 +5352,7 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
         app.transcript_cells.clone(),
         crate::keymap::RuntimeKeymap::defaults().pager,
     ));
-    app.deferred_history_lines = vec![Line::from("stale buffered line")];
+    app.deferred_history_lines = vec![Line::from("stale buffered line").into()];
     app.has_emitted_history_lines = true;
     app.backtrack.primed = true;
     app.backtrack.overlay_preview_active = true;
@@ -5402,6 +5482,9 @@ async fn session_summary_uses_id_even_when_thread_has_name() {
     .expect("summary");
     assert_eq!(
         summary.resume_hint,
-        Some("codex resume 123e4567-e89b-12d3-a456-426614174000".to_string())
+        Some(
+            "codex resume, then select my-session (123e4567-e89b-12d3-a456-426614174000)"
+                .to_string()
+        )
     );
 }

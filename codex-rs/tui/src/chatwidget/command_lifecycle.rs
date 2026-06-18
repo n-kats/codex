@@ -87,6 +87,9 @@ impl ChatWidget {
 
         self.flush_answer_stream_with_separator();
         if stdin.is_empty() {
+            if command_display.is_none() {
+                return;
+            }
             // Empty stdin means we are polling for background output.
             // Surface this in the status indicator (single "waiting" surface) instead of
             // the transcript. Keep the header short so the interrupt hint remains visible.

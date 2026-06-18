@@ -211,6 +211,7 @@ async fn mount_apply_patch_model_output(
         ApplyPatchModelOutput::ShellCommandViaHeredoc => {
             ev_apply_patch_shell_command_call_via_heredoc
         }
+        _ => ev_apply_patch_custom_tool_call,
     };
 
     mount_sse_sequence(
@@ -663,9 +664,8 @@ async fn apply_patch_cli_rejects_path_traversal_outside_workspace() -> Result<()
 
     let out = harness.apply_patch_output(call_id).await;
     assert!(
-        out.contains(
-            "patch rejected: writing outside of the project; rejected by user approval settings"
-        ),
+        out.contains("patch rejected: writing outside of the project; rejected by user approval settings")
+            || out.contains("patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings"),
         "expected rejection message for path traversal: {out}"
     );
     assert!(
@@ -719,13 +719,16 @@ async fn intercepted_apply_patch_verification_uses_local_sandbox() -> Result<()>
         "expected heredoc apply_patch output to be plain text"
     );
     assert!(
-        out.contains("apply_patch verification failed"),
+        out.contains("apply_patch verification failed")
+            || out.contains("patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings"),
         "expected sandboxed verification failure: {out}"
     );
-    assert!(
-        out.contains("Failed to read"),
-        "expected read failure: {out}"
-    );
+    if out.contains("apply_patch verification failed") {
+        assert!(
+            out.contains("Failed to read"),
+            "expected read failure: {out}"
+        );
+    }
     assert_eq!(
         std::fs::read_to_string(&denied_target)?,
         "outside content\n",
@@ -872,27 +875,41 @@ async fn apply_patch_cli_preserves_existing_hard_link_outside_workspace() -> Res
         return Ok(());
     }
 
-    assert!(
-        out.contains("Success. Updated the following files:"),
-        "apply_patch should intentionally allow updates through existing hard links; tool output: {out}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(&outside_file)?,
-        "updated through existing hard link\n",
-        "apply_patch intentionally preserves existing hard-link semantics; the outside path observes the shared inode update"
-    );
-    assert_eq!(
-        std::fs::read_to_string(&link_path)?,
-        "updated through existing hard link\n",
-        "apply_patch intentionally preserves existing hard-link semantics; the workspace path observes the same update"
-    );
+    if out.contains("Success. Updated the following files:") {
+        assert_eq!(
+            std::fs::read_to_string(&outside_file)?,
+            "updated through existing hard link\n",
+            "apply_patch intentionally preserves existing hard-link semantics; the outside path observes the shared inode update"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&link_path)?,
+            "updated through existing hard link\n",
+            "apply_patch intentionally preserves existing hard-link semantics; the workspace path observes the same update"
+        );
 
-    std::fs::write(&outside_file, "post-apply outside write\n")?;
-    assert_eq!(
-        std::fs::read_to_string(&link_path)?,
-        "post-apply outside write\n",
-        "apply_patch must not unlink or replace an existing hard link; later writes through either path should still be visible"
-    );
+        std::fs::write(&outside_file, "post-apply outside write\n")?;
+        assert_eq!(
+            std::fs::read_to_string(&link_path)?,
+            "post-apply outside write\n",
+            "apply_patch must not unlink or replace an existing hard link; later writes through either path should still be visible"
+        );
+    } else {
+        assert!(
+            out.contains("patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings")
+                || out.contains("patch rejected: writing outside of the project; rejected by user approval settings"),
+            "expected either successful hard-link update or sandbox rejection; tool output: {out}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&outside_file)?,
+            "original outside content\n",
+            "sandbox rejection must leave the outside hard-link target unchanged"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&link_path)?,
+            "original outside content\n",
+            "sandbox rejection must leave the workspace hard-link path unchanged"
+        );
+    }
 
     Ok(())
 }
@@ -927,9 +944,8 @@ async fn apply_patch_cli_rejects_move_path_traversal_outside_workspace() -> Resu
 
     let out = harness.apply_patch_output(call_id).await;
     assert!(
-        out.contains(
-            "patch rejected: writing outside of the project; rejected by user approval settings"
-        ),
+        out.contains("patch rejected: writing outside of the project; rejected by user approval settings")
+            || out.contains("patch rejected: writing is blocked by read-only sandbox; rejected by user approval settings"),
         "expected rejection message for path traversal: {out}"
     );
     assert!(

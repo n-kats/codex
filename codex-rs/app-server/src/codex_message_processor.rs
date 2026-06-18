@@ -3798,6 +3798,10 @@ impl CodexMessageProcessor {
         params: ThreadShellCommandParams,
     ) {
         let result = async {
+            let environment_manager = self.thread_manager.environment_manager();
+            if environment_manager.try_local_environment().is_none() {
+                return Err(internal_error("local environment is not configured"));
+            }
             let ThreadShellCommandParams { thread_id, command } = params;
             let command = command.trim().to_string();
             if command.is_empty() {
@@ -4577,6 +4581,9 @@ impl CodexMessageProcessor {
                     )
                     .await;
                 }
+                self.outgoing
+                    .replay_requests_to_connection_for_thread(connection_id, thread_id)
+                    .await;
                 if self.config.features.enabled(Feature::Goals) {
                     self.emit_thread_goal_snapshot(thread_id).await;
                     // App-server owns resume response and snapshot ordering, so wait
@@ -8550,6 +8557,7 @@ async fn handle_pending_thread_resume_request(
     let sandbox = thread_response_sandbox_policy(&permission_profile, cwd.as_path());
     let active_permission_profile =
         thread_response_active_permission_profile(active_permission_profile);
+    let cwd = pending.response_cwd.unwrap_or(cwd);
 
     let response = ThreadResumeResponse {
         thread,

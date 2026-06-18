@@ -324,6 +324,22 @@ async fn wait_for_requests(
     }
 }
 
+async fn wait_for_request_with_subagent_notification(
+    mock: &core_test_support::responses::ResponseMock,
+) -> Result<Vec<ResponsesRequest>> {
+    let deadline = Instant::now() + Duration::from_secs(6);
+    loop {
+        let requests = mock.requests();
+        if requests.iter().any(has_subagent_notification) {
+            return Ok(requests);
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for a request to include subagent notification");
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+}
+
 async fn setup_turn_one_with_spawned_child(
     server: &MockServer,
     child_response_delay: Option<Duration>,
@@ -825,7 +841,7 @@ async fn subagent_notification_is_included_without_wait() -> Result<()> {
     .await;
     test.submit_turn(TURN_2_NO_WAIT_PROMPT).await?;
 
-    let turn2_requests = wait_for_requests(&turn2).await?;
+    let turn2_requests = wait_for_request_with_subagent_notification(&turn2).await?;
     assert!(turn2_requests.iter().any(has_subagent_notification));
 
     Ok(())

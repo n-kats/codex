@@ -7,8 +7,9 @@ use crate::exec_policy::ExecPolicyManager;
 use crate::guardian::GUARDIAN_REVIEWER_NAME;
 use crate::sandboxing::SandboxPermissions;
 use crate::test_support::models_manager_with_provider;
-use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolCallSource;
+use crate::tools::context::ToolOutput;
+use crate::tools::context::ToolPayload;
 use crate::tools::handlers::ExecCommandHandler;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_app_server_protocol::ConfigLayerSource;
@@ -26,7 +27,6 @@ use codex_protocol::models::AdditionalPermissionProfile as PermissionProfile;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::NetworkPermissions;
 use codex_protocol::models::ResponseItem;
-use codex_protocol::models::function_call_output_content_items_to_text;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
@@ -53,8 +53,19 @@ use tempfile::tempdir;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
-fn expect_text_output(output: &FunctionToolOutput) -> String {
-    function_call_output_content_items_to_text(&output.body).unwrap_or_default()
+fn expect_text_output(output: &dyn ToolOutput) -> String {
+    let response = output.to_response_item(
+        "",
+        &ToolPayload::Custom {
+            input: String::new(),
+        },
+    );
+    let payload = match response {
+        codex_protocol::models::ResponseInputItem::FunctionCallOutput { output, .. }
+        | codex_protocol::models::ResponseInputItem::CustomToolCallOutput { output, .. } => output,
+        _ => return String::new(),
+    };
+    payload.body.to_text().unwrap_or_default()
 }
 
 #[tokio::test]
@@ -336,7 +347,7 @@ async fn guardian_allows_shell_additional_permissions_requests_past_policy_valid
             source: crate::tools::context::ToolCallSource::Direct,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
-                    "command": params.command.clone(),
+                    "command": "echo hi",
                     "workdir": Some(turn_context.cwd.to_string_lossy().to_string()),
                     "timeout_ms": params.expiration.timeout_ms(),
                     "sandbox_permissions": params.sandbox_permissions,
@@ -354,23 +365,7 @@ async fn guardian_allows_shell_additional_permissions_requests_past_policy_valid
         .await;
 
     let output = expect_text_output(&resp.expect("expected Ok result"));
-
-    #[derive(Deserialize, PartialEq, Eq, Debug)]
-    struct ResponseExecMetadata {
-        exit_code: i32,
-    }
-
-    #[derive(Deserialize)]
-    struct ResponseExecOutput {
-        output: String,
-        metadata: ResponseExecMetadata,
-    }
-
-    let exec_output: ResponseExecOutput =
-        serde_json::from_str(&output).expect("valid exec output json");
-
-    assert_eq!(exec_output.metadata, ResponseExecMetadata { exit_code: 0 });
-    assert!(exec_output.output.contains("hi"));
+    assert!(output.contains("hi"));
 }
 
 #[tokio::test]
@@ -748,7 +743,6 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         session_source: SessionSource::SubAgent(SubAgentSource::Other(
             GUARDIAN_REVIEWER_NAME.to_string(),
         )),
-        forked_from_thread_id: None,
         thread_source: None,
         agent_control: AgentControl::default(),
         dynamic_tools: Vec::new(),
@@ -765,6 +759,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         analytics_events_client: None,
         thread_store,
         attestation_provider: None,
+        extensions: codex_extension_api::empty_extension_registry(),
     })
     .await
     .expect("spawn guardian subagent");

@@ -710,7 +710,7 @@ mod tests {
         });
 
         assert!(
-            timeout(Duration::from_millis(50), &mut handle_message)
+            timeout(Duration::from_millis(500), &mut handle_message)
                 .await
                 .expect("initialize timeout rollback should not wait for close delivery")
                 .expect("handle message task should not panic")

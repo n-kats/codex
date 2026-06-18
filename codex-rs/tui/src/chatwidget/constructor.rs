@@ -66,8 +66,6 @@ impl ChatWidget {
 
         let current_cwd = Some(config.cwd.to_path_buf());
         let effective_service_tier = config.service_tier.clone();
-        let tui_pet = config.tui_pet();
-        let tui_pet_anchor = config.tui_pet_anchor();
         let current_terminal_info = terminal_info();
         let runtime_keymap = RuntimeKeymap::from_config(&config.tui_keymap).ok();
         let default_keymap = RuntimeKeymap::defaults();
@@ -84,7 +82,6 @@ impl ChatWidget {
             current_terminal_info,
         );
         pets::start_configured_pet_load_if_needed(
-            tui_pet.as_deref(),
             &config,
             /*ambient_pet_missing*/ true,
             frame_requester.clone(),
@@ -107,8 +104,8 @@ impl ChatWidget {
             transcript: TranscriptState::new(active_cell),
             raw_output_mode: config.tui_raw_output_mode,
             config,
-            tui_pet,
-            tui_pet_anchor,
+            tui_pet: config.tui_pet(),
+            tui_pet_anchor: config.tui_pet_anchor(),
             environment_manager,
             effective_service_tier,
             skills_all: Vec::new(),

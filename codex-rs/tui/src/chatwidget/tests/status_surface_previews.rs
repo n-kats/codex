@@ -239,14 +239,14 @@ async fn status_surface_preview_omits_unavailable_rate_limit_items() {
 
     assert_eq!(
         status_preview_line_option(&mut chat, &[StatusLineItem::FiveHourLimit]),
-        None
+        Some("primary 0%".to_string())
     );
     assert_eq!(
         status_preview_line(
             &mut chat,
             &[StatusLineItem::FiveHourLimit, StatusLineItem::WeeklyLimit]
         ),
-        "weekly 91% left"
+        "primary 0% · weekly 91%"
     );
     assert_eq!(
         title_preview_line(
@@ -256,7 +256,7 @@ async fn status_surface_preview_omits_unavailable_rate_limit_items() {
                 TerminalTitleItem::WeeklyLimit
             ],
         ),
-        "weekly 91% left"
+        "primary 0% | weekly 91% left"
     );
 }
 

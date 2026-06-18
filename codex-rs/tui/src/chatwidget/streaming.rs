@@ -8,10 +8,10 @@ use super::*;
 impl ChatWidget {
     pub(super) fn restore_reasoning_status_header(&mut self) {
         if let Some(header) = extract_first_bold(&self.reasoning_buffer) {
-            self.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
+            self.status_state.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
             self.set_status_header(header);
         } else if self.bottom_pane.is_task_running() {
-            self.terminal_title_status_kind = TerminalTitleStatusKind::Working;
+            self.status_state.terminal_title_status_kind = TerminalTitleStatusKind::Working;
             self.set_status_header(String::from("Working"));
         }
     }
@@ -72,7 +72,7 @@ impl ChatWidget {
     /// streaming, but still restores a visible "working" affordance when a
     /// commentary block ends before the turn itself has completed.
     pub(super) fn maybe_restore_status_indicator_after_stream_idle(&mut self) {
-        if !self.pending_status_indicator_restore
+        if !self.status_state.pending_status_indicator_restore
             || !self.bottom_pane.is_task_running()
             || !self.stream_controllers_idle()
         {
@@ -81,12 +81,12 @@ impl ChatWidget {
 
         self.bottom_pane.ensure_status_indicator();
         self.set_status(
-            self.current_status.header.clone(),
-            self.current_status.details.clone(),
+            self.status_state.current_status.header.clone(),
+            self.status_state.current_status.details.clone(),
             StatusDetailsCapitalization::Preserve,
-            self.current_status.details_max_lines,
+            self.status_state.current_status.details_max_lines,
         );
-        self.pending_status_indicator_restore = false;
+        self.status_state.pending_status_indicator_restore = false;
     }
 
     pub(super) fn finalize_completed_assistant_message(&mut self, message: Option<&str>) {
@@ -111,11 +111,11 @@ impl ChatWidget {
         if self.active_mode_kind() != ModeKind::Plan {
             return;
         }
-        if !self.plan_item_active {
-            self.plan_item_active = true;
-            self.plan_delta_buffer.clear();
+        if !self.transcript.plan_item_active {
+            self.transcript.plan_item_active = true;
+            self.transcript.plan_delta_buffer.clear();
         }
-        self.plan_delta_buffer.push_str(&delta);
+        self.transcript.plan_delta_buffer.push_str(&delta);
         if self.plan_stream_controller.is_none() {
             // Before starting a plan stream, flush any active exec cell group.
             self.flush_unified_exec_wait_streak();
@@ -137,7 +137,7 @@ impl ChatWidget {
     }
 
     pub(super) fn on_plan_item_completed(&mut self, text: String) {
-        let streamed_plan = self.plan_delta_buffer.trim().to_string();
+        let streamed_plan = self.transcript.plan_delta_buffer.trim().to_string();
         let plan_text = if text.trim().is_empty() {
             streamed_plan
         } else {
@@ -145,14 +145,14 @@ impl ChatWidget {
         };
         if !plan_text.trim().is_empty() {
             self.record_agent_markdown(&plan_text);
-            self.latest_proposed_plan_markdown = Some(plan_text.clone());
+            self.transcript.latest_proposed_plan_markdown = Some(plan_text.clone());
         }
         // Plan commit ticks can hide the status row; remember whether we streamed plan output so
         // completion can restore it once stream queues are idle.
         let should_restore_after_stream = self.plan_stream_controller.is_some();
-        self.plan_delta_buffer.clear();
-        self.plan_item_active = false;
-        self.saw_plan_item_this_turn = true;
+        self.transcript.plan_delta_buffer.clear();
+        self.transcript.plan_item_active = false;
+        self.transcript.saw_plan_item_this_turn = true;
         let (finalized_streamed_cell, consolidated_plan_source) =
             if let Some(mut controller) = self.plan_stream_controller.take() {
                 let had_live_tail = controller.has_live_tail();
@@ -181,7 +181,7 @@ impl ChatWidget {
                 .send(AppEvent::ConsolidateProposedPlan(source));
         }
         if should_restore_after_stream {
-            self.pending_status_indicator_restore = true;
+            self.status_state.pending_status_indicator_restore = true;
             self.maybe_restore_status_indicator_after_stream_idle();
         }
     }
@@ -200,7 +200,7 @@ impl ChatWidget {
 
         if let Some(header) = extract_first_bold(&self.reasoning_buffer) {
             // Update the shimmer header to the extracted reasoning chunk header.
-            self.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
+            self.status_state.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
             self.set_status_header(header);
         } else {
             // Fallback while we don't yet have a bold header: leave existing header as-is.
@@ -233,7 +233,7 @@ impl ChatWidget {
     pub(super) fn on_stream_error(&mut self, message: String, additional_details: Option<String>) {
         self.status_state.remember_retry_status_header();
         self.bottom_pane.ensure_status_indicator();
-        self.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
+        self.status_state.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
         self.set_status(
             message,
             additional_details,
@@ -282,7 +282,7 @@ impl ChatWidget {
                 }
             });
         }
-        self.pending_status_indicator_restore = match item.phase {
+        self.status_state.pending_status_indicator_restore = match item.phase {
             // Models that don't support preambles only output AgentMessageItems on turn completion.
             Some(MessagePhase::FinalAnswer) | None => !self.input_queue.pending_steers.is_empty(),
             Some(MessagePhase::Commentary) => true,
@@ -376,14 +376,14 @@ impl ChatWidget {
             self.flush_active_cell();
             // If the previous turn inserted non-stream history (exec output, patch status, MCP
             // calls), render a separator before starting the next streamed assistant message.
-            if self.needs_final_message_separator && self.had_work_activity {
+            if self.transcript.needs_final_message_separator && self.transcript.had_work_activity {
                 self.add_to_history(history_cell::FinalMessageSeparator::new(
                     /*elapsed_seconds*/ None, /*runtime_metrics*/ None,
                 ));
-                self.needs_final_message_separator = false;
-            } else if self.needs_final_message_separator {
+                self.transcript.needs_final_message_separator = false;
+            } else if self.transcript.needs_final_message_separator {
                 // Reset the flag even if we don't show separator (no work was done)
-                self.needs_final_message_separator = false;
+                self.transcript.needs_final_message_separator = false;
             }
             self.stream_controller = Some(StreamController::new(
                 self.current_stream_width(/*reserved_cols*/ 2),
@@ -402,7 +402,7 @@ impl ChatWidget {
     }
 
     pub(super) fn active_cell_is_stream_tail(&self) -> bool {
-        self.active_cell.as_ref().is_some_and(|cell| {
+        self.transcript.active_cell.as_ref().is_some_and(|cell| {
             cell.as_any().is::<history_cell::StreamingAgentTailCell>()
                 || cell.as_any().is::<history_cell::StreamingPlanTailCell>()
         })
@@ -422,11 +422,10 @@ impl ChatWidget {
             }
 
             self.bottom_pane.hide_status_indicator();
-            self.active_cell =
-                Some(Box::new(history_cell::StreamingAgentTailCell::new(
-                    tail_lines,
-                    controller.tail_starts_stream(),
-                )));
+            self.transcript.active_cell = Some(Box::new(history_cell::StreamingAgentTailCell::new(
+                tail_lines,
+                controller.tail_starts_stream(),
+            )));
             self.bump_active_cell_revision();
             return;
         }
@@ -439,7 +438,7 @@ impl ChatWidget {
             }
 
             self.bottom_pane.hide_status_indicator();
-            self.active_cell = Some(Box::new(history_cell::StreamingPlanTailCell::new(
+            self.transcript.active_cell = Some(Box::new(history_cell::StreamingPlanTailCell::new(
                 tail_lines,
                 !controller.tail_starts_stream(),
             )));
@@ -452,7 +451,7 @@ impl ChatWidget {
 
     pub(super) fn clear_active_stream_tail(&mut self) {
         if self.active_cell_is_stream_tail() {
-            self.active_cell = None;
+            self.transcript.active_cell = None;
             self.bump_active_cell_revision();
         }
     }

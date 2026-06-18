@@ -216,6 +216,7 @@ impl App {
         let mut approval_policy_override = None;
         let mut approvals_reviewer_override = None;
         let mut permission_profile_override = None;
+        let mut active_permission_profile_override = None;
         let mut feature_updates_to_apply = Vec::with_capacity(updates.len());
         // Auto-Review owns `approvals_reviewer`, but disabling the feature
         // from inside a profile should not silently clear a value configured at
@@ -238,7 +239,8 @@ impl App {
             (root_blocks_disable, profile_configured)
         };
         let mut permissions_history_label: Option<&'static str> = None;
-        let mut builder = ConfigEditsBuilder::new(&self.config.codex_home);
+        let mut builder = ConfigEditsBuilder::new(&self.config.codex_home)
+            .with_profile(self.config.active_profile.as_deref());
 
         for (feature, enabled) in updates {
             let feature_key = feature.key();
@@ -278,7 +280,7 @@ impl App {
                         value: auto_review_preset.approvals_reviewer.to_string().into(),
                     });
                     if previous_approvals_reviewer != auto_review_preset.approvals_reviewer {
-                        permissions_history_label = Some("Auto-review");
+                        permissions_history_label = Some("Approve for me");
                     }
                 } else if !effective_enabled {
                     if profile_approvals_reviewer_configured || self.config.active_profile.is_none()
@@ -289,7 +291,7 @@ impl App {
                     }
                     feature_config.approvals_reviewer = ApprovalsReviewer::User;
                     if previous_approvals_reviewer != ApprovalsReviewer::User {
-                        permissions_history_label = Some("Default");
+                        permissions_history_label = Some("Ask for approval");
                     }
                 }
                 approvals_reviewer_override = Some(feature_config.approvals_reviewer);
@@ -330,6 +332,8 @@ impl App {
                 approval_policy_override = Some(auto_review_preset.approval_policy);
                 permission_profile_override =
                     Some(feature_config.permissions.permission_profile().clone());
+                active_permission_profile_override =
+                    Some(auto_review_preset.active_permission_profile.clone());
             }
             next_config = feature_config;
             feature_updates_to_apply.push((feature, effective_enabled));
@@ -402,7 +406,7 @@ impl App {
                 approval_policy_override,
                 approvals_reviewer_override,
                 permission_profile_override,
-                /*active_permission_profile*/ None,
+                active_permission_profile_override,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
                 /*effort*/ None,
@@ -723,8 +727,11 @@ mod tests {
                 permission_profile: PermissionProfile::read_only(),
                 active_permission_profile: None,
                 cwd: next_cwd.clone().abs(),
+                runtime_workspace_roots: Vec::new(),
                 instruction_source_paths: Vec::new(),
                 reasoning_effort: None,
+                collaboration_mode: None,
+                personality: None,
                 message_history: None,
                 network_proxy: None,
                 rollout_path: Some(PathBuf::new()),

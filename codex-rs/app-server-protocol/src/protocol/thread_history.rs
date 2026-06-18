@@ -280,7 +280,7 @@ impl ThreadHistoryBuilder {
         let content = self.build_user_inputs(payload);
         turn.items.push(ThreadItem::UserMessage {
             id,
-            client_id: None,
+            client_id: payload.client_id.clone(),
             content,
         });
         self.current_turn = Some(turn);
@@ -529,7 +529,7 @@ impl ThreadHistoryBuilder {
                 .clone()
                 .unwrap_or(serde_json::Value::Null),
             mcp_app_resource_uri: payload.mcp_app_resource_uri.clone(),
-            plugin_id: None,
+            plugin_id: payload.plugin_id.clone(),
             result: None,
             error: None,
             duration_ms: None,
@@ -571,7 +571,7 @@ impl ThreadHistoryBuilder {
                 .clone()
                 .unwrap_or(serde_json::Value::Null),
             mcp_app_resource_uri: payload.mcp_app_resource_uri.clone(),
-            plugin_id: None,
+            plugin_id: payload.plugin_id.clone(),
             result,
             error,
             duration_ms,

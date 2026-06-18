@@ -593,33 +593,60 @@ impl ThreadRequestProcessor {
         &self,
         params: ThreadSearchParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        let response = self
-            .thread_list_response_inner(ThreadListParams {
+        let requested_page_size = params.limit.unwrap_or(THREAD_LIST_DEFAULT_LIMIT as u32) as usize;
+        let (allowed_sources_vec, source_kind_filter) = compute_source_filters(params.source_kinds);
+        let store_sort_key = match params.sort_key.unwrap_or(ThreadSortKey::CreatedAt) {
+            ThreadSortKey::CreatedAt => StoreThreadSortKey::CreatedAt,
+            ThreadSortKey::UpdatedAt => StoreThreadSortKey::UpdatedAt,
+        };
+        let store_sort_direction = match params.sort_direction.unwrap_or(SortDirection::Desc) {
+            SortDirection::Asc => StoreSortDirection::Asc,
+            SortDirection::Desc => StoreSortDirection::Desc,
+        };
+        let search_page = self
+            .thread_store
+            .search_threads(StoreSearchThreadsParams {
+                page_size: requested_page_size,
                 cursor: params.cursor,
-                limit: params.limit,
-                sort_key: params.sort_key,
-                sort_direction: params.sort_direction,
-                model_providers: None,
-                source_kinds: params.source_kinds,
-                archived: params.archived,
-                cwd: None,
-                use_state_db_only: false,
-                search_term: Some(params.search_term),
+                sort_key: store_sort_key,
+                sort_direction: store_sort_direction,
+                allowed_sources: allowed_sources_vec,
+                archived: params.archived.unwrap_or(false),
+                search_term: params.search_term,
             })
-            .await?;
-        let data = response
-            .data
+            .await
+            .map_err(thread_store_list_error)?;
+        let data = search_page
+            .items
             .into_iter()
-            .map(|thread| ThreadSearchResult {
-                thread,
-                snippet: String::new(),
+            .filter_map(|item| {
+                let source = with_thread_spawn_agent_metadata(
+                    item.thread.source.clone(),
+                    item.thread.agent_nickname.clone(),
+                    item.thread.agent_role.clone(),
+                );
+                if !source_kind_filter
+                    .as_ref()
+                    .is_none_or(|filter| source_kind_matches(&source, filter))
+                {
+                    return None;
+                }
+                let (thread, _) = thread_from_stored_thread(
+                    item.thread,
+                    &self.config.model_provider_id,
+                    &self.config.cwd,
+                );
+                Some(ThreadSearchResult {
+                    thread,
+                    snippet: item.snippet,
+                })
             })
             .collect();
         Ok(Some(
             ThreadSearchResponse {
                 data,
-                next_cursor: response.next_cursor,
-                backwards_cursor: response.backwards_cursor,
+                next_cursor: search_page.next_cursor,
+                backwards_cursor: None,
             }
             .into(),
         ))
@@ -888,6 +915,8 @@ impl ThreadRequestProcessor {
                 .await;
         }
         let environment_selections = self.parse_environment_selections(environments)?;
+        let runtime_workspace_roots_response_cwd = cwd.clone();
+        let runtime_workspace_roots_response = runtime_workspace_roots.clone();
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
@@ -927,6 +956,8 @@ impl ThreadRequestProcessor {
                 app_server_client_version,
                 config,
                 typesafe_overrides,
+                runtime_workspace_roots_response_cwd,
+                runtime_workspace_roots_response,
                 dynamic_tools,
                 session_start_source,
                 thread_source.map(Into::into),
@@ -1011,6 +1042,8 @@ impl ThreadRequestProcessor {
         app_server_client_version: Option<String>,
         config_overrides: Option<HashMap<String, serde_json::Value>>,
         typesafe_overrides: ConfigOverrides,
+        runtime_workspace_roots_response_cwd: Option<String>,
+        runtime_workspace_roots_response: Option<Vec<PathBuf>>,
         dynamic_tools: Option<Vec<ApiDynamicToolSpec>>,
         session_start_source: Option<codex_app_server_protocol::ThreadStartSource>,
         thread_source: Option<codex_protocol::protocol::ThreadSource>,
@@ -1223,6 +1256,26 @@ impl ThreadRequestProcessor {
         );
         let active_permission_profile =
             thread_response_active_permission_profile(config_snapshot.active_permission_profile);
+        let runtime_workspace_roots = runtime_workspace_roots_response.map_or_else(
+            || vec![config_snapshot.cwd.clone()],
+            |requested_runtime_workspace_roots| {
+                let base_cwd = runtime_workspace_roots_response_cwd
+                    .as_ref()
+                    .map(|cwd| {
+                        AbsolutePathBuf::resolve_path_against_base(
+                            cwd,
+                            config_snapshot.cwd.as_path(),
+                        )
+                    })
+                    .unwrap_or_else(|| config_snapshot.cwd.clone());
+                requested_runtime_workspace_roots
+                    .into_iter()
+                    .map(|path| {
+                        AbsolutePathBuf::resolve_path_against_base(path, base_cwd.as_path())
+                    })
+                    .collect()
+            },
+        );
 
         let response = ThreadStartResponse {
             thread: thread.clone(),
@@ -1230,7 +1283,7 @@ impl ThreadRequestProcessor {
             model_provider: config_snapshot.model_provider_id,
             service_tier: config_snapshot.service_tier,
             cwd: config_snapshot.cwd,
-            runtime_workspace_roots: config_snapshot.workspace_roots,
+            runtime_workspace_roots,
             instruction_sources,
             approval_policy: config_snapshot.approval_policy.into(),
             approvals_reviewer: config_snapshot.approvals_reviewer.into(),
@@ -1772,6 +1825,14 @@ impl ThreadRequestProcessor {
         request_id: &ConnectionRequestId,
         params: ThreadShellCommandParams,
     ) -> Result<ThreadShellCommandResponse, JSONRPCErrorError> {
+        if self
+            .thread_manager
+            .environment_manager()
+            .try_local_environment()
+            .is_none()
+        {
+            return Err(internal_error("local environment is not configured"));
+        }
         let ThreadShellCommandParams { thread_id, command } = params;
         let command = command.trim().to_string();
         if command.is_empty() {
@@ -2426,6 +2487,7 @@ impl ThreadRequestProcessor {
             initial_turns_page,
         } = params;
         let include_turns = !exclude_turns;
+        let requested_cwd = cwd.clone();
 
         let (thread_history, resume_source_thread) = match if let Some(history) = history {
             self.resume_thread_from_history(history.as_slice())
@@ -2565,7 +2627,7 @@ impl ThreadRequestProcessor {
 
                 set_thread_status_and_interrupt_stale_turns(
                     &mut thread,
-                    thread_status,
+                    thread_status.clone(),
                     /*has_live_in_progress_turn*/ false,
                 );
                 let config_snapshot = codex_thread.config_snapshot().await;
@@ -2577,16 +2639,35 @@ impl ThreadRequestProcessor {
                     config_snapshot.active_permission_profile,
                 );
                 let token_usage_thread = include_turns.then(|| thread.clone());
+                let mut initial_turns_page = initial_turns_page.as_ref().map(|page_params| {
+                    build_thread_resume_initial_turns_page(
+                        &response_history.get_rollout_items(),
+                        thread_status.clone(),
+                        false,
+                        None,
+                        page_params,
+                    )
+                    .expect("initial turns page should build")
+                });
                 if redact_resume_payloads {
                     redact_thread_resume_payloads(&mut thread.turns);
+                    if let Some(initial_turns_page) = initial_turns_page.as_mut() {
+                        redact_thread_resume_payloads(&mut initial_turns_page.data);
+                    }
                 }
 
+                let response_cwd = requested_cwd
+                    .as_deref()
+                    .map(AbsolutePathBuf::from_absolute_path)
+                    .transpose()
+                    .map_err(|err| invalid_request(format!("invalid cwd override: {err}")))?
+                    .unwrap_or_else(|| config.cwd.clone());
                 let response = ThreadResumeResponse {
                     thread,
                     model: session_configured.model,
                     model_provider: session_configured.model_provider_id,
                     service_tier: session_configured.service_tier,
-                    cwd: session_configured.cwd,
+                    cwd: response_cwd,
                     runtime_workspace_roots: config_snapshot.workspace_roots,
                     instruction_sources,
                     approval_policy: session_configured.approval_policy.into(),
@@ -2594,7 +2675,7 @@ impl ThreadRequestProcessor {
                     sandbox,
                     active_permission_profile,
                     reasoning_effort: session_configured.reasoning_effort,
-                    initial_turns_page: None,
+                    initial_turns_page,
                 };
 
                 let connection_id = request_id.connection_id;
@@ -2619,6 +2700,9 @@ impl ThreadRequestProcessor {
                     )
                     .await;
                 }
+                self.outgoing
+                    .replay_requests_to_connection_for_thread(connection_id, thread_id)
+                    .await;
                 self.thread_goal_processor
                     .emit_resume_goal_snapshot_and_continue(thread_id, codex_thread.as_ref())
                     .await;
@@ -2671,15 +2755,10 @@ impl ThreadRequestProcessor {
             }
             None
         } else if params.path.is_some() {
-            let source_thread = self
-                .read_stored_thread_for_resume(
-                    &params.thread_id,
-                    params.path.as_ref(),
-                    /*include_history*/ true,
-                )
-                .await?;
-            let existing_thread_id = source_thread.thread_id;
-            if let Ok(existing_thread) = self.thread_manager.get_thread(existing_thread_id).await {
+            if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
+                && let Ok(existing_thread) =
+                    self.thread_manager.get_thread(existing_thread_id).await
+            {
                 if let (Some(requested_path), Some(active_path)) = (
                     params.path.as_ref(),
                     existing_thread.rollout_path().as_ref(),
@@ -2691,27 +2770,37 @@ impl ThreadRequestProcessor {
                         active_path.display()
                     )));
                 }
+                let source_thread = self
+                    .read_stored_thread_for_resume(
+                        &params.thread_id,
+                        params.path.as_ref(),
+                        /*include_history*/ true,
+                    )
+                    .await?;
+                if source_thread.thread_id != existing_thread_id {
+                    return Err(invalid_request(format!(
+                        "cannot resume running thread {existing_thread_id} from source thread {}",
+                        source_thread.thread_id
+                    )));
+                }
                 Some((existing_thread_id, existing_thread, source_thread))
             } else {
-                None
+                let source_thread = self
+                    .read_stored_thread_for_resume(
+                        &params.thread_id,
+                        params.path.as_ref(),
+                        /*include_history*/ true,
+                    )
+                    .await?;
+                let existing_thread_id = source_thread.thread_id;
+                if let Ok(existing_thread) =
+                    self.thread_manager.get_thread(existing_thread_id).await
+                {
+                    Some((existing_thread_id, existing_thread, source_thread))
+                } else {
+                    None
+                }
             }
-        } else if let Ok(existing_thread_id) = ThreadId::from_string(&params.thread_id)
-            && let Ok(existing_thread) = self.thread_manager.get_thread(existing_thread_id).await
-        {
-            let source_thread = self
-                .read_stored_thread_for_resume(
-                    &params.thread_id,
-                    /*path*/ None,
-                    /*include_history*/ true,
-                )
-                .await?;
-            if source_thread.thread_id != existing_thread_id {
-                return Err(invalid_request(format!(
-                    "cannot resume running thread {existing_thread_id} from source thread {}",
-                    source_thread.thread_id
-                )));
-            }
-            Some((existing_thread_id, existing_thread, source_thread))
         } else {
             None
         };
@@ -2782,6 +2871,12 @@ impl ThreadRequestProcessor {
                 .thread_goal_processor
                 .pending_resume_goal_state(existing_thread.as_ref())
                 .await;
+            let response_cwd = params
+                .cwd
+                .as_deref()
+                .map(AbsolutePathBuf::from_absolute_path)
+                .transpose()
+                .map_err(|err| invalid_request(format!("invalid cwd override: {err}")))?;
 
             let command = crate::thread_state::ThreadListenerCommand::SendThreadResumeResponse(
                 Box::new(crate::thread_state::PendingThreadResumeRequest {
@@ -2790,6 +2885,7 @@ impl ThreadRequestProcessor {
                     config_snapshot,
                     instruction_sources,
                     thread_summary,
+                    response_cwd,
                     emit_thread_goal_update,
                     thread_goal_state_db,
                     include_turns: !params.exclude_turns,
@@ -3482,16 +3578,63 @@ struct ThreadTurnsPage {
 }
 
 pub(crate) fn build_thread_resume_initial_turns_page(
-    _history_items: &[RolloutItem],
-    _thread_status: codex_app_server_protocol::ThreadStatus,
-    _has_live_in_progress_turn: bool,
-    _active_turn: Option<&codex_app_server_protocol::Turn>,
-    _params: &ThreadResumeInitialTurnsPageParams,
+    history_items: &[RolloutItem],
+    thread_status: codex_app_server_protocol::ThreadStatus,
+    has_live_in_progress_turn: bool,
+    active_turn: Option<&codex_app_server_protocol::Turn>,
+    params: &ThreadResumeInitialTurnsPageParams,
 ) -> Result<codex_app_server_protocol::TurnsPage, JSONRPCErrorError> {
+    let mut turns = reconstruct_thread_turns_for_turns_list(
+        history_items,
+        thread_status,
+        has_live_in_progress_turn,
+        active_turn.cloned(),
+    );
+    for turn in &mut turns {
+        match params.items_view.unwrap_or(TurnItemsView::Summary) {
+            TurnItemsView::NotLoaded => {
+                turn.items.clear();
+                turn.items_view = TurnItemsView::NotLoaded;
+            }
+            TurnItemsView::Summary => {
+                let first_user_message = turn
+                    .items
+                    .iter()
+                    .find(|item| matches!(item, ThreadItem::UserMessage { .. }))
+                    .cloned();
+                let final_agent_message = turn
+                    .items
+                    .iter()
+                    .rev()
+                    .find(|item| matches!(item, ThreadItem::AgentMessage { .. }))
+                    .cloned();
+                turn.items = match (first_user_message, final_agent_message) {
+                    (Some(user_message), Some(agent_message))
+                        if user_message.id() != agent_message.id() =>
+                    {
+                        vec![user_message, agent_message]
+                    }
+                    (Some(user_message), _) => vec![user_message],
+                    (None, Some(agent_message)) => vec![agent_message],
+                    (None, None) => Vec::new(),
+                };
+                turn.items_view = TurnItemsView::Summary;
+            }
+            TurnItemsView::Full => {
+                turn.items_view = TurnItemsView::Full;
+            }
+        }
+    }
+    let page = paginate_thread_turns(
+        turns,
+        None,
+        params.limit,
+        params.sort_direction.unwrap_or(SortDirection::Desc),
+    )?;
     Ok(codex_app_server_protocol::TurnsPage {
-        data: Vec::new(),
-        next_cursor: None,
-        backwards_cursor: None,
+        data: page.turns,
+        next_cursor: page.next_cursor,
+        backwards_cursor: page.backwards_cursor,
     })
 }
 

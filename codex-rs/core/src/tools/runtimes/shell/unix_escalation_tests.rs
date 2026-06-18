@@ -312,7 +312,6 @@ fn shell_request_escalation_execution_is_explicit() {
         CoreShellActionProvider::shell_request_escalation_execution(
             crate::sandboxing::SandboxPermissions::UseDefault,
             &permission_profile,
-            &file_system_sandbox_policy,
             /*additional_permissions*/ None,
         ),
         EscalationExecution::TurnDefault,
@@ -321,25 +320,14 @@ fn shell_request_escalation_execution_is_explicit() {
         CoreShellActionProvider::shell_request_escalation_execution(
             crate::sandboxing::SandboxPermissions::RequireEscalated,
             &permission_profile,
-            &read_only_file_system_policy,
             /*additional_permissions*/ None,
         ),
         EscalationExecution::Unsandboxed,
     );
     assert_eq!(
         CoreShellActionProvider::shell_request_escalation_execution(
-            crate::sandboxing::SandboxPermissions::RequireEscalated,
-            &permission_profile,
-            &file_system_sandbox_policy,
-            /*additional_permissions*/ None,
-        ),
-        EscalationExecution::TurnDefault,
-    );
-    assert_eq!(
-        CoreShellActionProvider::shell_request_escalation_execution(
             crate::sandboxing::SandboxPermissions::WithAdditionalPermissions,
             &permission_profile,
-            &file_system_sandbox_policy,
             Some(&requested_permissions),
         ),
         EscalationExecution::Permissions(EscalationPermissions::ResolvedPermissionProfile(
@@ -688,7 +676,12 @@ prefix_rule(pattern = ["{cat_path_literal}"], decision = "allow")
     )
     .await?;
 
-    assert_eq!(action, codex_shell_escalation::EscalationDecision::Run);
+    assert_eq!(
+        action,
+        codex_shell_escalation::EscalationDecision::Escalate(
+            codex_shell_escalation::EscalationExecution::Unsandboxed,
+        )
+    );
     Ok(())
 }
 

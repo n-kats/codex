@@ -23,12 +23,14 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::Submission;
 use codex_protocol::protocol::ThreadMemoryMode;
+use codex_protocol::protocol::ThreadSettingsAppliedEvent;
 use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TokenUsageInfo;
 use codex_protocol::protocol::TurnEnvironmentSelection;
@@ -298,6 +300,41 @@ impl CodexThread {
     ) -> ConstraintResult<ThreadConfigSnapshot> {
         let updates = self.thread_settings_update(overrides).await;
         self.codex.preview_settings(&updates).await
+    }
+
+    pub async fn apply_thread_settings_overrides(
+        &self,
+        overrides: CodexThreadSettingsOverrides,
+    ) -> ConstraintResult<()> {
+        let updates = self.thread_settings_update(overrides.clone()).await;
+        let thread_settings = codex_protocol::protocol::ThreadSettingsOverrides {
+            cwd: overrides.cwd,
+            workspace_roots: overrides.workspace_roots,
+            profile_workspace_roots: overrides.profile_workspace_roots,
+            approval_policy: overrides.approval_policy,
+            approvals_reviewer: overrides.approvals_reviewer,
+            sandbox_policy: overrides.sandbox_policy,
+            permission_profile: overrides.permission_profile,
+            active_permission_profile: overrides.active_permission_profile,
+            windows_sandbox_level: overrides.windows_sandbox_level,
+            model: overrides.model,
+            effort: overrides.effort,
+            summary: overrides.summary,
+            service_tier: overrides.service_tier,
+            collaboration_mode: overrides.collaboration_mode,
+            personality: overrides.personality,
+        };
+        self.codex.session.update_settings(updates).await?;
+        self.codex
+            .session
+            .send_event_raw(Event {
+                id: self.codex.session.thread_id().to_string(),
+                msg: EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
+                    thread_settings,
+                }),
+            })
+            .await;
+        Ok(())
     }
 
     async fn thread_settings_update(

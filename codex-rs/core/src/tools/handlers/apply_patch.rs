@@ -262,17 +262,16 @@ fn apply_patch_payload_command(payload: &ToolPayload) -> Option<String> {
     }
 }
 
-async fn effective_patch_permissions(
+async fn effective_patch_permissions_for_paths(
     session: &Session,
     turn: &TurnContext,
-    action: &ApplyPatchAction,
+    file_paths: Vec<AbsolutePathBuf>,
     cwd: &AbsolutePathBuf,
 ) -> (
     Vec<AbsolutePathBuf>,
     crate::tools::handlers::EffectiveAdditionalPermissions,
     codex_protocol::permissions::FileSystemSandboxPolicy,
 ) {
-    let file_paths = file_paths_for_action(action);
     let granted_permissions = merge_permission_profiles(
         session.granted_session_permissions().await.as_ref(),
         session.granted_turn_permissions().await.as_ref(),
@@ -295,6 +294,19 @@ async fn effective_patch_permissions(
         effective_additional_permissions,
         file_system_sandbox_policy,
     )
+}
+
+async fn effective_patch_permissions(
+    session: &Session,
+    turn: &TurnContext,
+    action: &ApplyPatchAction,
+    cwd: &AbsolutePathBuf,
+) -> (
+    Vec<AbsolutePathBuf>,
+    crate::tools::handlers::EffectiveAdditionalPermissions,
+    codex_protocol::permissions::FileSystemSandboxPolicy,
+) {
+    effective_patch_permissions_for_paths(session, turn, file_paths_for_action(action), cwd).await
 }
 
 #[async_trait::async_trait]
@@ -347,14 +359,37 @@ impl ToolExecutor<ToolInvocation> for ApplyPatchHandler {
         };
         let cwd = turn_environment.cwd.clone();
         let fs = turn_environment.environment.get_filesystem();
-        let sandbox = turn.file_system_sandbox_context(/*additional_permissions*/ None, &cwd);
-        match codex_apply_patch::verify_apply_patch_args(args, &cwd, fs.as_ref(), Some(&sandbox))
-            .await
-        {
+        let effective_cwd = args
+            .workdir
+            .as_ref()
+            .map(|dir| cwd.join(Path::new(dir)))
+            .unwrap_or_else(|| cwd.clone());
+        let mut file_paths = Vec::new();
+        for hunk in &args.hunks {
+            file_paths.push(hunk.resolve_path(&effective_cwd));
+            if let Hunk::UpdateFile {
+                move_path: Some(dest),
+                ..
+            } = hunk
+            {
+                file_paths.push(AbsolutePathBuf::resolve_path_against_base(
+                    dest,
+                    &effective_cwd,
+                ));
+            }
+        }
+        let (file_paths, effective_additional_permissions, file_system_sandbox_policy) =
+            effective_patch_permissions_for_paths(
+                session.as_ref(),
+                turn.as_ref(),
+                file_paths,
+                &cwd,
+            )
+            .await;
+        let verified =
+            codex_apply_patch::verify_apply_patch_args(args, &cwd, fs.as_ref(), None).await;
+        match verified {
             codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
-                let (file_paths, effective_additional_permissions, file_system_sandbox_policy) =
-                    effective_patch_permissions(session.as_ref(), turn.as_ref(), &changes, &cwd)
-                        .await;
                 match apply_patch::apply_patch(turn.as_ref(), &file_system_sandbox_policy, changes)
                     .await
                 {
@@ -505,10 +540,7 @@ pub(crate) async fn intercept_apply_patch(
     call_id: &str,
     tool_name: &str,
 ) -> Result<Option<FunctionToolOutput>, FunctionCallError> {
-    let sandbox = turn.file_system_sandbox_context(/*additional_permissions*/ None, cwd);
-    match codex_apply_patch::maybe_parse_apply_patch_verified(command, cwd, fs, Some(&sandbox))
-        .await
-    {
+    match codex_apply_patch::maybe_parse_apply_patch_verified(command, cwd, fs, None).await {
         codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
             let (approval_keys, effective_additional_permissions, file_system_sandbox_policy) =
                 effective_patch_permissions(session.as_ref(), turn.as_ref(), &changes, cwd).await;

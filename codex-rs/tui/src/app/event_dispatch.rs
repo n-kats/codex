@@ -56,6 +56,11 @@ impl App {
                 )
                 .await;
             }
+            AppEvent::ArchiveCurrentThread => {
+                self.chat_widget.add_error_message(
+                    "Archiving the current thread is not supported from the TUI yet.".to_string(),
+                );
+            }
             AppEvent::OpenResumePicker => {
                 let picker_app_server = match crate::start_app_server_for_picker(
                     &self.config,

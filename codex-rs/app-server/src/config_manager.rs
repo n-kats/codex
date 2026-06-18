@@ -243,6 +243,7 @@ impl ConfigManager {
             .cli_overrides(merged_cli_overrides)
             .loader_overrides(self.loader_overrides.clone())
             .harness_overrides(typesafe_overrides)
+            .strict_config(self.strict_config)
             .fallback_cwd(fallback_cwd)
             .cloud_requirements(self.current_cloud_requirements())
             .thread_config_loader(self.current_thread_config_loader())

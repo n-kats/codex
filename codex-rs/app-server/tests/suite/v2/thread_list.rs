@@ -300,6 +300,14 @@ fn create_minimal_config(codex_home: &std::path::Path) -> std::io::Result<()> {
         r#"
 model = "mock-model"
 approval_policy = "never"
+model_provider = "mock_provider"
+
+[model_providers.mock_provider]
+name = "Mock provider for test"
+base_url = "http://127.0.0.1:0/v1"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
 "#,
     )
 }

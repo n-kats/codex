@@ -244,10 +244,7 @@ async fn command_exec_permission_profile_starts_selected_network_proxy() -> Resu
     let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri(), "never")?;
-    insert_networked_permission_profile_config(
-        codex_home.path(),
-        /*default_permissions*/ None,
-    )?;
+    insert_networked_permission_profile_config(codex_home.path(), Some("networked"))?;
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
 
@@ -1203,8 +1200,7 @@ fn insert_networked_permission_profile_config(
         .map(|default_permissions| format!("default_permissions = \"{default_permissions}\"\n\n"))
         .unwrap_or_default();
     let inserted_config = format!(
-        r#"{default_permissions}[features]
-network_proxy = true
+        r#"{default_permissions}
 
 [permissions.networked.filesystem]
 ":root" = "read"
@@ -1227,7 +1223,11 @@ fn insert_command_exec_config(codex_home: &Path, inserted_config: &str) -> Resul
     let (prefix, suffix) = config
         .split_once(marker)
         .context("test config should include mock provider table")?;
-    let config = format!("{prefix}\n{inserted_config}{marker}{suffix}");
+    let config = format!("{prefix}\n{inserted_config}{marker}{suffix}").replacen(
+        "[features]\nuse_legacy_landlock = true\n",
+        "[features]\nnetwork_proxy = true\nuse_legacy_landlock = true\n",
+        1,
+    );
     std::fs::write(config_path, config)?;
     Ok(())
 }

@@ -32,6 +32,7 @@ use codex_models_manager::bundled_models_response;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ModelsResponse;
+use codex_protocol::openai_models::ToolMode;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
@@ -436,10 +437,19 @@ impl TestCodexBuilder {
         test_env: TestEnv,
         environment_manager: Arc<codex_exec_server::EnvironmentManager>,
     ) -> anyhow::Result<TestCodex> {
+        let _ = std::fs::write(
+            "/workspace/_tmp/test_codex_build.log",
+            "build_from_config-entered",
+        );
         let auth = self.auth.clone();
         let state_db = codex_core::init_state_db(&config).await;
+        let _ = std::fs::write(
+            "/workspace/_tmp/test_codex_build.log",
+            "state_db-initialized",
+        );
         let thread_store = thread_store_from_config(&config, state_db.clone());
         let installation_id = resolve_installation_id(&config.codex_home).await?;
+        let _ = std::fs::write("/workspace/_tmp/test_codex_build.log", "installation-id");
         let thread_manager = ThreadManager::new(
             &config,
             codex_core::test_support::auth_manager_from_auth(auth.clone()),
@@ -451,6 +461,10 @@ impl TestCodexBuilder {
             state_db.clone(),
             installation_id,
             /*attestation_provider*/ None,
+        );
+        let _ = std::fs::write(
+            "/workspace/_tmp/test_codex_build.log",
+            "thread_manager-created",
         );
         let thread_manager = Arc::new(thread_manager);
         let user_shell_override = self.user_shell_override.clone();
@@ -491,6 +505,7 @@ impl TestCodexBuilder {
             }
             (None, None) => Box::pin(thread_manager.start_thread(config.clone())).await?,
         };
+        let _ = std::fs::write("/workspace/_tmp/test_codex_build.log", "thread-started");
 
         Ok(TestCodex {
             home,
@@ -584,6 +599,7 @@ fn ensure_test_model_catalog(config: &mut Config) -> Result<()> {
     model.slug = TEST_MODEL_WITH_EXPERIMENTAL_TOOLS.to_string();
     model.display_name = TEST_MODEL_WITH_EXPERIMENTAL_TOOLS.to_string();
     model.experimental_supported_tools = vec!["test_sync_tool".to_string()];
+    model.tool_mode = Some(ToolMode::CodeMode);
     config.model_catalog = Some(ModelsResponse {
         models: vec![model],
     });

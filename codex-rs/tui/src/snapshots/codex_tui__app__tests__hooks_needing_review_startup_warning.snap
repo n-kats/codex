@@ -1,0 +1,6 @@
+---
+source: tui/src/app/tests.rs
+assertion_line: 313
+expression: rendered
+---
+⚠ 2 hooks need review before it can run.

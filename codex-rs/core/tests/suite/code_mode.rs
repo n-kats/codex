@@ -92,6 +92,24 @@ fn text_item(items: &[Value], index: usize) -> &str {
         .expect("content item should be input_text")
 }
 
+fn strip_ansi(text: &str) -> String {
+    let mut stripped = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            stripped.push(ch);
+        }
+    }
+    stripped
+}
+
 fn extract_running_cell_id(text: &str) -> String {
     text.strip_prefix("Script running with cell ID ")
         .and_then(|rest| rest.split('\n').next())
@@ -801,13 +819,13 @@ text(result.output);
     )
     .await?;
 
-    assert_eq!(
-        text_item(
-            &custom_tool_output_items(&second_mock.single_request(), "call-1"),
-            /*index*/ 1
-        ),
-        "x".repeat(50_000)
-    );
+    let output_items = custom_tool_output_items(&second_mock.single_request(), "call-1");
+    let actual = text_item(&output_items, /*index*/ 1);
+    let stripped = strip_ansi(actual);
+    assert_eq!(stripped.len(), 11980);
+    assert!(stripped.starts_with(&"x".repeat(100)));
+    assert!(stripped.ends_with(&"x".repeat(100)));
+    assert!(stripped.contains("chars truncated"));
 
     Ok(())
 }
@@ -831,17 +849,13 @@ text(result.output);
     )
     .await?;
 
-    assert_eq!(
-        text_item(
-            &custom_tool_output_items(&second_mock.single_request(), "call-1"),
-            /*index*/ 1
-        ),
-        format!(
-            "Total output lines: 1\n\n{}…2500 tokens truncated…{}",
-            "A".repeat(40_000),
-            "A".repeat(40_000)
-        )
-    );
+    let output_items = custom_tool_output_items(&second_mock.single_request(), "call-1");
+    let actual = text_item(&output_items, /*index*/ 1);
+    let stripped = strip_ansi(actual);
+    assert_eq!(stripped.len(), 11980);
+    assert!(stripped.starts_with("Total output lines: 1\n\n"));
+    assert!(stripped.ends_with(&"A".repeat(100)));
+    assert!(stripped.contains("chars truncated"));
 
     Ok(())
 }
@@ -868,13 +882,13 @@ text(result.output);
     )
     .await?;
 
-    assert_eq!(
-        text_item(
-            &custom_tool_output_items(&second_mock.single_request(), "call-1"),
-            /*index*/ 1
-        ),
-        "x".repeat(50_000)
-    );
+    let output_items = custom_tool_output_items(&second_mock.single_request(), "call-1");
+    let actual = text_item(&output_items, /*index*/ 1);
+    let stripped = strip_ansi(actual);
+    let prefix = "x".repeat(96);
+    let suffix = "x".repeat(97);
+    assert_eq!(stripped.len(), 220);
+    assert_eq!(stripped, format!("{prefix}…49807 chars truncated…{suffix}"));
 
     Ok(())
 }
@@ -897,13 +911,13 @@ text(result.output);
     )
     .await?;
 
-    assert_eq!(
-        text_item(
-            &custom_tool_output_items(&second_mock.single_request(), "call-1"),
-            /*index*/ 1
-        ),
-        "x".repeat(50_000)
-    );
+    let output_items = custom_tool_output_items(&second_mock.single_request(), "call-1");
+    let actual = text_item(&output_items, /*index*/ 1);
+    let stripped = strip_ansi(actual);
+    let prefix = "x".repeat(5976);
+    let suffix = "x".repeat(5977);
+    assert_eq!(stripped.len(), 11980);
+    assert_eq!(stripped, format!("{prefix}…38047 chars truncated…{suffix}"));
 
     Ok(())
 }
@@ -929,13 +943,13 @@ text(result.output);
     )
     .await?;
 
-    assert_eq!(
-        text_item(
-            &custom_tool_output_items(&second_mock.single_request(), "call-1"),
-            /*index*/ 1
-        ),
-        "x".repeat(50_000)
-    );
+    let output_items = custom_tool_output_items(&second_mock.single_request(), "call-1");
+    let actual = text_item(&output_items, /*index*/ 1);
+    let stripped = strip_ansi(actual);
+    let prefix = "x".repeat(96);
+    let suffix = "x".repeat(97);
+    assert_eq!(stripped.len(), 220);
+    assert_eq!(stripped, format!("{prefix}…49807 chars truncated…{suffix}"));
 
     Ok(())
 }
@@ -2945,7 +2959,7 @@ text(JSON.stringify(tool));
         parsed,
         serde_json::json!({
             "name": "view_image",
-            "description": "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.\n\nexec tool declaration:\n```ts\ndeclare const tools: { view_image(args: {\n  // Local filesystem path to an image file\n  path: string;\n}): Promise<{\n  // Image detail hint returned by view_image. Returns `high` for default resized behavior or `original` when original resolution is preserved.\n  detail: \"high\" | \"original\";\n  // Data URL for the loaded image.\n  image_url: string;\n}>; };\n```",
+            "description": "View a local image file from the filesystem when visual inspection is needed. Use this for images already available on disk.\n\nexec tool declaration:\n```ts\ndeclare const tools: { view_image(args: {\n  // Local filesystem path to an image file.\n  path: string;\n}): Promise<{\n  // Image detail hint returned by view_image. Returns `high` for default resized behavior or `original` when original resolution is preserved.\n  detail: \"high\" | \"original\";\n  // Data URL for the loaded image.\n  image_url: string;\n}>; };\n```",
         })
     );
 

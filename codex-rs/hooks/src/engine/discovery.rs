@@ -334,7 +334,28 @@ fn load_toml_hooks_from_layer(
     warnings: &mut Vec<String>,
 ) -> Option<(AbsolutePathBuf, HookEventsToml)> {
     let source_path = config_toml_source_path(layer);
-    let hook_value = layer.config.get("hooks")?.clone();
+    let hook_value = match fs::read_to_string(source_path.as_path()) {
+        Ok(contents) => match toml::from_str::<TomlValue>(&contents) {
+            Ok(value) => value.get("hooks")?.clone(),
+            Err(err) => {
+                warnings.push(format!(
+                    "failed to parse TOML hooks in {}: {err}",
+                    source_path.display()
+                ));
+                return None;
+            }
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            layer.config.get("hooks").cloned()?
+        }
+        Err(err) => {
+            warnings.push(format!(
+                "failed to read TOML hooks in {}: {err}",
+                source_path.display()
+            ));
+            return None;
+        }
+    };
     let parsed = match HookEventsToml::deserialize(hook_value) {
         Ok(parsed) => parsed,
         Err(err) => {

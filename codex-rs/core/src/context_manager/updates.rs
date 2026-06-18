@@ -10,6 +10,7 @@ use crate::context::RealtimeStartWithInstructions;
 use crate::session::PreviousTurnSettings;
 use crate::session::turn_context::TurnContext;
 use crate::shell::Shell;
+use codex_config::ConfigLayerStack;
 use codex_execpolicy::Policy;
 use codex_features::Feature;
 use codex_protocol::config_types::Personality;
@@ -74,14 +75,7 @@ fn build_collaboration_mode_update_item(
     previous: Option<&TurnContextItem>,
     next: &TurnContext,
 ) -> Option<String> {
-    let include_collaboration_mode_instructions = next
-        .config
-        .config_layer_stack
-        .effective_config()
-        .get("include_collaboration_mode_instructions")
-        .and_then(toml::Value::as_bool)
-        .unwrap_or(true);
-    if !include_collaboration_mode_instructions {
+    if !collaboration_mode_instructions_enabled(&next.config.config_layer_stack) {
         return None;
     }
 
@@ -96,6 +90,16 @@ fn build_collaboration_mode_update_item(
     } else {
         None
     }
+}
+
+pub(crate) fn collaboration_mode_instructions_enabled(
+    config_layer_stack: &ConfigLayerStack,
+) -> bool {
+    config_layer_stack
+        .effective_config()
+        .get("include_collaboration_mode_instructions")
+        .and_then(toml::Value::as_bool)
+        .unwrap_or(true)
 }
 
 pub(crate) fn build_realtime_update_item(

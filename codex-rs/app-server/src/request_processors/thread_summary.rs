@@ -6,6 +6,7 @@ use codex_app_server_protocol::ThreadSettings;
 use codex_core::ThreadConfigSnapshot;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::ThreadSettingsOverrides;
 
@@ -178,7 +179,11 @@ pub(crate) fn thread_settings_from_core_snapshot(
         active_permission_profile: snapshot.active_permission_profile.clone().map(Into::into),
         model: snapshot.model.clone().unwrap_or_default(),
         model_provider: String::new(),
-        service_tier: snapshot.service_tier.clone().flatten(),
+        service_tier: snapshot
+            .service_tier
+            .clone()
+            .flatten()
+            .or_else(|| Some(SERVICE_TIER_DEFAULT_REQUEST_VALUE.to_string())),
         effort: snapshot.effort.flatten(),
         summary: snapshot.summary.clone(),
         collaboration_mode: snapshot.collaboration_mode.clone().unwrap_or_else(|| {

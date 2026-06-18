@@ -1,5 +1,7 @@
 use crate::session::turn_context::TurnContext;
 use crate::tools::code_mode::execute_spec::create_code_mode_tool;
+use crate::tools::code_mode::tool_mode::code_mode_model_enabled;
+use crate::tools::code_mode::tool_mode::code_mode_model_only_enabled;
 use crate::tools::context::ToolInvocation;
 use crate::tools::handlers::ApplyPatchHandler;
 use crate::tools::handlers::CodeModeExecuteHandler;
@@ -60,7 +62,6 @@ use codex_mcp::ToolInfo;
 use codex_protocol::dynamic_tools::DynamicToolSpec;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::InputModality;
-use codex_protocol::openai_models::ToolMode;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_tools::DiscoverableTool;
@@ -77,7 +78,6 @@ use codex_tools::can_request_original_image_detail;
 use codex_tools::collect_code_mode_exec_prompt_tool_definitions;
 use codex_tools::collect_request_plugin_install_entries;
 use codex_tools::default_namespace_description;
-use codex_tools::request_user_input_available_modes;
 use codex_tools::shell_command_backend_for_features;
 use codex_tools::shell_type_for_model_and_features;
 use std::collections::BTreeMap;
@@ -231,10 +231,8 @@ fn spec_for_model_request(
     exposure: ToolExposure,
     spec: ToolSpec,
 ) -> ToolSpec {
-    if matches!(
-        turn_context.tool_mode,
-        ToolMode::CodeMode | ToolMode::CodeModeOnly
-    ) && exposure != ToolExposure::DirectModelOnly
+    if code_mode_model_enabled(turn_context)
+        && exposure != ToolExposure::DirectModelOnly
         && codex_code_mode::is_code_mode_nested_tool(spec.name())
     {
         codex_tools::augment_tool_spec_for_code_mode(spec)
@@ -399,7 +397,7 @@ fn is_hidden_by_code_mode_only(
     tool_name: &ToolName,
     exposure: ToolExposure,
 ) -> bool {
-    turn_context.tool_mode == ToolMode::CodeModeOnly
+    code_mode_model_only_enabled(turn_context)
         && exposure != ToolExposure::DirectModelOnly
         && codex_code_mode::is_code_mode_nested_tool(&codex_tools::code_mode_name_for_tool_name(
             tool_name,
@@ -411,10 +409,7 @@ fn build_code_mode_executors(
     executors: &[Arc<dyn CoreToolRuntime>],
     deferred_tools_available: bool,
 ) -> Vec<Arc<dyn CoreToolRuntime>> {
-    if !matches!(
-        turn_context.tool_mode,
-        ToolMode::CodeMode | ToolMode::CodeModeOnly
-    ) {
+    if !code_mode_model_enabled(turn_context) {
         return vec![];
     }
 
@@ -448,7 +443,7 @@ fn build_code_mode_executors(
             create_code_mode_tool(
                 &enabled_tools,
                 &namespace_descriptions,
-                turn_context.tool_mode == ToolMode::CodeModeOnly,
+                code_mode_model_only_enabled(turn_context),
                 deferred_tools_available,
             ),
             code_mode_nested_tool_specs,
@@ -606,9 +601,16 @@ fn add_core_utility_tools(context: &CoreToolPlanContext<'_>, planned_tools: &mut
         planned_tools.add(UpdateGoalHandler);
     }
 
-    if turn_context.config.experimental_request_user_input_enabled {
+    if !turn_context
+        .tools_config
+        .request_user_input_available_modes
+        .is_empty()
+    {
         planned_tools.add(RequestUserInputHandler {
-            available_modes: request_user_input_available_modes(features),
+            available_modes: turn_context
+                .tools_config
+                .request_user_input_available_modes
+                .clone(),
         });
     }
 
@@ -860,10 +862,7 @@ fn append_extension_tool_executors(
         .iter()
         .map(|executor| executor.tool_name())
         .collect::<HashSet<_>>();
-    if matches!(
-        turn_context.tool_mode,
-        ToolMode::CodeMode | ToolMode::CodeModeOnly
-    ) {
+    if code_mode_model_enabled(turn_context) {
         reserved_tool_names.insert(ToolName::plain(codex_code_mode::PUBLIC_TOOL_NAME));
         reserved_tool_names.insert(ToolName::plain(codex_code_mode::WAIT_TOOL_NAME));
     }

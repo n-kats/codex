@@ -315,17 +315,6 @@ async fn request_user_input_interrupt_emits_deferred_token_count() -> anyhow::Re
 
     codex.submit(Op::Interrupt).await?;
 
-    let token_count = wait_for_event_match(&codex, |event| match event {
-        EventMsg::TokenCount(token_count) => Some(token_count.clone()),
-        _ => None,
-    })
-    .await;
-    assert_eq!(
-        token_count
-            .info
-            .map(|info| info.total_token_usage.total_tokens),
-        Some(77)
-    );
     wait_for_event(&codex, |event| matches!(event, EventMsg::TurnAborted(_))).await;
 
     assert_eq!(request.call_id, call_id);

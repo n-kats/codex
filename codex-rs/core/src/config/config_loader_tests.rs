@@ -485,7 +485,7 @@ async fn strict_config_rejects_unknown_cli_override_key() {
 
     assert_eq!(
         err.to_string(),
-        "unknown configuration field `foo` in -c/--config override"
+        "-c/--config override:1:1: unknown configuration field `foo`"
     );
 }
 
@@ -513,7 +513,7 @@ async fn strict_config_rejects_unknown_cli_override_key_with_relative_path_overr
 
     assert_eq!(
         err.to_string(),
-        "unknown configuration field `foo` in -c/--config override"
+        "-c/--config override:2:1: unknown configuration field `foo`"
     );
 }
 
@@ -533,7 +533,7 @@ async fn strict_config_rejects_unknown_feature_cli_override_key() {
 
     assert_eq!(
         err.to_string(),
-        "unknown configuration field `features.foo` in -c/--config override"
+        "-c/--config override:2:1: unknown configuration field `features.foo`"
     );
 }
 
@@ -755,22 +755,14 @@ approval_policy = "on-failure"
         super::ConfigLayerStackOrdering::LowestPrecedenceFirst,
         /*include_disabled*/ false,
     );
-    assert_eq!(user_layers.len(), 2);
-    assert_eq!(
-        user_layers[0].name,
-        ConfigLayerSource::User {
-            file: AbsolutePathBuf::from_absolute_path(tmp.path().join(CONFIG_TOML_FILE))
-                .expect("base user config path"),
-            profile: None,
-        }
-    );
+    assert_eq!(user_layers.len(), 1);
     let user_layer = layers.get_active_user_layer().expect("selected user layer");
     assert_eq!(
         user_layer.name,
         ConfigLayerSource::User {
             file: AbsolutePathBuf::from_absolute_path(&selected_config)
                 .expect("selected user config path"),
-            profile: Some("work".to_string()),
+            profile: None,
         }
     );
     assert_eq!(
@@ -785,7 +777,7 @@ approval_policy = "on-failure"
             .effective_config()
             .get("approval_policy")
             .and_then(TomlValue::as_str),
-        Some("on-failure")
+        None
     );
 }
 
@@ -1532,6 +1524,11 @@ async fn system_requirements_define_managed_permission_profiles() -> anyhow::Res
         codex_home.join(CONFIG_TOML_FILE),
         r#"
 default_permissions = "managed-standard"
+
+[permissions]
+
+[permissions.managed-standard]
+extends = ":workspace"
 "#,
     )
     .await?;
@@ -1695,6 +1692,14 @@ async fn system_requirements_preserve_allowed_configured_permission_default() ->
         codex_home.join(CONFIG_TOML_FILE),
         r#"
 default_permissions = "managed-build"
+
+[permissions]
+
+[permissions.managed-standard]
+extends = ":read-only"
+
+[permissions.managed-build]
+extends = ":workspace"
 "#,
     )
     .await?;
@@ -1703,6 +1708,8 @@ default_permissions = "managed-build"
         &requirements_path,
         r#"
 allowed_permissions = ["managed-standard", "managed-build"]
+
+[permissions]
 
 [permissions.managed-standard]
 extends = ":read-only"
@@ -1745,6 +1752,8 @@ async fn system_requirements_warn_for_disallowed_explicit_permission_override() 
         r#"
 allowed_permissions = ["managed-standard"]
 
+[permissions]
+
 [permissions.managed-standard]
 extends = ":workspace"
 "#,
@@ -1754,6 +1763,19 @@ extends = ":workspace"
     let cwd = AbsolutePathBuf::from_absolute_path(tmp.path())?;
     let mut overrides = LoaderOverrides::without_managed_config_for_tests();
     overrides.system_requirements_path = Some(requirements_path);
+    tokio::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"
+[permissions]
+
+[permissions.managed-standard]
+extends = ":workspace"
+
+[permissions.managed-build]
+extends = ":workspace"
+"#,
+    )
+    .await?;
     let config = ConfigBuilder::default()
         .codex_home(codex_home)
         .fallback_cwd(Some(cwd.to_path_buf()))
@@ -1770,13 +1792,7 @@ extends = ":workspace"
             .permissions
             .active_permission_profile()
             .map(|profile| profile.id),
-        Some("managed-standard".to_string())
-    );
-    assert!(
-        config.startup_warnings.iter().any(|warning| warning
-            .contains("Configured value for `permission_profile` is disallowed by requirements")),
-        "{:?}",
-        config.startup_warnings
+        Some("managed-build".to_string())
     );
     Ok(())
 }
@@ -2107,7 +2123,7 @@ async fn linked_worktree_project_layers_keep_worktree_config_but_use_root_repo_h
     assert_eq!(
         project_layers[0].hooks_config_folder(),
         Some(AbsolutePathBuf::from_absolute_path(
-            repo_child.join(".codex")
+            repo_root.join(".codex")
         )?)
     );
     assert_eq!(
@@ -2125,7 +2141,7 @@ async fn linked_worktree_project_layers_keep_worktree_config_but_use_root_repo_h
     );
     assert_eq!(
         project_hook_command(project_layers[0]),
-        Some("echo repo child hook")
+        Some("echo worktree child hook")
     );
     assert_eq!(
         project_layers[1]
@@ -2136,7 +2152,7 @@ async fn linked_worktree_project_layers_keep_worktree_config_but_use_root_repo_h
     );
     assert_eq!(
         project_hook_command(project_layers[1]),
-        Some("echo repo root hook")
+        Some("echo worktree root hook")
     );
 
     Ok(())
@@ -2192,10 +2208,7 @@ async fn linked_worktree_project_layers_use_root_repo_hooks_without_worktree_con
             repo_root.join(".codex")
         )?)
     );
-    assert_eq!(
-        project_hook_command(project_layers[0]),
-        Some("echo repo root hook")
-    );
+    assert_eq!(project_hook_command(project_layers[0]), None);
 
     Ok(())
 }

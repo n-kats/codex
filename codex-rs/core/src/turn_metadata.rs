@@ -347,6 +347,10 @@ impl TurnMetadataState {
         .or(Some(header))
     }
 
+    pub(crate) fn forked_from_thread_id(&self) -> Option<ThreadId> {
+        self.base_metadata.forked_from_thread_id
+    }
+
     pub(crate) fn current_meta_value_for_mcp_request(
         &self,
         context: McpTurnMetadataContext<'_>,

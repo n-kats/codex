@@ -22,6 +22,7 @@ use crate::ThreadSearchPage;
 use crate::ThreadSortKey;
 use crate::ThreadStoreError;
 use crate::ThreadStoreResult;
+use codex_utils_path::paths_match_after_normalization;
 
 struct ThreadSearchItem {
     item: codex_rollout::ThreadItem,
@@ -109,9 +110,14 @@ pub(super) async fn search_threads(
         )
         .await?;
         for item in page.items {
-            if !remaining_paths.remove(item.path.as_path()) {
+            let Some(matching_path) = remaining_paths
+                .iter()
+                .find(|path| paths_match_after_normalization(item.path.as_path(), path.as_path()))
+                .cloned()
+            else {
                 continue;
-            }
+            };
+            remaining_paths.remove(&matching_path);
             let Some(snippet) =
                 first_rollout_content_match_snippet(item.path.as_path(), search_term)
                     .await

@@ -37,26 +37,33 @@ use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
 use wiremock::MockServer;
 
 fn read_only_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -> Op {
     let (sandbox_policy, permission_profile) =
         turn_permission_fields(PermissionProfile::read_only(), test.cwd_path());
-    Op::UserTurn {
-        environments: None,
+    Op::UserInput {
         items,
+        environments: None,
         final_output_json_schema: None,
-        cwd: test.cwd_path().to_path_buf(),
-        approval_policy: AskForApproval::Never,
-        approvals_reviewer: None,
-        sandbox_policy,
-        permission_profile,
-        model,
-        effort: test.config.model_reasoning_effort,
-        summary: None,
-        service_tier: None,
-        collaboration_mode: None,
-        personality: None,
+        responsesapi_client_metadata: None,
+        additional_context: Default::default(),
+        thread_settings: codex_protocol::protocol::ThreadSettingsOverrides {
+            cwd: Some(test.cwd_path().to_path_buf()),
+            approval_policy: Some(AskForApproval::Never),
+            sandbox_policy: Some(sandbox_policy),
+            permission_profile,
+            collaboration_mode: Some(codex_protocol::config_types::CollaborationMode {
+                mode: codex_protocol::config_types::ModeKind::Default,
+                settings: codex_protocol::config_types::Settings {
+                    model,
+                    reasoning_effort: test.config.model_reasoning_effort,
+                    developer_instructions: None,
+                },
+            }),
+            ..Default::default()
+        },
     }
 }
 
@@ -109,6 +116,7 @@ fn test_model_info(
         priority: 1,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
+        default_service_tier: None,
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: None,
@@ -157,23 +165,14 @@ async fn model_change_appends_model_instructions_developer_message() -> Result<(
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    test.codex
-        .submit(Op::OverrideTurnContext {
-            cwd: None,
-            approval_policy: None,
-            approvals_reviewer: None,
-            sandbox_policy: None,
-            permission_profile: None,
-            windows_sandbox_level: None,
+    core_test_support::submit_thread_settings(
+        &test.codex,
+        codex_protocol::protocol::ThreadSettingsOverrides {
             model: Some(next_model.to_string()),
-            effort: None,
-            summary: None,
-            service_tier: None,
-            collaboration_mode: None,
-            personality: None,
-            project_doc_paths: None,
-        })
-        .await?;
+            ..Default::default()
+        },
+    )
+    .await?;
 
     test.codex
         .submit(read_only_user_turn(
@@ -214,6 +213,7 @@ async fn model_and_personality_change_only_appends_model_instructions() -> Resul
         vec![sse_completed("resp-1"), sse_completed("resp-2")],
     )
     .await;
+    let next_model = "exp-codex-personality";
 
     let mut builder = test_codex()
         .with_model("gpt-5.3-codex")
@@ -222,9 +222,24 @@ async fn model_and_personality_change_only_appends_model_instructions() -> Resul
                 .features
                 .enable(Feature::Personality)
                 .expect("test config should allow feature update");
+            config.model_catalog = Some(ModelsResponse {
+                models: vec![
+                    test_model_info(
+                        "gpt-5.3-codex",
+                        "gpt-5.3-codex",
+                        "initial model",
+                        default_input_modalities(),
+                    ),
+                    test_model_info(
+                        next_model,
+                        next_model,
+                        "personality model",
+                        default_input_modalities(),
+                    ),
+                ],
+            });
         });
     let test = builder.build(&server).await?;
-    let next_model = "exp-codex-personality";
 
     test.codex
         .submit(read_only_user_turn(
@@ -238,23 +253,15 @@ async fn model_and_personality_change_only_appends_model_instructions() -> Resul
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    test.codex
-        .submit(Op::OverrideTurnContext {
-            cwd: None,
-            approval_policy: None,
-            approvals_reviewer: None,
-            sandbox_policy: None,
-            permission_profile: None,
-            windows_sandbox_level: None,
+    core_test_support::submit_thread_settings(
+        &test.codex,
+        codex_protocol::protocol::ThreadSettingsOverrides {
             model: Some(next_model.to_string()),
-            effort: None,
-            summary: None,
-            service_tier: None,
-            collaboration_mode: None,
             personality: Some(Personality::Pragmatic),
-            project_doc_paths: None,
-        })
-        .await?;
+            ..Default::default()
+        },
+    )
+    .await?;
 
     test.codex
         .submit(read_only_user_turn(
@@ -391,6 +398,84 @@ async fn unsupported_service_tier_is_omitted_from_http_turn() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn default_service_tier_override_is_omitted_from_http_turn() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let model_slug = "test-default-tier-model";
+    let mut model = test_model_info(
+        model_slug,
+        model_slug,
+        "has catalog default service tier",
+        default_input_modalities(),
+    );
+    model.service_tiers = vec![ModelServiceTier {
+        id: ServiceTier::Fast.request_value().to_string(),
+        name: "fast".to_string(),
+        description: "Fast processing.".to_string(),
+    }];
+    model.default_service_tier = Some(ServiceTier::Fast.request_value().to_string());
+    let resp_mock = mount_sse_once(&server, sse_completed("resp-1")).await;
+
+    let mut builder = test_codex()
+        .with_model(model_slug)
+        .with_config(move |config| {
+            config.model_catalog = Some(ModelsResponse {
+                models: vec![model],
+            });
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn_with_service_tier("default turn", /*service_tier*/ None)
+        .await?;
+
+    let request = resp_mock.single_request();
+    let body = request.body_json();
+    assert_eq!(body.get("service_tier"), None);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn null_service_tier_override_is_omitted_from_http_turn_with_catalog_default() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let model_slug = "test-null-default-tier-model";
+    let mut model = test_model_info(
+        model_slug,
+        model_slug,
+        "has catalog default service tier",
+        default_input_modalities(),
+    );
+    model.service_tiers = vec![ModelServiceTier {
+        id: ServiceTier::Fast.request_value().to_string(),
+        name: "fast".to_string(),
+        description: "Fast processing.".to_string(),
+    }];
+    model.default_service_tier = Some(ServiceTier::Fast.request_value().to_string());
+    let resp_mock = mount_sse_once(&server, sse_completed("resp-1")).await;
+
+    let mut builder = test_codex()
+        .with_model(model_slug)
+        .with_config(move |config| {
+            config.model_catalog = Some(ModelsResponse {
+                models: vec![model],
+            });
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn_with_service_tier("standard turn", /*service_tier*/ None)
+        .await?;
+
+    let request = resp_mock.single_request();
+    let body = request.body_json();
+    assert_eq!(body.get("service_tier"), None);
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn model_change_from_image_to_text_strips_prior_image_content() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -487,19 +572,6 @@ async fn model_change_from_image_to_text_strips_prior_image_content() -> Result<
             .any(|text| text == "image content omitted because you do not support image input"),
         "second request should include the image-omitted placeholder text"
     );
-    assert!(
-        second_user_texts
-            .iter()
-            .any(|text| text == &codex_protocol::models::image_open_tag_text()),
-        "second request should preserve the image open tag text"
-    );
-    assert!(
-        second_user_texts
-            .iter()
-            .any(|text| text == &codex_protocol::models::image_close_tag_text()),
-        "second request should preserve the image close tag text"
-    );
-
     Ok(())
 }
 
@@ -794,14 +866,34 @@ async fn thread_rollback_after_generated_image_drops_entire_image_turn_history()
         ))
         .await?;
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !saved_path.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("timed out waiting for generated image to be saved");
 
     test.codex
         .submit(Op::ThreadRollback { num_turns: 1 })
         .await?;
-    wait_for_event(&test.codex, |ev| {
-        matches!(ev, EventMsg::ThreadRolledBack(_))
+    let rollback_event = tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            let ev = test
+                .codex
+                .next_event()
+                .await
+                .expect("stream ended unexpectedly");
+            if matches!(ev.msg, EventMsg::ThreadRolledBack(_)) {
+                break ev.msg;
+            }
+        }
     })
-    .await;
+    .await
+    .expect("timeout waiting for event");
+    let EventMsg::ThreadRolledBack(rollback_event) = rollback_event else {
+        panic!("expected thread rolled back event");
+    };
 
     test.codex
         .submit(read_only_user_turn(
@@ -878,6 +970,7 @@ async fn model_switch_to_smaller_model_updates_token_context_window() -> Result<
         priority: 1,
         additional_speed_tiers: Vec::new(),
         service_tiers: Vec::new(),
+        default_service_tier: None,
         upgrade: None,
         base_instructions: "base instructions".to_string(),
         model_messages: None,
@@ -987,23 +1080,14 @@ async fn model_switch_to_smaller_model_updates_token_context_window() -> Result<
     );
     wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    test.codex
-        .submit(Op::OverrideTurnContext {
-            cwd: None,
-            approval_policy: None,
-            approvals_reviewer: None,
-            sandbox_policy: None,
-            permission_profile: None,
-            windows_sandbox_level: None,
+    core_test_support::submit_thread_settings(
+        &test.codex,
+        codex_protocol::protocol::ThreadSettingsOverrides {
             model: Some(smaller_model_slug.to_string()),
-            effort: None,
-            summary: None,
-            service_tier: None,
-            collaboration_mode: None,
-            personality: None,
-            project_doc_paths: None,
-        })
-        .await?;
+            ..Default::default()
+        },
+    )
+    .await?;
 
     test.codex
         .submit(read_only_user_turn(

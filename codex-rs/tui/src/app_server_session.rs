@@ -1610,16 +1610,18 @@ mod tests {
     use super::*;
     use crate::legacy_core::config::ConfigBuilder;
     use crate::legacy_core::config::ConfigOverrides;
-    use codex_app_server_protocol::FileSystemAccessMode;
-    use codex_app_server_protocol::FileSystemPath;
-    use codex_app_server_protocol::FileSystemSandboxEntry;
-    use codex_app_server_protocol::FileSystemSpecialPath;
-    use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
-    use codex_app_server_protocol::PermissionProfileFileSystemPermissions;
-    use codex_app_server_protocol::PermissionProfileNetworkPermissions;
     use codex_app_server_protocol::ThreadStatus;
     use codex_app_server_protocol::Turn;
     use codex_app_server_protocol::TurnStatus;
+    use codex_protocol::models::ActivePermissionProfile;
+    use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
+    use codex_protocol::models::ManagedFileSystemPermissions;
+    use codex_protocol::models::PermissionProfile;
+    use codex_protocol::protocol::FileSystemAccessMode;
+    use codex_protocol::protocol::FileSystemPath;
+    use codex_protocol::protocol::FileSystemSandboxEntry;
+    use codex_protocol::protocol::FileSystemSpecialPath;
+    use codex_protocol::protocol::NetworkSandboxPolicy;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
@@ -1788,9 +1790,9 @@ mod tests {
     fn sandbox_mode_does_not_project_non_cwd_write_roots_for_remote_sessions() {
         let cwd = test_path_buf("/workspace/project").abs();
         let extra_root = test_path_buf("/workspace/cache").abs();
-        let permission_profile: PermissionProfile = AppServerPermissionProfile::Managed {
-            network: PermissionProfileNetworkPermissions { enabled: false },
-            file_system: PermissionProfileFileSystemPermissions::Restricted {
+        let permission_profile: PermissionProfile = PermissionProfile::Managed {
+            network: NetworkSandboxPolicy::Restricted,
+            file_system: ManagedFileSystemPermissions::Restricted {
                 entries: vec![
                     FileSystemSandboxEntry {
                         path: FileSystemPath::Special {
@@ -1805,8 +1807,7 @@ mod tests {
                 ],
                 glob_scan_max_depth: None,
             },
-        }
-        .into();
+        };
 
         assert_eq!(
             sandbox_mode_from_permission_profile(&permission_profile, cwd.as_path()),
@@ -1817,9 +1818,9 @@ mod tests {
     #[test]
     fn sandbox_mode_projects_cwd_write_for_remote_sessions() {
         let cwd = test_path_buf("/workspace/project").abs();
-        let permission_profile: PermissionProfile = AppServerPermissionProfile::Managed {
-            network: PermissionProfileNetworkPermissions { enabled: false },
-            file_system: PermissionProfileFileSystemPermissions::Restricted {
+        let permission_profile: PermissionProfile = PermissionProfile::Managed {
+            network: NetworkSandboxPolicy::Restricted,
+            file_system: ManagedFileSystemPermissions::Restricted {
                 entries: vec![
                     FileSystemSandboxEntry {
                         path: FileSystemPath::Special {
@@ -1836,8 +1837,7 @@ mod tests {
                 ],
                 glob_scan_max_depth: None,
             },
-        }
-        .into();
+        };
 
         assert_eq!(
             sandbox_mode_from_permission_profile(&permission_profile, cwd.as_path()),
@@ -1946,6 +1946,7 @@ mod tests {
                     items: vec![
                         codex_app_server_protocol::ThreadItem::UserMessage {
                             id: "user-1".to_string(),
+                            client_id: None,
                             content: vec![codex_app_server_protocol::UserInput::Text {
                                 text: "hello from history".to_string(),
                                 text_elements: Vec::new(),
@@ -1969,6 +1970,7 @@ mod tests {
             model_provider: "openai".to_string(),
             service_tier: None,
             cwd: test_path_buf("/tmp/project").abs(),
+            runtime_workspace_roots: Vec::new(),
             instruction_sources: vec![test_path_buf("/tmp/project/AGENTS.md").abs()],
             approval_policy: codex_app_server_protocol::AskForApproval::Never,
             approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::User,
@@ -1976,9 +1978,9 @@ mod tests {
                 .to_legacy_sandbox_policy(test_path_buf("/tmp/project").as_path())
                 .expect("read-only profile must be legacy-compatible")
                 .into(),
-            permission_profile: Some(read_only_profile.clone().into()),
             active_permission_profile: None,
             reasoning_effort: None,
+            initial_turns_page: None,
         };
 
         let started = started_thread_from_resume_response(
@@ -2007,34 +2009,14 @@ mod tests {
             .to_legacy_sandbox_policy(cwd.as_path())
             .expect("read-only profile must be legacy-compatible")
             .into();
-        let response_profile = AppServerPermissionProfile::Managed {
-            file_system: PermissionProfileFileSystemPermissions::Restricted {
-                entries: vec![
-                    FileSystemSandboxEntry {
-                        path: FileSystemPath::Special {
-                            value: FileSystemSpecialPath::Root,
-                        },
-                        access: FileSystemAccessMode::Read,
-                    },
-                    FileSystemSandboxEntry {
-                        path: FileSystemPath::Special {
-                            value: FileSystemSpecialPath::ProjectRoots {
-                                subpath: Some(".env".into()),
-                            },
-                        },
-                        access: FileSystemAccessMode::Deny,
-                    },
-                ],
-                glob_scan_max_depth: None,
-            },
-            network: PermissionProfileNetworkPermissions { enabled: false },
-        };
-        let split_profile: PermissionProfile = response_profile.clone().into();
+        let response_active_profile =
+            ActivePermissionProfile::new(BUILT_IN_PERMISSION_PROFILE_WORKSPACE);
+        let split_profile = PermissionProfile::workspace_write();
 
         assert_eq!(
             permission_profile_from_thread_response(
                 &fallback_sandbox,
-                Some(&response_profile),
+                Some(&response_active_profile),
                 cwd.as_path(),
                 &config,
                 ThreadParamsMode::Remote,
@@ -2048,12 +2030,12 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let config = build_config(&temp_dir).await;
         let cwd = test_path_buf("/tmp/project").abs();
-        let response_profile = PermissionProfile::read_only().into();
+        let active_permission_profile = ActivePermissionProfile::read_only();
 
         assert_eq!(
             permission_profile_from_thread_response(
                 &codex_app_server_protocol::SandboxPolicy::DangerFullAccess,
-                Some(&response_profile),
+                Some(&active_permission_profile),
                 cwd.as_path(),
                 &config,
                 ThreadParamsMode::Embedded,

@@ -172,6 +172,46 @@ fn handler_looks_up_namespaced_aliases_explicitly() {
     );
 }
 
+#[test]
+fn handler_falls_back_to_flat_alias_for_namespaced_tools() {
+    let tool_name = "run";
+    let flat_name = codex_tools::ToolName::plain("webrun");
+    let namespaced_name = codex_tools::ToolName::namespaced("web", tool_name);
+    let namespaced_handler = Arc::new(TestHandler {
+        tool_name: namespaced_name.clone(),
+    }) as Arc<dyn CoreToolRuntime>;
+    let registry = ToolRegistry::new(HashMap::from([(
+        namespaced_name.clone(),
+        namespaced_handler,
+    )]));
+
+    let resolved = registry.tool(&flat_name);
+
+    assert_eq!(resolved.is_some(), true);
+    assert_eq!(
+        resolved.as_ref().expect("resolved tool").tool_name(),
+        namespaced_name
+    );
+}
+
+#[test]
+fn handler_falls_back_from_shell_command_to_exec_command() {
+    let exec_command = codex_tools::ToolName::plain("exec_command");
+    let shell_command = codex_tools::ToolName::plain("shell_command");
+    let exec_handler = Arc::new(TestHandler {
+        tool_name: exec_command.clone(),
+    }) as Arc<dyn CoreToolRuntime>;
+    let registry = ToolRegistry::new(HashMap::from([(exec_command.clone(), exec_handler)]));
+
+    let resolved = registry.tool(&shell_command);
+
+    assert_eq!(resolved.is_some(), true);
+    assert_eq!(
+        resolved.as_ref().expect("resolved tool").tool_name(),
+        exec_command
+    );
+}
+
 #[tokio::test]
 async fn function_tools_expose_default_hook_payloads_and_rewrites() -> anyhow::Result<()> {
     let (session, turn) = crate::session::tests::make_session_and_context().await;

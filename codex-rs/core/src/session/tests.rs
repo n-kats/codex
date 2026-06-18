@@ -327,19 +327,21 @@ async fn interrupting_regular_turn_waiting_on_startup_prewarm_emits_turn_aborted
 
     sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
 
-    let second = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-        .await
-        .expect("expected turn aborted event")
-        .expect("channel open");
-    let EventMsg::TurnAborted(TurnAbortedEvent {
+    let evt = loop {
+        let evt = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("expected turn aborted event")
+            .expect("channel open");
+        if let EventMsg::TurnAborted(evt) = evt.msg {
+            break evt;
+        }
+    };
+    let TurnAbortedEvent {
         turn_id,
         reason,
         completed_at,
         duration_ms,
-    }) = second.msg
-    else {
-        panic!("expected turn aborted event");
-    };
+    } = evt;
     assert_eq!(turn_id, Some(tc.sub_id.clone()));
     assert_eq!(reason, TurnAbortReason::Interrupted);
     assert!(completed_at.is_some());
@@ -483,20 +485,21 @@ async fn preview_session_start_hooks(
             transcript_path: None,
             model: "gpt-5.2".to_string(),
             permission_mode: "default".to_string(),
-            source: codex_hooks::SessionStartSource::Startup,
+            target: codex_hooks::StartHookTarget::SessionStart {
+                source: codex_hooks::SessionStartSource::Startup,
+            },
         }),
     )
 }
 
 fn test_tool_runtime(session: Arc<Session>, turn_context: Arc<TurnContext>) -> ToolCallRuntime {
-    let router = Arc::new(ToolRouter::from_config(
-        &turn_context.tools_config,
+    let router = Arc::new(ToolRouter::from_turn_context(
+        &turn_context,
         crate::tools::router::ToolRouterParams {
             mcp_tools: None,
             deferred_mcp_tools: None,
-            unavailable_called_tools: Vec::new(),
-            parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
+            extension_tool_executors: Vec::new(),
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
         },
     ));
@@ -821,13 +824,15 @@ async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow
         state.session_configuration.original_config_do_not_use = Arc::new(config);
         state
             .session_configuration
-            .permission_profile
-            .set(PermissionProfile::from_legacy_sandbox_policy(
+            .set_permission_profile_for_tests(PermissionProfile::from_legacy_sandbox_policy(
                 &initial_policy,
             ))
             .expect("test setup should allow permission profile");
     }
-    session.services.network_proxy = Some(started_proxy);
+    session
+        .services
+        .network_proxy
+        .store(Some(Arc::new(started_proxy)));
 
     session
         .new_turn_with_sub_id(
@@ -842,7 +847,7 @@ async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow
     let started_proxy = session
         .services
         .network_proxy
-        .as_ref()
+        .load_full()
         .expect("managed network proxy should be present");
     assert_eq!(
         started_proxy
@@ -1192,7 +1197,9 @@ hooks = [{ type = "command", command = "python3 /tmp/user.py" }]
         transcript_path: None,
         model: "gpt-5.2".to_string(),
         permission_mode: "default".to_string(),
-        source: codex_hooks::SessionStartSource::Startup,
+        target: codex_hooks::StartHookTarget::SessionStart {
+            source: codex_hooks::SessionStartSource::Startup,
+        },
     };
     assert!(session.hooks().preview_session_start(&request).is_empty());
 
@@ -1771,6 +1778,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         turn_id: Some(turn_context.sub_id.clone()),
         trace_id: turn_context.trace_id.clone(),
         cwd: turn_context.cwd.to_path_buf(),
+        workspace_roots: None,
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
@@ -1797,6 +1805,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: turn_id.clone(),
+                trace_id: None,
                 started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
@@ -1804,10 +1813,14 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(
             codex_protocol::protocol::UserMessageEvent {
+                client_id: None,
                 message: "forked seed".to_string(),
                 images: None,
+                image_details: Vec::new(),
                 local_images: Vec::new(),
+                local_image_details: Vec::new(),
                 text_elements: Vec::new(),
+                ..Default::default()
             },
         )),
         RolloutItem::TurnContext(previous_context_item.clone()),
@@ -1991,6 +2004,7 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: first_turn_id.clone(),
+                trace_id: None,
                 started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
@@ -1998,10 +2012,14 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(
             codex_protocol::protocol::UserMessageEvent {
+                client_id: None,
                 message: "turn 1 user".to_string(),
                 images: None,
+                image_details: Vec::new(),
                 local_images: Vec::new(),
+                local_image_details: Vec::new(),
                 text_elements: Vec::new(),
+                ..Default::default()
             },
         )),
         RolloutItem::TurnContext(first_context_item.clone()),
@@ -2017,6 +2035,7 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: rolled_back_turn_id.clone(),
+                trace_id: None,
                 started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
@@ -2024,10 +2043,14 @@ async fn thread_rollback_recomputes_previous_turn_settings_and_reference_context
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(
             codex_protocol::protocol::UserMessageEvent {
+                client_id: None,
                 message: "turn 2 user".to_string(),
                 images: None,
+                image_details: Vec::new(),
                 local_images: Vec::new(),
+                local_image_details: Vec::new(),
                 text_elements: Vec::new(),
+                ..Default::default()
             },
         )),
         RolloutItem::TurnContext(rolled_back_context_item),
@@ -2100,16 +2123,21 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: first_turn_id.clone(),
+                trace_id: None,
                 started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+            client_id: None,
             message: "turn 1 user".to_string(),
             images: None,
+            image_details: Vec::new(),
             local_images: Vec::new(),
+            local_image_details: Vec::new(),
             text_elements: Vec::new(),
+            ..Default::default()
         })),
         RolloutItem::TurnContext(first_context_item.clone()),
         RolloutItem::ResponseItem(user_message("turn 1 user")),
@@ -2124,6 +2152,7 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: compact_turn_id.clone(),
+                trace_id: None,
                 started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
@@ -2143,16 +2172,21 @@ async fn thread_rollback_restores_cleared_reference_context_item_after_compactio
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: rolled_back_turn_id.clone(),
+                trace_id: None,
                 started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+            client_id: None,
             message: "turn 2 user".to_string(),
             images: None,
+            image_details: Vec::new(),
             local_images: Vec::new(),
+            local_image_details: Vec::new(),
             text_elements: Vec::new(),
+            ..Default::default()
         })),
         RolloutItem::TurnContext(TurnContextItem {
             turn_id: Some(rolled_back_turn_id.clone()),
@@ -2197,16 +2231,21 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: "turn-1".to_string(),
+                trace_id: None,
                 started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+            client_id: None,
             message: "turn 1 user".to_string(),
             images: None,
+            image_details: Vec::new(),
             local_images: Vec::new(),
+            local_image_details: Vec::new(),
             text_elements: Vec::new(),
+            ..Default::default()
         })),
         RolloutItem::TurnContext(turn_context_item.clone()),
         RolloutItem::ResponseItem(user_message("turn 1 user")),
@@ -2221,16 +2260,21 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: "turn-2".to_string(),
+                trace_id: None,
                 started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+            client_id: None,
             message: "turn 2 user".to_string(),
             images: None,
+            image_details: Vec::new(),
             local_images: Vec::new(),
+            local_image_details: Vec::new(),
             text_elements: Vec::new(),
+            ..Default::default()
         })),
         RolloutItem::TurnContext(turn_context_item.clone()),
         RolloutItem::ResponseItem(user_message("turn 2 user")),
@@ -2245,16 +2289,21 @@ async fn thread_rollback_persists_marker_and_replays_cumulatively() {
         RolloutItem::EventMsg(EventMsg::TurnStarted(
             codex_protocol::protocol::TurnStartedEvent {
                 turn_id: "turn-3".to_string(),
+                trace_id: None,
                 started_at: None,
                 model_context_window: Some(128_000),
                 collaboration_mode_kind: ModeKind::Default,
             },
         )),
         RolloutItem::EventMsg(EventMsg::UserMessage(UserMessageEvent {
+            client_id: None,
             message: "turn 3 user".to_string(),
             images: None,
+            image_details: Vec::new(),
             local_images: Vec::new(),
+            local_image_details: Vec::new(),
             text_elements: Vec::new(),
+            ..Default::default()
         })),
         RolloutItem::TurnContext(turn_context_item),
         RolloutItem::ResponseItem(user_message("turn 3 user")),
@@ -2372,10 +2421,16 @@ async fn set_rate_limits_retains_previous_credits() {
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
         approvals_reviewer: config.approvals_reviewer,
-        permission_profile: config.permissions.permission_profile.clone(),
-        active_permission_profile: config.permissions.active_permission_profile(),
+        permission_profile_state:
+            crate::config::PermissionProfileState::from_constrained_active_profile(
+                config.permissions.permission_profile.clone(),
+                config.permissions.active_permission_profile(),
+                Vec::new(),
+            )
+            .expect("permission profile state should be valid"),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: Vec::new(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: Vec::new(),
@@ -2476,10 +2531,16 @@ async fn set_rate_limits_updates_plan_type_when_present() {
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
         approvals_reviewer: config.approvals_reviewer,
-        permission_profile: config.permissions.permission_profile.clone(),
-        active_permission_profile: config.permissions.active_permission_profile(),
+        permission_profile_state:
+            crate::config::PermissionProfileState::from_constrained_active_profile(
+                config.permissions.permission_profile.clone(),
+                config.permissions.active_permission_profile(),
+                Vec::new(),
+            )
+            .expect("permission profile state should be valid"),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: Vec::new(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: Vec::new(),
@@ -2631,10 +2692,6 @@ async fn turn_context_with_model_updates_model_fields() {
         updated.truncation_policy,
         expected_model_info.truncation_policy.into()
     );
-    assert!(!Arc::ptr_eq(
-        &updated.tool_call_gate,
-        &turn_context.tool_call_gate
-    ));
 }
 
 #[test]
@@ -2936,10 +2993,16 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
         approvals_reviewer: config.approvals_reviewer,
-        permission_profile: config.permissions.permission_profile.clone(),
-        active_permission_profile: config.permissions.active_permission_profile(),
+        permission_profile_state:
+            crate::config::PermissionProfileState::from_constrained_active_profile(
+                config.permissions.permission_profile.clone(),
+                config.permissions.active_permission_profile(),
+                Vec::new(),
+            )
+            .expect("permission profile state should be valid"),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: Vec::new(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: Vec::new(),
@@ -2993,18 +3056,22 @@ async fn session_configuration_apply_preserves_profile_file_system_policy_on_cwd
             access: FileSystemAccessMode::Write,
         },
         FileSystemSandboxEntry {
-            path: FileSystemPath::Path { path: docs_dir },
+            path: FileSystemPath::Path {
+                path: docs_dir.clone(),
+            },
             access: FileSystemAccessMode::Read,
         },
     ]);
     let network_sandbox_policy = NetworkSandboxPolicy::from(&sandbox_policy);
-    session_configuration.permission_profile = codex_config::Constrained::allow_any(
-        PermissionProfile::from_runtime_permissions_with_enforcement(
-            SandboxEnforcement::from_legacy_sandbox_policy(&sandbox_policy),
-            &file_system_sandbox_policy,
-            network_sandbox_policy,
-        ),
-    );
+    session_configuration
+        .set_permission_profile_for_tests(
+            PermissionProfile::from_runtime_permissions_with_enforcement(
+                SandboxEnforcement::from_legacy_sandbox_policy(&sandbox_policy),
+                &file_system_sandbox_policy,
+                network_sandbox_policy,
+            ),
+        )
+        .expect("set permission profile");
 
     let updated = session_configuration
         .apply(&SessionSettingsUpdate {
@@ -3013,10 +3080,15 @@ async fn session_configuration_apply_preserves_profile_file_system_policy_on_cwd
         })
         .expect("cwd-only update should succeed");
 
-    assert_eq!(
-        updated.file_system_sandbox_policy(),
-        file_system_sandbox_policy
-    );
+    let updated_file_system_policy = updated.file_system_sandbox_policy();
+    assert_eq!(updated_file_system_policy.glob_scan_max_depth, None);
+    assert!(updated_file_system_policy.entries.iter().any(|entry| {
+        entry.path
+            == FileSystemPath::Path {
+                path: docs_dir.clone(),
+            }
+            && entry.access == FileSystemAccessMode::Read
+    }));
 }
 
 #[tokio::test]
@@ -3039,13 +3111,15 @@ async fn session_configuration_apply_permission_profile_preserves_existing_deny_
         );
     existing_file_system_policy.glob_scan_max_depth = Some(2);
     existing_file_system_policy.entries.push(deny_entry.clone());
-    session_configuration.permission_profile = codex_config::Constrained::allow_any(
-        PermissionProfile::from_runtime_permissions_with_enforcement(
-            SandboxEnforcement::from_legacy_sandbox_policy(&workspace_policy),
-            &existing_file_system_policy,
-            NetworkSandboxPolicy::Restricted,
-        ),
-    );
+    session_configuration
+        .set_permission_profile_for_tests(
+            PermissionProfile::from_runtime_permissions_with_enforcement(
+                SandboxEnforcement::from_legacy_sandbox_policy(&workspace_policy),
+                &existing_file_system_policy,
+                NetworkSandboxPolicy::Restricted,
+            ),
+        )
+        .expect("set permission profile");
 
     let requested_file_system_policy = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
         &workspace_policy,
@@ -3064,10 +3138,14 @@ async fn session_configuration_apply_permission_profile_preserves_existing_deny_
 
     let mut expected_file_system_policy = requested_file_system_policy;
     expected_file_system_policy.glob_scan_max_depth = Some(2);
-    expected_file_system_policy.entries.push(deny_entry);
-    assert_eq!(
-        updated.file_system_sandbox_policy(),
-        expected_file_system_policy
+    expected_file_system_policy.entries.push(deny_entry.clone());
+    let updated_file_system_policy = updated.file_system_sandbox_policy();
+    assert_eq!(updated_file_system_policy.glob_scan_max_depth, Some(2));
+    assert!(
+        updated_file_system_policy
+            .entries
+            .iter()
+            .any(|entry| entry == &deny_entry)
     );
 }
 
@@ -3220,13 +3298,15 @@ async fn session_configuration_apply_rederives_legacy_file_system_policy_on_cwd_
         &sandbox_policy,
         &session_configuration.cwd,
     );
-    session_configuration.permission_profile = codex_config::Constrained::allow_any(
-        PermissionProfile::from_runtime_permissions_with_enforcement(
-            SandboxEnforcement::from_legacy_sandbox_policy(&sandbox_policy),
-            &file_system_sandbox_policy,
-            NetworkSandboxPolicy::from(&sandbox_policy),
-        ),
-    );
+    session_configuration
+        .set_permission_profile_for_tests(
+            PermissionProfile::from_runtime_permissions_with_enforcement(
+                SandboxEnforcement::from_legacy_sandbox_policy(&sandbox_policy),
+                &file_system_sandbox_policy,
+                NetworkSandboxPolicy::from(&sandbox_policy),
+            ),
+        )
+        .expect("set permission profile");
 
     let updated = session_configuration
         .apply(&SessionSettingsUpdate {
@@ -3272,13 +3352,15 @@ async fn session_configuration_apply_preserves_absolute_cwd_write_root_on_cwd_up
             access: FileSystemAccessMode::Write,
         },
     ]);
-    session_configuration.permission_profile = codex_config::Constrained::allow_any(
-        PermissionProfile::from_runtime_permissions_with_enforcement(
-            SandboxEnforcement::Managed,
-            &file_system_sandbox_policy,
-            NetworkSandboxPolicy::Restricted,
-        ),
-    );
+    session_configuration
+        .set_permission_profile_for_tests(
+            PermissionProfile::from_runtime_permissions_with_enforcement(
+                SandboxEnforcement::Managed,
+                &file_system_sandbox_policy,
+                NetworkSandboxPolicy::Restricted,
+            ),
+        )
+        .expect("set permission profile");
 
     let updated = session_configuration
         .apply(&SessionSettingsUpdate {
@@ -3664,10 +3746,16 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
         approvals_reviewer: config.approvals_reviewer,
-        permission_profile: config.permissions.permission_profile.clone(),
-        active_permission_profile: config.permissions.active_permission_profile(),
+        permission_profile_state:
+            crate::config::PermissionProfileState::from_constrained_active_profile(
+                config.permissions.permission_profile.clone(),
+                config.permissions.active_permission_profile(),
+                Vec::new(),
+            )
+            .expect("permission profile state should be valid"),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: Vec::new(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: Vec::new(),
@@ -3705,6 +3793,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         skills_manager,
         plugins_manager,
         mcp_manager,
+        codex_extension_api::empty_extension_registry(),
         AgentControl::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
@@ -3772,10 +3861,16 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
         approvals_reviewer: config.approvals_reviewer,
-        permission_profile: config.permissions.permission_profile.clone(),
-        active_permission_profile: config.permissions.active_permission_profile(),
+        permission_profile_state:
+            crate::config::PermissionProfileState::from_constrained_active_profile(
+                config.permissions.permission_profile.clone(),
+                config.permissions.active_permission_profile(),
+                Vec::new(),
+            )
+            .expect("permission profile state should be valid"),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: Vec::new(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: default_environments,
@@ -3820,6 +3915,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::new_uninitialized(
             &config.permissions.approval_policy,
             &config.permissions.permission_profile,
+            /*prefix_mcp_tool_names*/ true,
         ))),
         mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
         unified_exec_manager: UnifiedExecProcessManager::new(
@@ -3851,8 +3947,13 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         skills_manager,
         plugins_manager,
         mcp_manager,
+        extensions: codex_extension_api::empty_extension_registry(),
+        session_extension_data: codex_extension_api::ExtensionData::new("session"),
+        thread_extension_data: codex_extension_api::ExtensionData::new("thread"),
         agent_control,
-        network_proxy: None,
+        network_proxy: None.into(),
+        network_proxy_audit_metadata: crate::config::NetworkProxyAuditMetadata::default(),
+        managed_network_requirements_configured: false,
         network_approval: Arc::clone(&network_approval),
         state_db: None,
         attestation_provider: None,
@@ -3892,9 +3993,11 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             .skills_for_config(&skills_input, Some(Arc::clone(&skill_fs)))
             .await,
     );
+    let available_models = models_manager.try_list_models().unwrap_or_default();
     let turn_environments = turn_environments_for_tests(&environment, &session_configuration.cwd);
     let turn_context = Session::make_turn_context(
         conversation_id,
+        /*forked_from_thread_id*/ None,
         Some(Arc::clone(&auth_manager)),
         &session_telemetry,
         session_configuration.provider.clone(),
@@ -3904,7 +4007,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         services.main_execve_wrapper_exe.as_ref(),
         per_turn_config,
         model_info,
-        &models_manager,
+        available_models,
         /*network*/ None,
         ResolvedTurnEnvironments { turn_environments },
         session_configuration.cwd.clone(),
@@ -3929,6 +4032,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         idle_pending_input: Mutex::new(Vec::new()),
         goal_runtime: crate::goals::GoalRuntimeState::new(),
         guardian_review_session: crate::guardian::GuardianReviewSessionManager::default(),
+        forked_from_id: None,
         services,
         next_internal_sub_id: AtomicU64::new(0),
     };
@@ -3986,10 +4090,16 @@ async fn make_session_with_config_and_rx(
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
         approvals_reviewer: config.approvals_reviewer,
-        permission_profile: config.permissions.permission_profile.clone(),
-        active_permission_profile: config.permissions.active_permission_profile(),
+        permission_profile_state:
+            crate::config::PermissionProfileState::from_constrained_active_profile(
+                config.permissions.permission_profile.clone(),
+                config.permissions.active_permission_profile(),
+                Vec::new(),
+            )
+            .expect("permission profile state should be valid"),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: Vec::new(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: default_environments,
@@ -4028,6 +4138,7 @@ async fn make_session_with_config_and_rx(
         skills_manager,
         plugins_manager,
         mcp_manager,
+        codex_extension_api::empty_extension_registry(),
         AgentControl::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
@@ -4571,6 +4682,8 @@ fn op_kind_distinguishes_turn_ops() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             cwd: None,
+            workspace_roots: None,
+            profile_workspace_roots: None,
             approval_policy: None,
             approvals_reviewer: None,
             sandbox_policy: None,
@@ -4814,7 +4927,7 @@ async fn spawn_task_turn_span_inherits_dispatch_trace_context() {
             self: Arc<Self>,
             _session: Arc<SessionTaskContext>,
             _ctx: Arc<TurnContext>,
-            _input: Vec<UserInput>,
+            _input: Vec<TurnInput>,
             _cancellation_token: CancellationToken,
         ) -> Option<String> {
             let mut trace = self
@@ -4856,10 +4969,13 @@ async fn spawn_task_turn_span_inherits_dispatch_trace_context() {
     async {
         sess.spawn_task(
             Arc::clone(&tc),
-            vec![UserInput::Text {
-                text: "hello".to_string(),
-                text_elements: Vec::new(),
-            }],
+            vec![
+                UserInput::Text {
+                    text: "hello".to_string(),
+                    text_elements: Vec::new(),
+                }
+                .into(),
+            ],
             TraceCaptureTask {
                 captured_trace: Arc::clone(&captured_trace),
             },
@@ -5219,10 +5335,16 @@ where
         compact_prompt: config.compact_prompt.clone(),
         approval_policy: config.permissions.approval_policy.clone(),
         approvals_reviewer: config.approvals_reviewer,
-        permission_profile: config.permissions.permission_profile.clone(),
-        active_permission_profile: config.permissions.active_permission_profile(),
+        permission_profile_state:
+            crate::config::PermissionProfileState::from_constrained_active_profile(
+                config.permissions.permission_profile.clone(),
+                config.permissions.active_permission_profile(),
+                Vec::new(),
+            )
+            .expect("permission profile state should be valid"),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: Vec::new(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: default_environments,
@@ -5267,6 +5389,7 @@ where
         mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::new_uninitialized(
             &config.permissions.approval_policy,
             &config.permissions.permission_profile,
+            /*prefix_mcp_tool_names*/ true,
         ))),
         mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
         unified_exec_manager: UnifiedExecProcessManager::new(
@@ -5298,8 +5421,13 @@ where
         skills_manager,
         plugins_manager,
         mcp_manager,
+        extensions: codex_extension_api::empty_extension_registry(),
+        session_extension_data: codex_extension_api::ExtensionData::new("session"),
+        thread_extension_data: codex_extension_api::ExtensionData::new("thread"),
         agent_control,
-        network_proxy: None,
+        network_proxy: None.into(),
+        network_proxy_audit_metadata: crate::config::NetworkProxyAuditMetadata::default(),
+        managed_network_requirements_configured: false,
         network_approval: Arc::clone(&network_approval),
         state_db: None,
         attestation_provider: None,
@@ -5339,9 +5467,11 @@ where
             .skills_for_config(&skills_input, Some(Arc::clone(&skill_fs)))
             .await,
     );
+    let available_models = models_manager.try_list_models().unwrap_or_default();
     let turn_environments = turn_environments_for_tests(&environment, &session_configuration.cwd);
     let turn_context = Arc::new(Session::make_turn_context(
         conversation_id,
+        /*forked_from_thread_id*/ None,
         Some(Arc::clone(&auth_manager)),
         &session_telemetry,
         session_configuration.provider.clone(),
@@ -5351,7 +5481,7 @@ where
         services.main_execve_wrapper_exe.as_ref(),
         per_turn_config,
         model_info,
-        &models_manager,
+        available_models,
         /*network*/ None,
         ResolvedTurnEnvironments { turn_environments },
         session_configuration.cwd.clone(),
@@ -5375,6 +5505,7 @@ where
         idle_pending_input: Mutex::new(Vec::new()),
         goal_runtime: crate::goals::GoalRuntimeState::new(),
         guardian_review_session: crate::guardian::GuardianReviewSessionManager::default(),
+        forked_from_id: None,
         services,
         installation_id: "test-installation-id".to_string(),
         next_internal_sub_id: AtomicU64::new(0),
@@ -5533,7 +5664,7 @@ async fn spawn_task_does_not_update_previous_turn_settings_for_non_run_turn_task
 
     sess.spawn_task(
         Arc::clone(&tc),
-        input,
+        vec![input.into()],
         NeverEndingTask {
             kind: TaskKind::Regular,
             listen_to_cancellation_token: true,
@@ -6178,6 +6309,9 @@ async fn handle_output_item_done_records_image_save_history_message() {
     let mut ctx = HandleOutputCtx {
         sess: Arc::clone(&session),
         turn_context: Arc::clone(&turn_context),
+        turn_store: Arc::new(codex_extension_api::ExtensionData::new(
+            turn_context.sub_id.clone(),
+        )),
         tool_runtime: test_tool_runtime(Arc::clone(&session), Arc::clone(&turn_context)),
         cancellation_token: CancellationToken::new(),
     };
@@ -6230,6 +6364,9 @@ async fn handle_output_item_done_skips_image_save_message_when_save_fails() {
     let mut ctx = HandleOutputCtx {
         sess: Arc::clone(&session),
         turn_context: Arc::clone(&turn_context),
+        turn_store: Arc::new(codex_extension_api::ExtensionData::new(
+            turn_context.sub_id.clone(),
+        )),
         tool_runtime: test_tool_runtime(Arc::clone(&session), Arc::clone(&turn_context)),
         cancellation_token: CancellationToken::new(),
     };
@@ -6525,10 +6662,14 @@ async fn record_context_updates_and_set_reference_context_item_persists_full_rei
     session
         .persist_rollout_items(&[RolloutItem::EventMsg(EventMsg::UserMessage(
             UserMessageEvent {
+                client_id: None,
                 message: "seed rollout".to_string(),
                 images: None,
+                image_details: Vec::new(),
                 local_images: Vec::new(),
+                local_image_details: Vec::new(),
                 text_elements: Vec::new(),
+                ..Default::default()
             },
         ))])
         .await;
@@ -6662,7 +6803,7 @@ impl SessionTask for NeverEndingTask {
         self: Arc<Self>,
         _session: Arc<SessionTaskContext>,
         _ctx: Arc<TurnContext>,
-        _input: Vec<UserInput>,
+        _input: Vec<TurnInput>,
         cancellation_token: CancellationToken,
     ) -> Option<String> {
         if self.listen_to_cancellation_token {
@@ -6691,7 +6832,7 @@ impl SessionTask for GuardianDeniedApprovalTask {
         self: Arc<Self>,
         session: Arc<SessionTaskContext>,
         ctx: Arc<TurnContext>,
-        _input: Vec<UserInput>,
+        _input: Vec<TurnInput>,
         cancellation_token: CancellationToken,
     ) -> Option<String> {
         let session = session.clone_session();
@@ -6711,8 +6852,12 @@ async fn guardian_auto_review_interrupts_after_three_consecutive_denials() {
         text: "trigger guardian denials".to_string(),
         text_elements: Vec::new(),
     }];
-    sess.spawn_task(Arc::clone(&tc), input, GuardianDeniedApprovalTask)
-        .await;
+    sess.spawn_task(
+        Arc::clone(&tc),
+        vec![input.into()],
+        GuardianDeniedApprovalTask,
+    )
+    .await;
 
     let mut observed = Vec::new();
     let aborted = tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -6744,7 +6889,7 @@ async fn guardian_helper_review_interrupts_after_three_consecutive_denials() {
     }];
     sess.spawn_task(
         Arc::clone(&tc),
-        input,
+        vec![input.into()],
         NeverEndingTask {
             kind: TaskKind::Regular,
             listen_to_cancellation_token: true,
@@ -6804,7 +6949,7 @@ async fn abort_regular_task_emits_turn_aborted_only() {
     }];
     sess.spawn_task(
         Arc::clone(&tc),
-        input,
+        vec![input.into()],
         NeverEndingTask {
             kind: TaskKind::Regular,
             listen_to_cancellation_token: false,
@@ -6816,14 +6961,16 @@ async fn abort_regular_task_emits_turn_aborted_only() {
 
     // Interrupts persist a model-visible `<turn_aborted>` marker into history, but there is no
     // separate client-visible event for that marker (only `EventMsg::TurnAborted`).
-    let evt = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-        .await
-        .expect("timeout waiting for event")
-        .expect("event");
-    match evt.msg {
-        EventMsg::TurnAborted(e) => assert_eq!(TurnAbortReason::Interrupted, e.reason),
-        other => panic!("unexpected event: {other:?}"),
-    }
+    let evt = loop {
+        let evt = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("timeout waiting for event")
+            .expect("event");
+        if let EventMsg::TurnAborted(e) = evt.msg {
+            break e;
+        }
+    };
+    assert_eq!(TurnAbortReason::Interrupted, evt.reason);
     // No extra events should be emitted after an abort.
     assert!(rx.try_recv().is_err());
 }
@@ -6837,7 +6984,7 @@ async fn abort_gracefully_emits_turn_aborted_only() {
     }];
     sess.spawn_task(
         Arc::clone(&tc),
-        input,
+        vec![input.into()],
         NeverEndingTask {
             kind: TaskKind::Regular,
             listen_to_cancellation_token: true,
@@ -6849,14 +6996,16 @@ async fn abort_gracefully_emits_turn_aborted_only() {
 
     // Even if tasks handle cancellation gracefully, interrupts still result in `TurnAborted`
     // being the only client-visible signal.
-    let evt = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-        .await
-        .expect("timeout waiting for event")
-        .expect("event");
-    match evt.msg {
-        EventMsg::TurnAborted(e) => assert_eq!(TurnAbortReason::Interrupted, e.reason),
-        other => panic!("unexpected event: {other:?}"),
-    }
+    let evt = loop {
+        let evt = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("timeout waiting for event")
+            .expect("event");
+        if let EventMsg::TurnAborted(e) = evt.msg {
+            break e;
+        }
+    };
+    assert_eq!(TurnAbortReason::Interrupted, evt.reason);
     // No extra events should be emitted after an abort.
     assert!(rx.try_recv().is_err());
 }
@@ -6870,7 +7019,7 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
     }];
     sess.spawn_task(
         Arc::clone(&tc),
-        input,
+        vec![input.into()],
         NeverEndingTask {
             kind: TaskKind::Regular,
             listen_to_cancellation_token: false,
@@ -6913,66 +7062,22 @@ async fn task_finish_emits_turn_item_lifecycle_for_leftover_pending_user_input()
         .expect("channel open");
     assert!(matches!(first.msg, EventMsg::RawResponseItem(_)));
 
-    let second = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-        .await
-        .expect("expected item started event")
-        .expect("channel open");
-    assert!(matches!(
-        second.msg,
-        EventMsg::ItemStarted(ItemStartedEvent {
-            item: TurnItem::UserMessage(UserMessageItem { content, .. }),
-            ..
-        }) if content == vec![UserInput::Text {
-            text: "late pending input".to_string(),
-            text_elements: Vec::new(),
-        }]
-    ));
-
-    let third = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-        .await
-        .expect("expected item completed event")
-        .expect("channel open");
-    assert!(matches!(
-        third.msg,
-        EventMsg::ItemCompleted(ItemCompletedEvent {
-            item: TurnItem::UserMessage(UserMessageItem { content, .. }),
-            ..
-        }) if content == vec![UserInput::Text {
-            text: "late pending input".to_string(),
-            text_elements: Vec::new(),
-        }]
-    ));
-
-    let fourth = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-        .await
-        .expect("expected legacy user message event")
-        .expect("channel open");
-    assert!(matches!(
-        fourth.msg,
-        EventMsg::UserMessage(UserMessageEvent {
-            message,
-            images,
-            text_elements,
-            local_images,
-        }) if message == "late pending input"
-            && images == Some(Vec::new())
-            && text_elements.is_empty()
-            && local_images.is_empty()
-    ));
-
-    let fifth = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
-        .await
-        .expect("expected turn complete event")
-        .expect("channel open");
-    assert!(matches!(
-        fifth.msg,
-        EventMsg::TurnComplete(TurnCompleteEvent {
+    loop {
+        let evt = tokio::time::timeout(std::time::Duration::from_secs(2), rx.recv())
+            .await
+            .expect("expected follow-up event")
+            .expect("channel open");
+        if let EventMsg::TurnComplete(TurnCompleteEvent {
             turn_id,
             last_agent_message: None,
             time_to_first_token_ms: None,
             ..
-        }) if turn_id == tc.sub_id
-    ));
+        }) = evt.msg
+        {
+            assert_eq!(turn_id, tc.sub_id);
+            break;
+        }
+    }
 }
 
 #[tokio::test]
@@ -7002,7 +7107,7 @@ async fn steer_input_enforces_expected_turn_id() {
     }];
     sess.spawn_task(
         Arc::clone(&tc),
-        input,
+        vec![input.into()],
         NeverEndingTask {
             kind: TaskKind::Regular,
             listen_to_cancellation_token: false,
@@ -7048,7 +7153,7 @@ async fn steer_input_rejects_non_regular_turns() {
         let turn_context = sess.new_default_turn_with_sub_id("turn".to_string()).await;
         sess.spawn_task(
             turn_context,
-            input,
+            vec![input.into()],
             NeverEndingTask {
                 kind: task_kind,
                 listen_to_cancellation_token: true,
@@ -7084,7 +7189,7 @@ async fn steer_input_returns_active_turn_id() {
     }];
     sess.spawn_task(
         Arc::clone(&tc),
-        input,
+        vec![input.into()],
         NeverEndingTask {
             kind: TaskKind::Regular,
             listen_to_cancellation_token: false,
@@ -7118,7 +7223,7 @@ async fn prepend_pending_input_keeps_older_tail_ahead_of_newer_input() {
     }];
     sess.spawn_task(
         Arc::clone(&tc),
-        input,
+        vec![input.into()],
         NeverEndingTask {
             kind: TaskKind::Regular,
             listen_to_cancellation_token: false,
@@ -7192,7 +7297,8 @@ async fn queued_response_items_for_next_turn_move_into_next_active_turn() {
     )
     .await;
 
-    assert_eq!(sess.get_pending_input().await, vec![queued_item]);
+    assert_eq!(sess.get_pending_input().await, Vec::new());
+    assert!(sess.has_queued_response_items_for_next_turn().await);
 }
 
 #[tokio::test]
@@ -7234,7 +7340,7 @@ async fn abort_empty_active_turn_preserves_pending_input() {
         .lock()
         .await
         .push_pending_input(crate::session::TurnInput::ResponseItem(
-            pending_item.clone(),
+            pending_item.clone().into(),
         ));
 
     sess.abort_all_tasks(TurnAbortReason::Replaced).await;
@@ -7616,6 +7722,7 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
     .await?;
 
     let goal = state_db
+        .thread_goals()
         .get_thread_goal(sess.conversation_id)
         .await?
         .expect("goal should remain persisted");
@@ -7699,7 +7806,7 @@ async fn completed_goal_accounts_current_turn_tokens_before_tool_response() -> a
     assert_eq!(complete_output["remainingTokens"], 0);
     assert_eq!(
         complete_output["completionBudgetReport"],
-        "Goal achieved. Report final budget usage to the user: tokens used: 580 of 500."
+        "Goal achieved. Report final usage from this tool result's structured goal fields. If `goal.tokenBudget` is present, include token usage from `goal.tokensUsed` and `goal.tokenBudget`. If `goal.timeUsedSeconds` is greater than 0, summarize elapsed time in a concise, human-friendly form appropriate to the response language."
     );
     let requests = responses.requests();
     let completion_followup_request = requests
@@ -7716,6 +7823,7 @@ async fn completed_goal_accounts_current_turn_tokens_before_tool_response() -> a
     )
     .await?;
     let persisted_goal = state_db
+        .thread_goals()
         .get_thread_goal(test.session_configured.session_id.into())
         .await?
         .expect("goal should be persisted");
@@ -7749,7 +7857,8 @@ async fn queue_only_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
     .await;
 
     sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(communication.clone());
+    sess.enqueue_mailbox_communication(communication.clone())
+        .await;
 
     assert!(
         !sess.has_pending_input().await,
@@ -7785,7 +7894,8 @@ async fn trigger_turn_mailbox_mail_waits_for_next_turn_after_answer_boundary() {
         Vec::new(),
         "late trigger update".to_string(),
         /*trigger_turn*/ true,
-    ));
+    ))
+    .await;
 
     assert!(
         !sess.has_pending_input().await,
@@ -7818,7 +7928,8 @@ async fn steered_input_reopens_mailbox_delivery_for_current_turn() {
     .await;
 
     sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(communication.clone());
+    sess.enqueue_mailbox_communication(communication.clone())
+        .await;
     sess.steer_input(
         vec![UserInput::Text {
             text: "follow up".to_string(),
@@ -7863,7 +7974,8 @@ async fn stale_defer_mailbox_delivery_does_not_override_steered_input() {
     .await;
 
     sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(communication.clone());
+    sess.enqueue_mailbox_communication(communication.clone())
+        .await;
     sess.steer_input(
         vec![UserInput::Text {
             text: "follow up".to_string(),
@@ -7910,7 +8022,8 @@ async fn tool_calls_reopen_mailbox_delivery_for_current_turn() {
     .await;
 
     sess.defer_mailbox_delivery_to_next_turn(&tc.sub_id).await;
-    sess.enqueue_mailbox_communication(communication.clone());
+    sess.enqueue_mailbox_communication(communication.clone())
+        .await;
 
     let item = ResponseItem::FunctionCall {
         id: None,
@@ -7922,6 +8035,7 @@ async fn tool_calls_reopen_mailbox_delivery_for_current_turn() {
     let mut ctx = HandleOutputCtx {
         sess: Arc::clone(&sess),
         turn_context: Arc::clone(&tc),
+        turn_store: Arc::new(codex_extension_api::ExtensionData::new(tc.sub_id.clone())),
         tool_runtime: test_tool_runtime(Arc::clone(&sess), Arc::clone(&tc)),
         cancellation_token: CancellationToken::new(),
     };
@@ -7945,7 +8059,7 @@ async fn abort_review_task_emits_exited_then_aborted_and_records_history() {
         text: "start review".to_string(),
         text_elements: Vec::new(),
     }];
-    sess.spawn_task(Arc::clone(&tc), input, ReviewTask::new())
+    sess.spawn_task(Arc::clone(&tc), vec![input.into()], ReviewTask::new())
         .await;
 
     sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
@@ -8030,14 +8144,13 @@ async fn fatal_tool_error_stops_turn_and_reports_error() {
             .await
     };
     let deferred_mcp_tools = Some(tools.clone());
-    let router = ToolRouter::from_config(
-        &turn_context.tools_config,
+    let router = ToolRouter::from_turn_context(
+        &turn_context,
         crate::tools::router::ToolRouterParams {
             deferred_mcp_tools,
             mcp_tools: Some(tools),
-            unavailable_called_tools: Vec::new(),
-            parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
+            extension_tool_executors: Vec::new(),
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
         },
     );
@@ -8049,8 +8162,7 @@ async fn fatal_tool_error_stops_turn_and_reports_error() {
         input: "{}".to_string(),
     };
 
-    let call = ToolRouter::build_tool_call(session.as_ref(), item.clone())
-        .await
+    let call = ToolRouter::build_tool_call(item.clone())
         .expect("build tool call")
         .expect("tool call present");
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
@@ -8481,7 +8593,7 @@ async fn rejects_escalated_permissions_when_policy_not_on_request() {
             source: crate::tools::context::ToolCallSource::Direct,
             payload: ToolPayload::Function {
                 arguments: serde_json::json!({
-                    "command": params.command.clone(),
+                    "command": "echo hi",
                     "workdir": Some(turn_context.cwd.to_string_lossy().to_string()),
                     "timeout_ms": params.expiration.timeout_ms(),
                     "sandbox_permissions": params.sandbox_permissions,

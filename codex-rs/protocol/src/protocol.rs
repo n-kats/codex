@@ -5432,11 +5432,11 @@ mod tests {
             json!({
                 "kind": "restricted",
                 "entries": [{
-                    "path": {
-                        "type": "glob_pattern",
-                        "pattern": "/tmp/private/**/*.txt"
-                    },
-                    "access": "none"
+                "path": {
+                    "type": "glob_pattern",
+                    "pattern": "/tmp/private/**/*.txt"
+                },
+                    "access": "deny"
                 }]
             })
         );

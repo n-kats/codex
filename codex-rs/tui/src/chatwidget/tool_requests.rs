@@ -100,11 +100,9 @@ impl ChatWidget {
             self.bottom_pane.ensure_status_indicator();
             self.bottom_pane
                 .set_interrupt_hint_visible(/*visible*/ true);
-            self.status_state
-                .pending_guardian_review_status
+            self.pending_guardian_review_status
                 .start_or_update(ev.id.clone(), detail);
             if let Some(status) = self
-                .status_state
                 .pending_guardian_review_status
                 .status_indicator_state()
             {

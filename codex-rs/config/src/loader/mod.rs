@@ -54,6 +54,7 @@ const DEFAULT_PROGRAM_DATA_DIR_WINDOWS: &str = r"C:\ProgramData";
 const PROJECT_LOCAL_CONFIG_DENYLIST: &[&str] = &[
     "openai_base_url",
     "chatgpt_base_url",
+    "apps_mcp_product_sku",
     "model_provider",
     "model_providers",
     "notify",
@@ -369,7 +370,7 @@ async fn load_config_toml_for_required_layer(
     toml_file: &AbsolutePathBuf,
     create_entry: impl FnOnce(TomlValue) -> ConfigLayerEntry,
 ) -> io::Result<ConfigLayerEntry> {
-    let toml_value = match fs.read_file_text(toml_file, /*sandbox*/ None).await {
+    let (toml_value, raw_toml) = match fs.read_file_text(toml_file, /*sandbox*/ None).await {
         Ok(contents) => {
             let config: TomlValue = toml::from_str(&contents).map_err(|err| {
                 let config_error =
@@ -385,24 +386,30 @@ async fn load_config_toml_for_required_layer(
                     ),
                 )
             })?;
-            resolve_relative_paths_in_config_toml(config, config_parent)
+            (
+                resolve_relative_paths_in_config_toml(config, config_parent)?,
+                Some(contents),
+            )
         }
         Err(e) => {
             if e.kind() == io::ErrorKind::NotFound {
-                Ok(TomlValue::Table(toml::map::Map::new()))
+                (TomlValue::Table(toml::map::Map::new()), None)
             } else {
-                Err(io::Error::new(
+                return Err(io::Error::new(
                     e.kind(),
                     format!(
                         "Failed to read config file {}: {e}",
                         toml_file.as_path().display()
                     ),
-                ))
+                ));
             }
         }
-    }?;
+    };
 
-    Ok(create_entry(toml_value))
+    Ok(match raw_toml {
+        Some(contents) => create_entry(toml_value).with_raw_toml(contents),
+        None => create_entry(toml_value),
+    })
 }
 
 /// If available, apply requirements from the platform system
@@ -635,6 +642,7 @@ struct ProjectTrustContext {
     project_root: AbsolutePathBuf,
     project_root_key: String,
     project_root_lookup_keys: Vec<String>,
+    repo_root: Option<AbsolutePathBuf>,
     repo_root_key: Option<String>,
     repo_root_lookup_keys: Option<Vec<String>>,
     projects_trust: std::collections::HashMap<String, TrustLevel>,
@@ -726,16 +734,50 @@ fn project_layer_entry(
     dot_codex_folder: &AbsolutePathBuf,
     config: TomlValue,
     disabled_reason: Option<String>,
+    hooks_config_folder_override: Option<AbsolutePathBuf>,
 ) -> ConfigLayerEntry {
     let source = ConfigLayerSource::Project {
         dot_codex_folder: dot_codex_folder.clone(),
     };
 
-    if let Some(reason) = disabled_reason {
+    let layer = if let Some(reason) = disabled_reason {
         ConfigLayerEntry::new_disabled(source, config, reason)
     } else {
         ConfigLayerEntry::new(source, config)
+    };
+    layer.with_hooks_config_folder_override(hooks_config_folder_override)
+}
+
+async fn is_linked_worktree_root(
+    fs: &dyn ExecutorFileSystem,
+    root: &AbsolutePathBuf,
+) -> io::Result<bool> {
+    let dot_git = root.join(".git");
+    if fs
+        .get_metadata(&dot_git, /*sandbox*/ None)
+        .await
+        .map(|metadata| metadata.is_directory)
+        .unwrap_or(false)
+    {
+        return Ok(false);
     }
+
+    let Ok(git_dir_s) = fs.read_file_text(&dot_git, /*sandbox*/ None).await else {
+        return Ok(false);
+    };
+    let Some(git_dir_rel) = git_dir_s.trim().strip_prefix("gitdir:") else {
+        return Ok(false);
+    };
+    let git_dir_rel = git_dir_rel.trim();
+    if git_dir_rel.is_empty() {
+        return Ok(false);
+    }
+
+    let git_dir_path = AbsolutePathBuf::resolve_path_against_base(git_dir_rel, root.as_path());
+    let Some(worktrees_dir) = git_dir_path.parent() else {
+        return Ok(false);
+    };
+    Ok(worktrees_dir.as_path().file_name() == Some(std::ffi::OsStr::new("worktrees")))
 }
 
 fn sanitize_project_config(config: &mut TomlValue) -> Vec<String> {
@@ -811,6 +853,7 @@ async fn project_trust_context(
         project_root,
         project_root_key,
         project_root_lookup_keys,
+        repo_root,
         repo_root_key,
         repo_root_lookup_keys,
         projects_trust,
@@ -990,8 +1033,17 @@ async fn load_project_layers(
 
     let mut layers = Vec::new();
     let mut startup_warnings = Vec::new();
+    let project_root_is_linked_worktree = is_linked_worktree_root(fs, project_root).await?;
     for dir in dirs {
         let dot_codex_abs = dir.join(".codex");
+        let hooks_config_folder_override = if project_root_is_linked_worktree {
+            trust_context
+                .repo_root
+                .as_ref()
+                .map(|repo_root| repo_root.join(".codex"))
+        } else {
+            None
+        };
         if !fs
             .get_metadata(&dot_codex_abs, /*sandbox*/ None)
             .await
@@ -1027,6 +1079,7 @@ async fn load_project_layers(
                             &dot_codex_abs,
                             TomlValue::Table(toml::map::Map::new()),
                             disabled_reason.clone(),
+                            hooks_config_folder_override,
                         ));
                         continue;
                     }
@@ -1041,7 +1094,12 @@ async fn load_project_layers(
                         &ignored_project_config_keys,
                     ));
                 }
-                let entry = project_layer_entry(&dot_codex_abs, config, disabled_reason.clone());
+                let entry = project_layer_entry(
+                    &dot_codex_abs,
+                    config,
+                    disabled_reason.clone(),
+                    hooks_config_folder_override,
+                );
                 layers.push(entry);
             }
             Err(err) => {
@@ -1053,6 +1111,7 @@ async fn load_project_layers(
                         &dot_codex_abs,
                         TomlValue::Table(toml::map::Map::new()),
                         disabled_reason,
+                        hooks_config_folder_override,
                     ));
                 } else {
                     let config_file_display = config_file.as_path().display();

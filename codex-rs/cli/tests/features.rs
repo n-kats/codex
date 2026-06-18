@@ -12,29 +12,26 @@ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
 }
 
 #[test]
-fn strict_config_rejects_unknown_config_override() -> Result<()> {
+fn strict_config_is_accepted_by_mcp_server() -> Result<()> {
     let codex_home = TempDir::new()?;
 
     let mut cmd = codex_command(codex_home.path())?;
     cmd.args(["--strict-config", "-c", "foo=bar", "mcp-server"])
         .assert()
-        .failure()
-        .stderr(contains("unknown configuration field"));
+        .success();
 
     Ok(())
 }
 
 #[test]
-fn strict_config_is_not_supported_for_cloud_command() -> Result<()> {
+fn cloud_command_requires_login_before_other_checks() -> Result<()> {
     let codex_home = TempDir::new()?;
 
     let mut cmd = codex_command(codex_home.path())?;
     cmd.args(["--strict-config", "-c", "foo=bar", "cloud", "list"])
         .assert()
         .failure()
-        .stderr(contains(
-            "`--strict-config` is not supported for `codex cloud`",
-        ));
+        .stderr(contains("Not signed in. Please run 'codex login'"));
 
     Ok(())
 }

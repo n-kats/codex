@@ -10,6 +10,7 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExitedReviewModeEvent;
+use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::ReviewOutputEvent;
 use codex_protocol::protocol::SubAgentSource;
@@ -129,6 +130,25 @@ async fn start_review_conversation(
         .clone()
         .unwrap_or_else(|| ctx.model_info.slug.clone());
     sub_agent_config.model = Some(model);
+    let initial_history = match session
+        .session
+        .live_thread_for_persistence("review fork")
+        .map(|live_thread| async {
+            live_thread.load_history(/*include_archived*/ true).await
+        }) {
+        Ok(load_history) => match load_history.await {
+            Ok(history) if !history.items.is_empty() => Some(InitialHistory::Forked(history.items)),
+            Ok(_) => None,
+            Err(err) => {
+                tracing::warn!("failed to load review fork history: {err}");
+                None
+            }
+        },
+        Err(err) => {
+            tracing::warn!("failed to prepare review fork history: {err}");
+            None
+        }
+    };
     (run_codex_thread_one_shot(
         sub_agent_config,
         session.auth_manager(),
@@ -139,7 +159,7 @@ async fn start_review_conversation(
         cancellation_token,
         SubAgentSource::Review,
         /*final_output_json_schema*/ None,
-        /*initial_history*/ None,
+        initial_history,
     )
     .await)
         .ok()

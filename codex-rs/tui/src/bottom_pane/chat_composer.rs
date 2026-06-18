@@ -1538,6 +1538,10 @@ impl ChatComposer {
         }
     }
 
+    pub(crate) fn record_replayed_submission(&mut self, entry: HistoryEntry) {
+        self.history.record_replayed_submission(entry);
+    }
+
     fn prune_attached_images_for_submission(&mut self, text: &str, text_elements: &[TextElement]) {
         if self.attached_images.is_empty() {
             return;
@@ -4391,17 +4395,7 @@ fn find_next_mention_token_range(text: &str, token: &str, from: usize) -> Option
 
 impl Renderable for ChatComposer {
     fn cursor_pos(&self, area: Rect) -> Option<(u16, u16)> {
-        if !self.input_enabled || self.selected_remote_image_index.is_some() {
-            return None;
-        }
-
-        if let Some(pos) = self.history_search_cursor_pos(area) {
-            return Some(pos);
-        }
-
-        let [_, _, textarea_rect, _] = self.layout_areas(area);
-        let state = *self.textarea_state.borrow();
-        self.textarea.cursor_pos_with_state(textarea_rect, state)
+        self.cursor_pos_with_textarea_right_reserve(area, /*textarea_right_reserve*/ 0)
     }
 
     fn cursor_style(&self, _area: Rect) -> crossterm::cursor::SetCursorStyle {
@@ -4413,6 +4407,89 @@ impl Renderable for ChatComposer {
     }
 
     fn desired_height(&self, width: u16) -> u16 {
+        self.desired_height_with_textarea_right_reserve(width, /*textarea_right_reserve*/ 0)
+    }
+
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.render_with_mask_and_textarea_right_reserve(
+            area, buf, /*mask_char*/ None, /*textarea_right_reserve*/ 0,
+        );
+    }
+}
+
+impl ChatComposer {
+    fn layout_areas_with_textarea_right_reserve(
+        &self,
+        area: Rect,
+        textarea_right_reserve: u16,
+    ) -> [Rect; 4] {
+        let footer_props = self.footer_props();
+        let footer_hint_height = self
+            .custom_footer_height()
+            .unwrap_or_else(|| footer_height(&footer_props));
+        let footer_spacing = Self::footer_spacing(footer_hint_height);
+        let footer_total_height = footer_hint_height + footer_spacing;
+        let popup_constraint = match &self.active_popup {
+            ActivePopup::Command(popup) => {
+                Constraint::Max(popup.calculate_required_height(area.width))
+            }
+            ActivePopup::File(popup) => Constraint::Max(popup.calculate_required_height()),
+            ActivePopup::Skill(popup) => {
+                Constraint::Max(popup.calculate_required_height(area.width))
+            }
+            ActivePopup::None => Constraint::Max(footer_total_height),
+        };
+        let [composer_rect, popup_rect] =
+            Layout::vertical([Constraint::Min(3), popup_constraint]).areas(area);
+        let mut textarea_rect = composer_rect.inset(Insets::tlbr(
+            /*top*/ 1,
+            LIVE_PREFIX_COLS,
+            /*bottom*/ 1,
+            /*right*/ 1u16.saturating_add(textarea_right_reserve),
+        ));
+        let remote_images_height = self
+            .remote_images_lines(textarea_rect.width)
+            .len()
+            .try_into()
+            .unwrap_or(u16::MAX)
+            .min(textarea_rect.height.saturating_sub(1));
+        let remote_images_separator = u16::from(remote_images_height > 0);
+        let consumed = remote_images_height.saturating_add(remote_images_separator);
+        let remote_images_rect = Rect {
+            x: textarea_rect.x,
+            y: textarea_rect.y,
+            width: textarea_rect.width,
+            height: remote_images_height,
+        };
+        textarea_rect.y = textarea_rect.y.saturating_add(consumed);
+        textarea_rect.height = textarea_rect.height.saturating_sub(consumed);
+        [composer_rect, remote_images_rect, textarea_rect, popup_rect]
+    }
+
+    pub(crate) fn cursor_pos_with_textarea_right_reserve(
+        &self,
+        area: Rect,
+        textarea_right_reserve: u16,
+    ) -> Option<(u16, u16)> {
+        if !self.input_enabled || self.selected_remote_image_index.is_some() {
+            return None;
+        }
+
+        if let Some(pos) = self.history_search_cursor_pos(area) {
+            return Some(pos);
+        }
+
+        let [_, _, textarea_rect, _] =
+            self.layout_areas_with_textarea_right_reserve(area, textarea_right_reserve);
+        let state = *self.textarea_state.borrow();
+        self.textarea.cursor_pos_with_state(textarea_rect, state)
+    }
+
+    pub(crate) fn desired_height_with_textarea_right_reserve(
+        &self,
+        width: u16,
+        textarea_right_reserve: u16,
+    ) -> u16 {
         let footer_props = self.footer_props();
         let footer_hint_height = self
             .custom_footer_height()
@@ -4420,7 +4497,8 @@ impl Renderable for ChatComposer {
         let footer_spacing = Self::footer_spacing(footer_hint_height);
         let footer_total_height = footer_hint_height + footer_spacing;
         const COLS_WITH_MARGIN: u16 = LIVE_PREFIX_COLS + 1;
-        let inner_width = width.saturating_sub(COLS_WITH_MARGIN);
+        let inner_width =
+            width.saturating_sub(COLS_WITH_MARGIN.saturating_add(textarea_right_reserve));
         let remote_images_height: u16 = self
             .remote_images_lines(inner_width)
             .len()
@@ -4439,15 +4517,21 @@ impl Renderable for ChatComposer {
             }
     }
 
-    fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.render_with_mask(area, buf, /*mask_char*/ None);
-    }
-}
-
-impl ChatComposer {
     pub(crate) fn render_with_mask(&self, area: Rect, buf: &mut Buffer, mask_char: Option<char>) {
+        self.render_with_mask_and_textarea_right_reserve(
+            area, buf, mask_char, /*textarea_right_reserve*/ 0,
+        );
+    }
+
+    pub(crate) fn render_with_mask_and_textarea_right_reserve(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        mask_char: Option<char>,
+        textarea_right_reserve: u16,
+    ) {
         let [composer_rect, remote_images_rect, textarea_rect, popup_rect] =
-            self.layout_areas(area);
+            self.layout_areas_with_textarea_right_reserve(area, textarea_right_reserve);
         match &self.active_popup {
             ActivePopup::Command(popup) => {
                 popup.render_ref(popup_rect, buf);
@@ -4818,6 +4902,40 @@ impl ChatComposer {
                 }
             }
         }
+    }
+
+    pub(crate) fn render_with_composer_right_reserve(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        composer_right_reserve: u16,
+    ) {
+        self.render_with_mask_and_textarea_right_reserve(area, buf, None, composer_right_reserve);
+    }
+
+    pub(crate) fn desired_height_with_composer_right_reserve(
+        &self,
+        width: u16,
+        composer_right_reserve: u16,
+    ) -> u16 {
+        self.desired_height_with_textarea_right_reserve(width, composer_right_reserve)
+    }
+
+    pub(crate) fn cursor_pos_with_composer_right_reserve(
+        &self,
+        area: Rect,
+        composer_right_reserve: u16,
+    ) -> Option<(u16, u16)> {
+        self.cursor_pos_with_textarea_right_reserve(area, composer_right_reserve)
+    }
+
+    pub(crate) fn cursor_style_with_composer_right_reserve(
+        &self,
+        area: Rect,
+        composer_right_reserve: u16,
+    ) -> crossterm::cursor::SetCursorStyle {
+        let _ = composer_right_reserve;
+        self.cursor_style(area)
     }
 }
 

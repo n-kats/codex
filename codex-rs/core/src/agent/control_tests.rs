@@ -922,12 +922,30 @@ async fn spawn_agent_fork_flushes_parent_rollout_before_loading_history() {
 
 #[tokio::test]
 async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
+    let trace_path = std::path::PathBuf::from(format!(
+        "/workspace/_tmp/spawn_agent_fork_last_n_turns_trace-{}.txt",
+        std::process::id()
+    ));
+    let trace = |message: &str| {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&trace_path)
+            .expect("open trace file");
+        use std::io::Write;
+        writeln!(file, "{message}").expect("write trace");
+    };
+
+    trace("started test");
     let harness = AgentControlHarness::new().await;
+    trace("started harness");
     let (parent_thread_id, parent_thread) = harness.start_thread().await;
+    trace("started parent thread");
 
     parent_thread
         .inject_user_message_without_turn("old parent context".to_string())
         .await;
+    trace("injected old parent context");
     let queued_communication = InterAgentCommunication::new(
         AgentPath::root(),
         AgentPath::try_from("/root/worker").expect("agent path"),
@@ -935,7 +953,9 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
         "queued message".to_string(),
         /*trigger_turn*/ false,
     );
+    trace("built queued communication");
     let queued_turn_context = parent_thread.codex.session.new_default_turn().await;
+    trace("built queued turn context");
     parent_thread
         .codex
         .session
@@ -944,6 +964,7 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
             &[queued_communication.to_response_input_item().into()],
         )
         .await;
+    trace("recorded queued communication");
 
     let triggered_communication = InterAgentCommunication::new(
         AgentPath::root(),
@@ -952,7 +973,9 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
         "triggered context".to_string(),
         /*trigger_turn*/ true,
     );
+    trace("built triggered communication");
     let triggered_turn_context = parent_thread.codex.session.new_default_turn().await;
+    trace("built triggered turn context");
     parent_thread
         .codex
         .session
@@ -961,10 +984,13 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
             &[triggered_communication.to_response_input_item().into()],
         )
         .await;
+    trace("recorded triggered communication");
     parent_thread
         .inject_user_message_without_turn("current parent task".to_string())
         .await;
+    trace("injected current parent task");
     let spawn_turn_context = parent_thread.codex.session.new_default_turn().await;
+    trace("built spawn turn context");
     let parent_spawn_call_id = "spawn-call-last-n".to_string();
     parent_thread
         .codex
@@ -974,6 +1000,7 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
             &[spawn_agent_call(&parent_spawn_call_id)],
         )
         .await;
+    trace("recorded spawn call");
     parent_thread
         .codex
         .session
@@ -981,17 +1008,20 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
             spawn_turn_context.to_turn_context_item(),
         )])
         .await;
+    trace("persisted spawn turn context");
     parent_thread
         .codex
         .session
         .ensure_rollout_materialized()
         .await;
+    trace("ensured parent rollout materialized");
     parent_thread
         .codex
         .session
         .flush_rollout()
         .await
         .expect("parent rollout should flush");
+    trace("flushed parent rollout");
 
     let child_thread_id = harness
         .control
@@ -1014,13 +1044,16 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
         .await
         .expect("forked spawn should keep only the last two turns")
         .thread_id;
+    trace("spawned child thread");
 
     let child_thread = harness
         .manager
         .get_thread(child_thread_id)
         .await
         .expect("child thread should be registered");
+    trace("fetched child thread");
     let history = child_thread.codex.session.clone_history().await;
+    trace("cloned child history");
 
     assert!(
         !history_contains_text(history.raw_items(), "old parent context"),

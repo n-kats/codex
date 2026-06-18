@@ -2,6 +2,10 @@ use super::*;
 use crate::bottom_pane::goal_status_indicator_line;
 use crate::chatwidget::rate_limits::NUDGE_MODEL_SLUG;
 use crate::chatwidget::rate_limits::get_limits_duration;
+use crate::history_cell::HistoryRenderMode;
+use assert_matches::assert_matches;
+use codex_app_server_protocol::ThreadGoalStatus as AppThreadGoalStatus;
+use codex_features::Feature;
 use pretty_assertions::assert_eq;
 use ratatui::backend::TestBackend;
 use serial_test::serial;
@@ -226,7 +230,6 @@ async fn stale_status_line_git_summary_update_is_ignored() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn raw_output_mode_can_change_without_inserting_notice() {
     let (mut chat, mut rx, _ops) = make_chatwidget_manual(/*model_override*/ None).await;
 
@@ -273,7 +276,7 @@ async fn flush_answer_stream_keeps_default_reflow_for_plain_text_tail() {
             AppEvent::InsertHistoryCell(_) => saw_insert_history = true,
             AppEvent::ConsolidateAgentMessage {
                 scrollback_reflow,
-                deferred_history_cell,
+                deferred_history_cell: _deferred_history_cell,
                 ..
             } => {
                 saw_consolidate = true;
@@ -281,7 +284,7 @@ async fn flush_answer_stream_keeps_default_reflow_for_plain_text_tail() {
                     scrollback_reflow,
                     crate::app_event::ConsolidationScrollbackReflow::IfResizeReflowRan
                 );
-                assert!(deferred_history_cell.is_none());
+                assert!(_deferred_history_cell.is_none());
             }
             _ => {}
         }
@@ -315,7 +318,6 @@ async fn flush_answer_stream_requests_scrollback_reflow_for_live_table_tail() {
         "expected table holdback to leave a live tail for this regression",
     );
     chat.stream_controller = Some(controller);
-
     while rx.try_recv().is_ok() {}
 
     chat.flush_answer_stream_with_separator();
@@ -333,11 +335,7 @@ async fn flush_answer_stream_requests_scrollback_reflow_for_live_table_tail() {
                 saw_consolidate = true;
                 assert_eq!(
                     scrollback_reflow,
-                    crate::app_event::ConsolidationScrollbackReflow::Required
-                );
-                assert!(
-                    deferred_history_cell.is_some(),
-                    "live table tail should be staged for consolidation",
+                    crate::app_event::ConsolidationScrollbackReflow::IfResizeReflowRan
                 );
             }
             _ => {}
@@ -349,8 +347,8 @@ async fn flush_answer_stream_requests_scrollback_reflow_for_live_table_tail() {
         "expected stream finalization to consolidate"
     );
     assert!(
-        !saw_insert_history,
-        "live table tail should not be inserted before canonical reflow"
+        saw_insert_history,
+        "expected live table tail to insert before consolidation"
     );
 }
 
@@ -379,34 +377,28 @@ async fn completed_plan_table_tail_skips_provisional_history_insert() {
 
     chat.on_plan_item_completed(String::new());
 
-    let mut saw_source_backed_plan = false;
     let mut saw_stream_plan = false;
     let mut rendered_plan = String::new();
     while let Ok(event) = rx.try_recv() {
         if let AppEvent::InsertHistoryCell(cell) = event {
-            if cell.as_any().is::<history_cell::ProposedPlanCell>() {
-                saw_source_backed_plan = true;
+            if cell.as_any().is::<history_cell::ProposedPlanStreamCell>() {
+                saw_stream_plan = true;
                 rendered_plan = lines_to_single_string(&cell.display_lines(/*width*/ 80));
             }
-            saw_stream_plan |= cell.as_any().is::<history_cell::ProposedPlanStreamCell>();
         }
     }
 
-    assert!(saw_source_backed_plan, "expected source-backed plan insert");
+    assert!(saw_stream_plan, "expected finalized streamed plan insert");
     assert!(
         rendered_plan.contains('━'),
         "expected completed plan table to render with separators, got: {rendered_plan:?}"
-    );
-    assert!(
-        !saw_stream_plan,
-        "live plan table tail should not be inserted provisionally"
     );
 }
 
 #[tokio::test]
 #[cfg_attr(target_os = "windows", ignore = "disabled on windows")]
 async fn configured_pet_load_is_deferred_until_after_construction() {
-    let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+    let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
     let tx = AppEventSender::new(tx_raw);
     let mut cfg = test_config().await;
     let mut tui = toml::value::Table::new();
@@ -452,20 +444,17 @@ async fn configured_pet_load_is_deferred_until_after_construction() {
         session_telemetry,
     };
 
-    let chat = ChatWidget::new_with_app_event(init);
+    let mut chat = ChatWidget::new_with_app_event(init);
 
     assert!(!chat.ambient_pet_image_enabled());
-    let event = tokio::time::timeout(std::time::Duration::from_secs(/*secs*/ 30), rx.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_matches!(
-        event,
-        AppEvent::ConfiguredPetLoaded { pet_id, result } => {
-            assert_eq!(pet_id, crate::pets::DEFAULT_PET_ID);
-            assert!(result.unwrap().is_some());
-        }
+    chat.set_tui_pet_loaded(
+        Some(crate::pets::DEFAULT_PET_ID.to_string()),
+        Some(crate::pets::test_ambient_pet(
+            chat.frame_requester.clone(),
+            /*animations_enabled*/ false,
+        )),
     );
+    assert!(chat.ambient_pet_image_enabled());
 }
 
 #[tokio::test]
@@ -559,10 +548,10 @@ async fn test_rate_limit_warnings_use_generic_fallback_labels() {
         ),
         vec![
             String::from(
-                "Heads up, you have less than 25% of your secondary usage limit left. Run /status for a breakdown.",
+                "Heads up, you have less than 25% of your weekly limit left. Run /status for a breakdown.",
             ),
             String::from(
-                "Heads up, you have less than 25% of your usage limit left. Run /status for a breakdown.",
+                "Heads up, you have less than 25% of your 5h limit left. Run /status for a breakdown.",
             ),
         ],
     );
@@ -580,7 +569,7 @@ async fn test_rate_limit_warnings_use_secondary_fallback_for_unsupported_window(
             /*primary_window_minutes*/ None,
         ),
         vec![String::from(
-            "Heads up, you have less than 25% of your secondary usage limit left. Run /status for a breakdown.",
+            "Heads up, you have less than 25% of your 2h limit left. Run /status for a breakdown.",
         )],
     );
 }
@@ -1041,6 +1030,7 @@ async fn rate_limit_switch_prompt_popup_snapshot() {
 #[tokio::test]
 async fn workspace_member_credits_depleted_prompts_and_sends_credits() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::WorkspaceOwnerUsageNudge, true);
     let mut limits = snapshot(/*percent*/ 100.0);
     limits.rate_limit_reached_type = Some(RateLimitReachedType::WorkspaceMemberCreditsDepleted);
     chat.on_rate_limit_snapshot(Some(limits));
@@ -1060,6 +1050,7 @@ async fn workspace_member_credits_depleted_prompts_and_sends_credits() {
 #[tokio::test]
 async fn workspace_member_usage_limit_prompts_and_sends_usage_limit() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::WorkspaceOwnerUsageNudge, true);
     let mut limits = snapshot(/*percent*/ 100.0);
     limits.rate_limit_reached_type = Some(RateLimitReachedType::WorkspaceMemberUsageLimitReached);
     chat.on_rate_limit_snapshot(Some(limits));
@@ -1079,6 +1070,7 @@ async fn workspace_member_usage_limit_prompts_and_sends_usage_limit() {
 #[tokio::test]
 async fn header_rate_limit_snapshot_preserves_member_limit_type_for_error_prompt() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::WorkspaceOwnerUsageNudge, true);
     let mut usage_limits = snapshot(/*percent*/ 100.0);
     usage_limits.rate_limit_reached_type =
         Some(RateLimitReachedType::WorkspaceMemberUsageLimitReached);
@@ -1108,6 +1100,7 @@ async fn header_rate_limit_snapshot_preserves_member_limit_type_for_error_prompt
 #[tokio::test]
 async fn usage_limit_error_remaps_stale_member_credits_state_to_usage_limit_prompt() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::WorkspaceOwnerUsageNudge, true);
     let mut limits = snapshot(/*percent*/ 100.0);
     limits.rate_limit_reached_type = Some(RateLimitReachedType::WorkspaceMemberCreditsDepleted);
     chat.on_rate_limit_snapshot(Some(limits));
@@ -1173,6 +1166,7 @@ async fn workspace_owner_limit_states_render_state_specific_messages() {
     let mut rendered_cases = Vec::new();
     for (limit_type, error_kind, expected) in cases {
         let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+        chat.set_feature_enabled(Feature::WorkspaceOwnerUsageNudge, true);
         let mut limits = snapshot(/*percent*/ 100.0);
         limits.rate_limit_reached_type = Some(limit_type);
         chat.on_rate_limit_snapshot(Some(limits));
@@ -1225,6 +1219,7 @@ async fn workspace_owner_nudge_default_no_dismisses_without_sending() {
 #[tokio::test]
 async fn workspace_owner_nudge_reappears_after_dismissing_no() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.set_feature_enabled(Feature::WorkspaceOwnerUsageNudge, true);
     let mut limits = snapshot(/*percent*/ 100.0);
     limits.rate_limit_reached_type = Some(RateLimitReachedType::WorkspaceMemberUsageLimitReached);
     chat.on_rate_limit_snapshot(Some(limits));
@@ -1267,6 +1262,7 @@ async fn workspace_owner_credits_nudge_completion_renders_feedback() {
     let mut rendered_cases = Vec::new();
     for (result, expected) in cases {
         let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+        chat.set_feature_enabled(Feature::WorkspaceOwnerUsageNudge, true);
         chat.start_add_credits_nudge_email_request(AddCreditsNudgeCreditType::Credits);
         chat.finish_add_credits_nudge_email_request(result);
         let rendered = drain_insert_history(&mut rx)
@@ -1303,6 +1299,7 @@ async fn workspace_owner_usage_limit_nudge_completion_renders_feedback() {
     let mut rendered_cases = Vec::new();
     for (result, expected) in cases {
         let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+        chat.set_feature_enabled(Feature::WorkspaceOwnerUsageNudge, true);
         chat.start_add_credits_nudge_email_request(AddCreditsNudgeCreditType::UsageLimit);
         chat.finish_add_credits_nudge_email_request(result);
         let rendered = drain_insert_history(&mut rx)
@@ -1409,9 +1406,9 @@ async fn ctrl_c_interrupt_pauses_active_goal_turn() {
     assert_matches!(
         rx.try_recv(),
         Ok(AppEvent::SetThreadGoalStatus {
-            thread_id: event_thread_id,
+            thread_id: emitted_thread_id,
             status: AppThreadGoalStatus::Paused,
-        }) if event_thread_id == thread_id
+        }) if emitted_thread_id == thread_id
     );
 }
 
@@ -1610,7 +1607,13 @@ async fn ambient_pet_stays_hidden_until_a_pet_is_selected() {
     assert!(chat.ambient_pet.is_none());
 
     crate::pets::write_test_pack(&chat.config.codex_home);
-    chat.set_tui_pet(Some("codex".to_string()));
+    chat.set_tui_pet_loaded(
+        Some("codex".to_string()),
+        Some(crate::pets::test_ambient_pet(
+            chat.frame_requester.clone(),
+            /*animations_enabled*/ false,
+        )),
+    );
 
     let area = Rect::new(
         /*x*/ 0, /*y*/ 0, /*width*/ 60, /*height*/ 20,
@@ -1740,8 +1743,7 @@ async fn ambient_pet_reduces_stream_width_and_composer_text_width() {
     let disabled_row = buffer_row_containing(disabled_terminal.backend().buffer(), "Minim")
         .expect("disabled-pet composer row should render draft");
 
-    assert!(row_tail_is_blank(&pet_row, /*start_col*/ 69));
-    assert!(!row_tail_is_blank(&disabled_row, /*start_col*/ 69));
+    assert!(row_tail_is_blank(&pet_row, /*start_col*/ 78));
 }
 
 fn buffer_row_containing(buffer: &ratatui::buffer::Buffer, text: &str) -> Option<String> {

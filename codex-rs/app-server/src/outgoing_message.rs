@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::sync::atomic::Ordering;
@@ -18,6 +19,7 @@ use codex_otel::span_w3c_trace_context;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
+use codex_protocol::user_input::UserInput;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -97,6 +99,7 @@ pub(crate) struct OutgoingMessageSender {
     next_server_request_id: AtomicI64,
     sender: mpsc::Sender<OutgoingEnvelope>,
     request_id_to_callback: Mutex<HashMap<RequestId, PendingCallbackEntry>>,
+    turn_client_user_message_ids: Mutex<HashMap<String, VecDeque<(Vec<UserInput>, String)>>>,
     /// Incoming requests that are still waiting on a final response or error.
     /// We keep them here because this is where responses, errors, and
     /// disconnect cleanup all get handled.
@@ -169,6 +172,27 @@ impl ThreadScopedOutgoingMessageSender {
             .await;
     }
 
+    pub(crate) async fn record_turn_client_user_message_id(
+        &self,
+        turn_id: &str,
+        content: Vec<UserInput>,
+        client_user_message_id: String,
+    ) {
+        self.outgoing
+            .record_turn_client_user_message_id(turn_id, content, client_user_message_id)
+            .await;
+    }
+
+    pub(crate) async fn turn_client_user_message_id(
+        &self,
+        turn_id: &str,
+        content: &[UserInput],
+    ) -> Option<String> {
+        self.outgoing
+            .turn_client_user_message_id(turn_id, content)
+            .await
+    }
+
     pub(crate) async fn send_global_server_notification(&self, notification: ServerNotification) {
         self.outgoing.send_server_notification(notification).await;
     }
@@ -215,6 +239,7 @@ impl OutgoingMessageSender {
             next_server_request_id: AtomicI64::new(0),
             sender,
             request_id_to_callback: Mutex::new(HashMap::new()),
+            turn_client_user_message_ids: Mutex::new(HashMap::new()),
             request_contexts: Mutex::new(HashMap::new()),
             analytics_events_client,
         }
@@ -254,6 +279,37 @@ impl OutgoingMessageSender {
         if let Some(request_context) = request_contexts.get(request_id) {
             request_context.record_turn_id(turn_id);
         }
+    }
+
+    pub(crate) async fn record_turn_client_user_message_id(
+        &self,
+        turn_id: &str,
+        content: Vec<UserInput>,
+        client_user_message_id: String,
+    ) {
+        self.turn_client_user_message_ids
+            .lock()
+            .await
+            .entry(turn_id.to_string())
+            .or_default()
+            .push_back((content, client_user_message_id));
+    }
+
+    pub(crate) async fn turn_client_user_message_id(
+        &self,
+        turn_id: &str,
+        content: &[UserInput],
+    ) -> Option<String> {
+        let mut turn_client_user_message_ids = self.turn_client_user_message_ids.lock().await;
+        let queue = turn_client_user_message_ids.get_mut(turn_id)?;
+        let position = queue
+            .iter()
+            .position(|(queued_content, _)| queued_content == content)?;
+        let (_, client_user_message_id) = queue.remove(position)?;
+        if queue.is_empty() {
+            turn_client_user_message_ids.remove(turn_id);
+        }
+        Some(client_user_message_id)
     }
 
     async fn take_request_context(

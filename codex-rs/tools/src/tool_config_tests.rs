@@ -1,10 +1,12 @@
 use codex_features::Feature;
 use codex_features::Features;
 use codex_protocol::config_types::ModeKind;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ConfigShellToolType;
 use codex_protocol::openai_models::ModelInfo;
 use codex_protocol::openai_models::ModelVisibility;
 use codex_protocol::openai_models::TruncationPolicyConfig;
+use codex_protocol::protocol::SessionSource;
 use pretty_assertions::assert_eq;
 
 use super::*;
@@ -124,6 +126,28 @@ fn request_user_input_modes_follow_default_mode_feature() {
         request_user_input_available_modes(&features),
         vec![ModeKind::Default, ModeKind::Plan]
     );
+}
+
+#[test]
+fn code_mode_only_implies_code_mode() {
+    let model = model_with_shell_type(ConfigShellToolType::ShellCommand);
+    let mut features = Features::with_defaults();
+    features.disable(Feature::CodeMode);
+    features.enable(Feature::CodeModeOnly);
+
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model,
+        available_models: &[],
+        features: &features,
+        image_generation_tool_auth_allowed: false,
+        web_search_mode: None,
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::default(),
+        windows_sandbox_level: Default::default(),
+    });
+
+    assert!(tools_config.code_mode_enabled);
+    assert!(tools_config.code_mode_only_enabled);
 }
 
 #[test]

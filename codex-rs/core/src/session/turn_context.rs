@@ -493,8 +493,76 @@ impl Session {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn build_turn_tools_config(
+        model_info: &ModelInfo,
+        per_turn_config: &Config,
+        session_configuration: &SessionConfiguration,
+        provider_capabilities: codex_model_provider::ProviderCapabilities,
+        user_shell: &shell::Shell,
+        shell_zsh_path: Option<&PathBuf>,
+        main_execve_wrapper_exe: Option<&PathBuf>,
+        session_source: SessionSource,
+        goal_tools_supported: bool,
+        image_generation_tool_auth_allowed: bool,
+        available_models: Vec<ModelPreset>,
+        turn_environment_count: usize,
+    ) -> ToolsConfig {
+        let tools_config = ToolsConfig::new(&ToolsConfigParams {
+            model_info,
+            available_models: &available_models,
+            features: &per_turn_config.features,
+            image_generation_tool_auth_allowed,
+            web_search_mode: Some(per_turn_config.web_search_mode.value()),
+            session_source,
+            permission_profile: &session_configuration.permission_profile(),
+            windows_sandbox_level: session_configuration.windows_sandbox_level,
+        });
+        let tools_config = tools_config
+            .with_namespace_tools_capability(provider_capabilities.namespace_tools)
+            .with_image_generation_capability(provider_capabilities.image_generation)
+            .with_web_search_capability(provider_capabilities.web_search)
+            .with_unified_exec_shell_mode_for_session(
+                crate::tools::tool_user_shell_type(user_shell),
+                shell_zsh_path,
+                main_execve_wrapper_exe,
+            )
+            .with_web_search_config(per_turn_config.web_search_config.clone())
+            .with_allow_login_shell(per_turn_config.permissions.allow_login_shell)
+            .with_environment_mode(ToolEnvironmentMode::from_count(turn_environment_count))
+            .with_spawn_agent_usage_hint(per_turn_config.multi_agent_v2.usage_hint_enabled)
+            .with_spawn_agent_usage_hint_text(
+                per_turn_config.multi_agent_v2.usage_hint_text.clone(),
+            )
+            .with_hide_spawn_agent_metadata(
+                per_turn_config.multi_agent_v2.hide_spawn_agent_metadata,
+            )
+            .with_multi_agent_v2_non_code_mode_only(
+                per_turn_config.multi_agent_v2.non_code_mode_only,
+            )
+            .with_multi_agent_v2_tool_namespace(
+                per_turn_config.multi_agent_v2.tool_namespace.clone(),
+            )
+            .with_goal_tools_allowed(goal_tools_supported)
+            .with_max_concurrent_threads_per_session(
+                per_turn_config
+                    .features
+                    .enabled(Feature::MultiAgentV2)
+                    .then_some(
+                        per_turn_config
+                            .multi_agent_v2
+                            .max_concurrent_threads_per_session,
+                    ),
+            )
+            .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
+                &per_turn_config.agent_roles,
+            ));
+        tools_config
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn make_turn_context(
         conversation_id: ThreadId,
+        forked_from_thread_id: Option<ThreadId>,
         auth_manager: Option<Arc<AuthManager>>,
         session_telemetry: &SessionTelemetry,
         provider: ModelProviderInfo,
@@ -504,7 +572,7 @@ impl Session {
         main_execve_wrapper_exe: Option<&PathBuf>,
         per_turn_config: Config,
         model_info: ModelInfo,
-        models_manager: &SharedModelsManager,
+        available_models: Vec<ModelPreset>,
         network: Option<NetworkProxy>,
         environments: ResolvedTurnEnvironments,
         cwd: AbsolutePathBuf,
@@ -512,6 +580,13 @@ impl Session {
         skills_outcome: Arc<SkillLoadOutcome>,
         goal_tools_supported: bool,
     ) -> TurnContext {
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "make-turn-context-start",
+        );
         let reasoning_effort = session_configuration.collaboration_mode.reasoning_effort();
         let reasoning_summary = session_configuration
             .model_reasoning_summary
@@ -527,56 +602,52 @@ impl Session {
         let provider_for_context = create_model_provider(provider, auth_manager);
         let provider_capabilities = provider_for_context.capabilities();
         let session_telemetry_for_context = session_telemetry;
-        let tools_config = ToolsConfig::new(&ToolsConfigParams {
-            model_info: &model_info,
-            available_models: &models_manager.try_list_models().unwrap_or_default(),
-            features: &per_turn_config.features,
-            image_generation_tool_auth_allowed,
-            web_search_mode: Some(per_turn_config.web_search_mode.value()),
-            session_source: session_source.clone(),
-            permission_profile: &session_configuration.permission_profile(),
-            windows_sandbox_level: session_configuration.windows_sandbox_level,
-        })
-        .with_namespace_tools_capability(provider_capabilities.namespace_tools)
-        .with_image_generation_capability(provider_capabilities.image_generation)
-        .with_web_search_capability(provider_capabilities.web_search)
-        .with_unified_exec_shell_mode_for_session(
-            crate::tools::tool_user_shell_type(user_shell),
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "before-tools-config",
+        );
+        let tools_config = Self::build_turn_tools_config(
+            &model_info,
+            &per_turn_config,
+            &session_configuration,
+            provider_capabilities,
+            user_shell,
             shell_zsh_path,
             main_execve_wrapper_exe,
-        )
-        .with_web_search_config(per_turn_config.web_search_config.clone())
-        .with_allow_login_shell(per_turn_config.permissions.allow_login_shell)
-        .with_environment_mode(ToolEnvironmentMode::from_count(environments.len()))
-        .with_spawn_agent_usage_hint(per_turn_config.multi_agent_v2.usage_hint_enabled)
-        .with_spawn_agent_usage_hint_text(per_turn_config.multi_agent_v2.usage_hint_text.clone())
-        .with_hide_spawn_agent_metadata(per_turn_config.multi_agent_v2.hide_spawn_agent_metadata)
-        .with_multi_agent_v2_non_code_mode_only(per_turn_config.multi_agent_v2.non_code_mode_only)
-        .with_multi_agent_v2_tool_namespace(per_turn_config.multi_agent_v2.tool_namespace.clone())
-        .with_goal_tools_allowed(goal_tools_supported)
-        .with_max_concurrent_threads_per_session(
-            per_turn_config
-                .features
-                .enabled(Feature::MultiAgentV2)
-                .then_some(
-                    per_turn_config
-                        .multi_agent_v2
-                        .max_concurrent_threads_per_session,
-                ),
-        )
-        .with_agent_type_description(crate::agent::role::spawn_tool_spec::build(
-            &per_turn_config.agent_roles,
-        ));
+            session_source.clone(),
+            goal_tools_supported,
+            image_generation_tool_auth_allowed,
+            available_models,
+            environments.len(),
+        );
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "after-tools-config",
+        );
 
         let mut per_turn_config = per_turn_config;
         per_turn_config.service_tier = per_turn_config
             .service_tier
             .filter(|service_tier| model_info.supports_service_tier(service_tier.request_value()));
         let per_turn_config = Arc::new(per_turn_config);
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "before-turn-metadata-state",
+        );
         let turn_metadata_state = Arc::new(TurnMetadataState::new(
             conversation_id.to_string(),
-            session_source.to_string(),
-            /*forked_from_thread_id*/ None,
+            conversation_id.to_string(),
+            forked_from_thread_id,
+            &session_source,
             session_configuration.thread_source,
             sub_id.clone(),
             cwd.clone(),
@@ -584,6 +655,13 @@ impl Session {
             session_configuration.windows_sandbox_level,
             network.is_some(),
         ));
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "after-turn-metadata-state",
+        );
         let (current_date, timezone) = local_time_context();
         let extension_data = Arc::new(codex_extension_api::ExtensionData::new(sub_id.clone()));
         TurnContext {
@@ -758,17 +836,45 @@ impl Session {
         final_output_json_schema: Option<Option<Value>>,
         turn_environments: ResolvedTurnEnvironments,
     ) -> Arc<TurnContext> {
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "entered",
+        );
         let primary_turn_environment = turn_environments.first();
         let cwd = primary_turn_environment
             .map(|turn_environment| turn_environment.cwd.clone())
             .unwrap_or_else(|| session_configuration.cwd.clone());
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "cwd-selected",
+        );
         let per_turn_config = Self::build_per_turn_config(&session_configuration, cwd.clone());
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "per-turn-config-built",
+        );
         {
             let mcp_connection_manager = self.services.mcp_connection_manager.read().await;
             mcp_connection_manager.set_approval_policy(&session_configuration.approval_policy);
             mcp_connection_manager
                 .set_permission_profile(session_configuration.permission_profile());
         }
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "mcp-settings-updated",
+        );
 
         let model_info = self
             .services
@@ -778,11 +884,25 @@ impl Session {
                 &per_turn_config.to_models_manager_config(),
             )
             .await;
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "model-info-loaded",
+        );
         let plugin_outcome = self
             .services
             .plugins_manager
             .plugins_for_config(&per_turn_config.plugins_config_input())
             .await;
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "plugins-loaded",
+        );
         let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
         let skills_input = skills_load_input_from_config(&per_turn_config, effective_skill_roots);
         let fs = turn_environments
@@ -795,9 +915,25 @@ impl Session {
                 .skills_for_config(&skills_input, fs)
                 .await,
         );
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "skills-loaded",
+        );
         let goal_tools_supported = !per_turn_config.ephemeral && self.state_db().is_some();
+        let models_manager_for_context = Arc::clone(&self.services.models_manager);
+        let available_models = tokio::task::spawn_blocking(move || {
+            models_manager_for_context
+                .try_list_models()
+                .unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default();
         let mut turn_context: TurnContext = Self::make_turn_context(
             self.conversation_id,
+            self.forked_from_id,
             Some(Arc::clone(&self.services.auth_manager)),
             &self.services.session_telemetry,
             session_configuration.provider.clone(),
@@ -807,7 +943,7 @@ impl Session {
             self.services.main_execve_wrapper_exe.as_ref(),
             per_turn_config,
             model_info,
-            &self.services.models_manager,
+            available_models,
             self.services
                 .network_proxy
                 .load_full()
@@ -824,6 +960,13 @@ impl Session {
             skills_outcome,
             goal_tools_supported,
         );
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "turn-context-made",
+        );
         turn_context.realtime_active = self.conversation.running_state().await.is_some();
 
         if let Some(final_schema) = final_output_json_schema {
@@ -831,6 +974,13 @@ impl Session {
         }
         let turn_context = Arc::new(turn_context);
         turn_context.turn_metadata_state.spawn_git_enrichment_task();
+        let _ = std::fs::write(
+            format!(
+                "/workspace/_tmp/turn_context_new-{}.log",
+                std::process::id()
+            ),
+            "turn-context-finalized",
+        );
         turn_context
     }
 
@@ -850,8 +1000,8 @@ impl Session {
     }
 
     pub(crate) async fn new_default_turn(&self) -> Arc<TurnContext> {
-        self.new_default_turn_with_sub_id(self.next_internal_sub_id())
-            .await
+        let turn = Box::pin(self.new_default_turn_with_sub_id(self.next_internal_sub_id())).await;
+        turn
     }
 
     pub(crate) async fn new_default_turn_with_sub_id(&self, sub_id: String) -> Arc<TurnContext> {
@@ -867,13 +1017,12 @@ impl Session {
                     ResolvedTurnEnvironments::default()
                 }
             };
-
-        self.new_turn_from_configuration(
+        Box::pin(self.new_turn_from_configuration(
             sub_id,
             session_configuration,
             /*final_output_json_schema*/ None,
             turn_environments,
-        )
+        ))
         .await
     }
 }

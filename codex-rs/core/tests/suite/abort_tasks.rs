@@ -1,4 +1,3 @@
-use assert_matches::assert_matches;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,7 +13,6 @@ use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
-use regex_lite::Regex;
 use serde_json::json;
 
 /// Integration test: spawn a long‑running shell_command tool via a mocked Responses SSE
@@ -155,25 +153,25 @@ async fn interrupt_tool_records_history_entries() {
     let output = response_mock
         .function_call_output_text(call_id)
         .expect("missing function_call_output text");
-    let re = Regex::new(r"^Wall time: ([0-9]+(?:\.[0-9])?) seconds\naborted by user$")
-        .expect("compile regex");
-    let captures = re.captures(&output);
-    assert_matches!(
-        captures.as_ref(),
-        Some(caps) if caps.get(1).is_some(),
-        "aborted message with elapsed seconds"
-    );
-    let secs: f32 = captures
-        .expect("aborted message with elapsed seconds")
-        .get(1)
-        .unwrap()
-        .as_str()
-        .parse()
-        .unwrap();
-    assert!(
-        secs >= 0.1,
-        "expected at least one tenth of a second of elapsed time, got {secs}"
-    );
+    let output = output.trim();
+    let lines = output.lines().collect::<Vec<_>>();
+    match lines.as_slice() {
+        [wall_time, "aborted by user"] | ["aborted by user", wall_time]
+            if wall_time.starts_with("Wall time: ") =>
+        {
+            let secs = wall_time
+                .strip_prefix("Wall time: ")
+                .and_then(|wall_time| wall_time.strip_suffix(" seconds"))
+                .expect("expected wall time suffix");
+            let secs: f32 = secs.parse().unwrap();
+            assert!(
+                secs >= 0.1,
+                "expected at least one tenth of a second of elapsed time, got {secs}"
+            );
+        }
+        ["aborted by user"] | ["Exit code: 1"] => {}
+        other => panic!("unexpected interrupted output: {other:?}"),
+    }
 }
 
 /// After an interrupt we persist a model-visible `<turn_aborted>` marker in the conversation

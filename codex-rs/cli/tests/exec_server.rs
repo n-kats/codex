@@ -11,14 +11,8 @@ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
 }
 
 #[test]
-fn strict_config_rejects_unknown_config_fields_for_exec_server() -> Result<()> {
+fn exec_server_does_not_support_strict_config() -> Result<()> {
     let codex_home = TempDir::new()?;
-    std::fs::write(
-        codex_home.path().join("config.toml"),
-        r#"
-foo = "bar"
-"#,
-    )?;
 
     let mut cmd = codex_command(codex_home.path())?;
     cmd.args([
@@ -29,7 +23,7 @@ foo = "bar"
     ])
     .assert()
     .failure()
-    .stderr(contains("unknown configuration field"));
+    .stderr(contains("unexpected argument '--strict-config' found"));
 
     Ok(())
 }

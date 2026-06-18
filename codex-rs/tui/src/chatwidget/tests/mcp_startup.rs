@@ -202,11 +202,9 @@ async fn mcp_startup_complete_preserves_review_status() {
     handle_turn_started(&mut chat, "turn-1");
 
     notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting);
-    assert!(
-        chat.status_state
-            .current_status
-            .header
-            .starts_with("Booting MCP server")
+    assert_eq!(
+        chat.status_state.current_status.header,
+        "Booting MCP server: alpha"
     );
 
     chat.on_guardian_assessment(GuardianAssessmentEvent {

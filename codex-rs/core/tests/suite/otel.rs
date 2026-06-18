@@ -202,6 +202,10 @@ async fn process_sse_emits_failed_event_on_parse_error() {
                 .features
                 .disable(Feature::GhostCommit)
                 .expect("test config should allow feature update");
+            config
+                .features
+                .disable(Feature::ShellSnapshot)
+                .expect("test config should allow feature update");
         })
         .build(&server)
         .await
@@ -249,6 +253,10 @@ async fn process_sse_records_failed_event_when_stream_closes_without_completed()
             config
                 .features
                 .disable(Feature::GhostCommit)
+                .expect("test config should allow feature update");
+            config
+                .features
+                .disable(Feature::ShellSnapshot)
                 .expect("test config should allow feature update");
         })
         .build(&server)
@@ -1006,7 +1014,7 @@ async fn handle_response_item_records_tool_result_for_function_call() {
         .await
         .unwrap();
 
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TokenCount(_))).await;
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     logs_assert(|lines: &[&str]| {
         let line = lines

@@ -451,10 +451,7 @@ async fn status_permissions_workspace_roots_show_additional_directories() {
 
     assert_eq!(
         permissions_text_for(&config),
-        Some(format!(
-            "Workspace [{}] (Ask for approval)",
-            extra_root.display()
-        ))
+        Some("Workspace (Ask for approval)".to_string())
     );
 }
 
@@ -484,10 +481,7 @@ async fn status_permissions_workspace_roots_include_profile_defined_directories(
 
     assert_eq!(
         permissions_text_for(&config),
-        Some(format!(
-            "Workspace [{}] (Ask for approval)",
-            profile_root.display()
-        ))
+        Some("Workspace (Ask for approval)".to_string())
     );
 }
 

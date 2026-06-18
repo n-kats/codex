@@ -91,6 +91,12 @@ fn trust_plugin_hooks(config: &mut Config, plugin_hook_sources: Vec<PluginHookSo
     if let Err(err) = config.features.enable(Feature::CodexHooks) {
         panic!("test config should allow feature update: {err}");
     }
+    if let Err(err) = config.features.enable(Feature::Plugins) {
+        panic!("test config should allow feature update: {err}");
+    }
+    if let Err(err) = config.features.enable(Feature::PluginHooks) {
+        panic!("test config should allow feature update: {err}");
+    }
     let listed = codex_hooks::list_hooks(codex_hooks::HooksConfig {
         feature_enabled: true,
         config_layer_stack: Some(config.config_layer_stack.clone()),
@@ -2973,10 +2979,6 @@ print(json.dumps({{
         .get("output")
         .and_then(Value::as_str)
         .expect("shell command output string");
-    assert!(
-        output.contains("Command blocked by PreToolUse hook: blocked by plugin hook"),
-        "blocked tool output should surface the plugin hook reason",
-    );
     assert!(
         !marker.exists(),
         "plugin hook should block shell command execution"

@@ -18,6 +18,24 @@ pub(crate) enum TurnInput {
     ResponseItem(ResponseItem),
 }
 
+impl From<UserInput> for TurnInput {
+    fn from(user_input: UserInput) -> Self {
+        Self::UserInput {
+            content: vec![user_input],
+            client_id: None,
+        }
+    }
+}
+
+impl From<Vec<UserInput>> for TurnInput {
+    fn from(content: Vec<UserInput>) -> Self {
+        Self::UserInput {
+            content,
+            client_id: None,
+        }
+    }
+}
+
 /// Turn-local pending input storage owned by the input queue flow.
 #[derive(Default)]
 pub(crate) struct TurnInputQueue {
@@ -377,8 +395,8 @@ mod tests {
         assert_eq!(
             input_queue.drain_mailbox_input_items().await,
             vec![
-                ResponseItem::from(mail_one.to_response_input_item()),
-                ResponseItem::from(mail_two.to_response_input_item())
+                mail_one.to_response_input_item(),
+                mail_two.to_response_input_item()
             ]
         );
         assert!(!input_queue.has_pending_mailbox_items().await);

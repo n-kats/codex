@@ -322,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn collab_command_visible_when_collaboration_modes_enabled() {
+    fn collab_command_alias_resolves_to_plan_when_collaboration_modes_enabled() {
         let mut popup = CommandPopup::new(
             Vec::new(),
             CommandPopupFlags {
@@ -338,11 +338,11 @@ mod tests {
                 side_conversation_active: false,
             },
         );
-        popup.on_composer_text_change("/collab".to_string());
+        popup.on_composer_text_change("/plan".to_string());
 
         match popup.selected_item() {
-            Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "collab"),
-            other => panic!("expected collab to be selected for exact match, got {other:?}"),
+            Some(CommandItem::Builtin(cmd)) => assert_eq!(cmd.command(), "plan"),
+            other => panic!("expected plan to be selected for exact match, got {other:?}"),
         }
     }
 

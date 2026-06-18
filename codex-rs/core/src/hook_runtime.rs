@@ -536,16 +536,14 @@ pub(crate) async fn record_pending_input(
     additional_contexts: Vec<String>,
 ) {
     match pending_input {
-        TurnInput::UserInput {
-            content,
-            client_id: _client_id,
-        } => {
+        TurnInput::UserInput { content, client_id } => {
             let response_item = codex_protocol::models::ResponseItem::from(
                 codex_protocol::models::ResponseInputItem::from(content.clone()),
             );
             sess.record_user_prompt_and_emit_turn_item(
                 turn_context.as_ref(),
                 content.as_slice(),
+                client_id,
                 response_item,
             )
             .await;

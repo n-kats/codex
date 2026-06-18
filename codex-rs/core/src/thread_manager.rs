@@ -74,6 +74,22 @@ use tokio::sync::RwLock;
 use tokio::sync::broadcast;
 use tracing::warn;
 
+#[cfg(test)]
+fn trace_spawn_fork_last_n(message: &str) {
+    use std::io::Write;
+    let path = std::path::PathBuf::from(format!(
+        "/workspace/_tmp/spawn_agent_fork_last_n_turns_trace-{}.txt",
+        std::process::id()
+    ));
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(file, "{message}");
+    }
+}
+
 const THREAD_CREATED_CHANNEL_CAPACITY: usize = 1024;
 /// Test-only override for enabling thread-manager behaviors used by integration
 /// tests.
@@ -1243,6 +1259,8 @@ impl ThreadManagerState {
             .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
             .await;
         let tracked_session_source = session_source.clone();
+        #[cfg(test)]
+        trace_spawn_fork_last_n("spawn_thread_with_source: before Codex::spawn");
         let CodexSpawnOk {
             codex, thread_id, ..
         } = Codex::spawn(CodexSpawnArgs {
@@ -1273,9 +1291,13 @@ impl ThreadManagerState {
             attestation_provider: self.attestation_provider.clone(),
         })
         .await?;
+        #[cfg(test)]
+        trace_spawn_fork_last_n("spawn_thread_with_source: after Codex::spawn");
         let new_thread = self
             .finalize_thread_spawn(codex, thread_id, tracked_session_source)
             .await?;
+        #[cfg(test)]
+        trace_spawn_fork_last_n("spawn_thread_with_source: after finalize_thread_spawn");
         if is_resumed_thread {
             new_thread.thread.emit_thread_resume_lifecycle().await;
             if let Err(err) = new_thread.thread.apply_goal_resume_runtime_effects().await {

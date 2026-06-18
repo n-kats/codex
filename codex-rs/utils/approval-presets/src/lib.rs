@@ -71,7 +71,9 @@ pub fn builtin_permission_profile_for_active_permission_profile(
     match active_permission_profile.id.as_str() {
         BUILT_IN_PERMISSION_PROFILE_READ_ONLY => Some(PermissionProfile::read_only()),
         BUILT_IN_PERMISSION_PROFILE_WORKSPACE => Some(PermissionProfile::workspace_write()),
-        BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS => Some(PermissionProfile::Disabled),
+        BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS | ":danger-no-sandbox" => {
+            Some(PermissionProfile::Disabled)
+        }
         _ => None,
     }
 }

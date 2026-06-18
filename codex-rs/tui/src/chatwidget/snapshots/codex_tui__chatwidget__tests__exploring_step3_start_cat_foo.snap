@@ -1,5 +1,6 @@
 ---
-source: tui/src/chatwidget/tests.rs
+source: tui/src/chatwidget/tests/exec_flow.rs
+assertion_line: 895
 expression: active_blob(&chat)
 ---
 • Exploring

@@ -23,6 +23,9 @@ submit = ["ctrl-enter", "ctrl-j"]
 [tui.keymap.editor]
 insert_newline = "enter"
 
+[tui.model_availability_nux]
+"gpt-5.5" = 2
+
 [shell_environment_policy]
 # Required when enabling `[custom.exec]` in this fork.
 inherit = "core"

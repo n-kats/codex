@@ -64,6 +64,7 @@ pub(crate) fn is_builtin_permission_profile_name(profile_name: &str) -> bool {
         BUILT_IN_READ_ONLY_PROFILE
             | BUILT_IN_WORKSPACE_PROFILE
             | BUILT_IN_DANGER_FULL_ACCESS_PROFILE
+            | ":danger-no-sandbox"
     )
 }
 
@@ -91,7 +92,9 @@ pub(crate) fn builtin_permission_profile(
             ),
             None => PermissionProfile::workspace_write(),
         }),
-        BUILT_IN_DANGER_FULL_ACCESS_PROFILE => Some(PermissionProfile::Disabled),
+        BUILT_IN_DANGER_FULL_ACCESS_PROFILE | ":danger-no-sandbox" => {
+            Some(PermissionProfile::Disabled)
+        }
         _ => None,
     }
 }
@@ -691,6 +694,7 @@ fn parse_special_path(path: &str) -> Option<FileSystemSpecialPath> {
     match path {
         ":root" => Some(FileSystemSpecialPath::Root),
         ":minimal" => Some(FileSystemSpecialPath::Minimal),
+        ":project_roots" => Some(FileSystemSpecialPath::project_roots(/*subpath*/ None)),
         ":workspace_roots" => Some(FileSystemSpecialPath::project_roots(/*subpath*/ None)),
         ":tmpdir" => Some(FileSystemSpecialPath::Tmpdir),
         _ if path.starts_with(':') => {

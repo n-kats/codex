@@ -44,6 +44,22 @@ use tracing::warn;
 const AGENT_NAMES: &str = include_str!("agent_names.txt");
 const ROOT_LAST_TASK_MESSAGE: &str = "Main thread";
 
+#[cfg(test)]
+fn trace_spawn_fork_last_n(message: &str) {
+    use std::io::Write;
+    let path = std::path::PathBuf::from(format!(
+        "/workspace/_tmp/spawn_agent_fork_last_n_turns_trace-{}.txt",
+        std::process::id()
+    ));
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(file, "{message}");
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SpawnAgentForkMode {
     FullHistory,
@@ -388,6 +404,8 @@ impl AgentControl {
         };
 
         let parent_thread_id = *parent_thread_id;
+        #[cfg(test)]
+        trace_spawn_fork_last_n("spawn_forked_thread: start");
         let parent_thread = state.get_thread(parent_thread_id).await.ok();
         if let Some(parent_thread) = parent_thread.as_ref() {
             // `record_conversation_items` only queues persistence writes asynchronously.
@@ -395,6 +413,8 @@ impl AgentControl {
             parent_thread.ensure_rollout_materialized().await;
             parent_thread.flush_rollout().await?;
         }
+        #[cfg(test)]
+        trace_spawn_fork_last_n("spawn_forked_thread: parent flushed");
 
         let parent_history = state
             .read_stored_thread(ReadThreadParams {
@@ -409,12 +429,16 @@ impl AgentControl {
                     "parent thread history unavailable for fork: {parent_thread_id}"
                 ))
             })?;
+        #[cfg(test)]
+        trace_spawn_fork_last_n("spawn_forked_thread: parent history loaded");
 
         let mut forked_rollout_items = parent_history.items;
         if let SpawnAgentForkMode::LastNTurns(last_n_turns) = fork_mode {
             forked_rollout_items =
                 truncate_rollout_to_last_n_fork_turns(&forked_rollout_items, *last_n_turns);
         }
+        #[cfg(test)]
+        trace_spawn_fork_last_n("spawn_forked_thread: truncated");
         let multi_agent_v2_usage_hint_texts_to_filter: Vec<String> =
             if let Some(parent_thread) = parent_thread.as_ref() {
                 if parent_thread.enabled(Feature::MultiAgentV2) {
@@ -446,6 +470,8 @@ impl AgentControl {
             } else {
                 Vec::new()
             };
+        #[cfg(test)]
+        trace_spawn_fork_last_n("spawn_forked_thread: built hint filters");
         let preserve_reference_context_item = matches!(fork_mode, SpawnAgentForkMode::FullHistory);
         forked_rollout_items.retain(|item| {
             keep_forked_rollout_item(item, preserve_reference_context_item)
@@ -458,6 +484,8 @@ impl AgentControl {
                         )
                 )
         });
+        #[cfg(test)]
+        trace_spawn_fork_last_n("spawn_forked_thread: filtered");
         for item in &mut forked_rollout_items {
             if let RolloutItem::Compacted(compacted) = item
                 && let Some(replacement_history) = compacted.replacement_history.as_mut()
@@ -470,6 +498,8 @@ impl AgentControl {
                 });
             }
         }
+        #[cfg(test)]
+        trace_spawn_fork_last_n("spawn_forked_thread: normalized compacted items");
         if preserve_reference_context_item
             && config.features.enabled(Feature::MultiAgentV2)
             && let Some(subagent_usage_hint_text) =
@@ -481,6 +511,8 @@ impl AgentControl {
         {
             forked_rollout_items.push(RolloutItem::ResponseItem(subagent_usage_hint_message));
         }
+        #[cfg(test)]
+        trace_spawn_fork_last_n("spawn_forked_thread: before fork_thread_with_source");
 
         state
             .fork_thread_with_source(

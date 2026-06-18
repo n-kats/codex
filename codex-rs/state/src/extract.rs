@@ -386,6 +386,7 @@ mod tests {
             &mut metadata,
             &RolloutItem::TurnContext(TurnContextItem {
                 turn_id: Some("turn-1".to_string()),
+                trace_id: None,
                 cwd: PathBuf::from("/workspace"),
                 workspace_roots: None,
                 current_date: None,
@@ -401,6 +402,10 @@ mod tests {
                 realtime_active: None,
                 effort: None,
                 summary: codex_protocol::config_types::ReasoningSummary::Auto,
+                user_instructions: None,
+                developer_instructions: None,
+                final_output_json_schema: None,
+                truncation_policy: None,
             }),
             "test-provider",
         );

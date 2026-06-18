@@ -106,18 +106,8 @@ pub trait ModelsManager: fmt::Debug + Send + Sync {
     fn auth_manager(&self) -> Option<&AuthManager>;
 
     /// Build picker-ready presets from the active catalog snapshot.
-    fn build_available_models(&self, mut remote_models: Vec<ModelInfo>) -> Vec<ModelPreset> {
-        remote_models.sort_by_key(|model| model.priority);
-
-        let mut presets: Vec<ModelPreset> = remote_models.into_iter().map(Into::into).collect();
-        let uses_codex_backend = self
-            .auth_manager()
-            .is_some_and(AuthManager::current_auth_uses_codex_backend);
-        presets = ModelPreset::filter_by_auth(presets, uses_codex_backend);
-
-        ModelPreset::mark_default_by_picker_visibility(&mut presets);
-
-        presets
+    fn build_available_models(&self, remote_models: Vec<ModelInfo>) -> Vec<ModelPreset> {
+        build_available_models(self.auth_manager(), remote_models)
     }
 
     /// List collaboration mode presets.
@@ -130,7 +120,8 @@ pub trait ModelsManager: fmt::Debug + Send + Sync {
     /// Returns an error if the internal lock cannot be acquired.
     fn try_list_models(&self) -> Result<Vec<ModelPreset>, TryLockError> {
         let remote_models = self.try_get_remote_models()?;
-        Ok(self.build_available_models(remote_models))
+        let presets = self.build_available_models(remote_models);
+        Ok(presets)
     }
 
     // todo(aibrahim): should be visible to core only and sent on session_configured event
@@ -176,6 +167,22 @@ pub trait ModelsManager: fmt::Debug + Send + Sync {
 
 /// Shared model manager handle used across runtime services.
 pub type SharedModelsManager = Arc<dyn ModelsManager>;
+
+#[inline(never)]
+fn build_available_models(
+    auth_manager: Option<&AuthManager>,
+    mut remote_models: Vec<ModelInfo>,
+) -> Vec<ModelPreset> {
+    remote_models.sort_by_key(|model| model.priority);
+
+    let mut presets: Vec<ModelPreset> = remote_models.into_iter().map(Into::into).collect();
+    let uses_codex_backend = auth_manager.is_some_and(AuthManager::current_auth_uses_codex_backend);
+    presets = ModelPreset::filter_by_auth(presets, uses_codex_backend);
+
+    ModelPreset::mark_default_by_picker_visibility(&mut presets);
+
+    presets
+}
 
 /// OpenAI-compatible model manager backed by bundled models, cache, and `/models`.
 #[derive(Debug)]

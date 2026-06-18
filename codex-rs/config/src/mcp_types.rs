@@ -191,6 +191,28 @@ pub struct McpServerConfig {
     pub tools: HashMap<String, McpServerToolConfig>,
 }
 
+impl Default for McpServerConfig {
+    fn default() -> Self {
+        Self {
+            transport: McpServerTransportConfig::default(),
+            environment_id: DEFAULT_MCP_SERVER_ENVIRONMENT_ID.to_string(),
+            enabled: default_enabled(),
+            required: false,
+            supports_parallel_tool_calls: false,
+            disabled_reason: None,
+            startup_timeout_sec: None,
+            tool_timeout_sec: None,
+            default_tools_approval_mode: None,
+            enabled_tools: None,
+            disabled_tools: None,
+            scopes: None,
+            oauth: None,
+            oauth_resource: None,
+            tools: HashMap::new(),
+        }
+    }
+}
+
 impl McpServerConfig {
     pub fn is_local_environment(&self) -> bool {
         self.environment_id == DEFAULT_MCP_SERVER_ENVIRONMENT_ID
@@ -449,6 +471,18 @@ pub enum McpServerTransportConfig {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         env_http_headers: Option<HashMap<String, String>>,
     },
+}
+
+impl Default for McpServerTransportConfig {
+    fn default() -> Self {
+        Self::Stdio {
+            command: String::new(),
+            args: Vec::new(),
+            env: None,
+            env_vars: Vec::new(),
+            cwd: None,
+        }
+    }
 }
 
 mod option_duration_secs {

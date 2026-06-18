@@ -165,13 +165,15 @@ impl TurnRequestProcessor {
         params: ThreadSettingsUpdateParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
         let (_thread_id, thread) = self.load_thread(&params.thread_id).await?;
+        let current_snapshot = thread.config_snapshot().await;
         if params.sandbox_policy.is_some() && params.permissions.is_some() {
             return Err(invalid_request(
                 "`permissions` cannot be combined with `sandboxPolicy`",
             ));
         }
 
-        let thread_settings = codex_protocol::protocol::ThreadSettingsOverrides {
+        let model = params.model.or(Some(current_snapshot.model));
+        let thread_settings = CodexThreadSettingsOverrides {
             cwd: params.cwd,
             workspace_roots: None,
             profile_workspace_roots: None,
@@ -181,7 +183,7 @@ impl TurnRequestProcessor {
             permission_profile: None,
             active_permission_profile: None,
             windows_sandbox_level: None,
-            model: params.model,
+            model,
             effort: params.effort.map(Some),
             summary: params.summary,
             service_tier: params.service_tier,
@@ -190,18 +192,7 @@ impl TurnRequestProcessor {
         };
 
         thread
-            .submit_user_input_with_client_user_message_id(
-                Op::UserInput {
-                    items: Vec::new(),
-                    additional_context: Default::default(),
-                    environments: None,
-                    final_output_json_schema: None,
-                    responsesapi_client_metadata: None,
-                    thread_settings,
-                },
-                None,
-                None,
-            )
+            .apply_thread_settings_overrides(thread_settings)
             .await
             .map_err(|err| internal_error(format!("failed to update thread settings: {err}")))?;
 
@@ -349,10 +340,16 @@ impl TurnRequestProcessor {
         request_id: &ConnectionRequestId,
         thread: &CodexThread,
         op: Op,
+        client_user_message_id: Option<String>,
     ) -> CodexResult<String> {
-        thread
-            .submit_with_trace(op, self.request_trace_context(request_id).await)
-            .await
+        let trace = self.request_trace_context(request_id).await;
+        if client_user_message_id.is_some() {
+            thread
+                .submit_user_input_with_client_user_message_id(op, trace, client_user_message_id)
+                .await
+        } else {
+            thread.submit_with_trace(op, trace).await
+        }
     }
 
     fn input_too_large_error(actual_chars: usize) -> JSONRPCErrorError {
@@ -396,6 +393,7 @@ impl TurnRequestProcessor {
                 .inspect_err(|error| {
                     self.track_error_response(&request_id, error, /*error_type*/ None);
                 })?;
+        let client_user_message_id = params.client_user_message_id.clone();
         Self::set_app_server_client_info(
             thread.as_ref(),
             app_server_client_name,
@@ -467,59 +465,58 @@ impl TurnRequestProcessor {
             .approvals_reviewer
             .map(codex_app_server_protocol::ApprovalsReviewer::to_core);
         let sandbox_policy = params.sandbox_policy.map(|p| p.to_core());
-        let (permission_profile, active_permission_profile, profile_workspace_roots) =
-            if let Some(permissions) = params.permissions {
-                let Some(snapshot) = snapshot.as_ref() else {
-                    return Err(internal_error(
-                        "turn/start permission selection missing thread snapshot",
-                    ));
-                };
-                let mut overrides = ConfigOverrides {
-                    cwd: cwd.clone(),
-                    additional_writable_roots: runtime_workspace_roots_request
-                        .clone()
-                        .unwrap_or_else(|| {
-                            snapshot
-                                .workspace_roots
-                                .iter()
-                                .map(AbsolutePathBuf::to_path_buf)
-                                .collect()
-                        }),
-                    codex_linux_sandbox_exe: self.arg0_paths.codex_linux_sandbox_exe.clone(),
-                    main_execve_wrapper_exe: self.arg0_paths.main_execve_wrapper_exe.clone(),
-                    ..Default::default()
-                };
-                apply_permission_profile_selection_to_config_overrides(
-                    &mut overrides,
-                    Some(permissions),
-                );
-                let config = self
-                    .config_manager
-                    .load_for_cwd(
-                        /*request_overrides*/ None,
-                        overrides,
-                        Some(snapshot.cwd.to_path_buf()),
-                    )
-                    .await
-                    .map_err(|err| config_load_error(&err))?;
-                // Startup config is allowed to fall back when requirements
-                // disallow a configured profile. An explicit turn request
-                // is different: reject it before accepting user input.
-                if let Some(warning) = config.startup_warnings.iter().find(|warning| {
-                    warning.contains("Configured value for `permission_profile` is disallowed")
-                }) {
-                    return Err(invalid_request(format!(
-                        "invalid turn context override: {warning}"
-                    )));
-                }
-                (
-                    Some(config.permissions.permission_profile().clone()),
-                    config.permissions.active_permission_profile(),
-                    Some(Vec::new()),
-                )
-            } else {
-                (None, None, None)
+        let (permission_profile, active_permission_profile, profile_workspace_roots) = if let Some(
+            permissions,
+        ) =
+            params.permissions
+        {
+            let Some(snapshot) = snapshot.as_ref() else {
+                return Err(internal_error(
+                    "turn/start permission selection missing thread snapshot",
+                ));
             };
+            let mut overrides = ConfigOverrides {
+                cwd: cwd.clone(),
+                // Keep the selected permission profile symbolic so the
+                // turn-scoped runtime workspace roots can be rebound on
+                // subsequent turns instead of being baked into the
+                // profile as concrete paths.
+                additional_writable_roots: Vec::new(),
+                codex_linux_sandbox_exe: self.arg0_paths.codex_linux_sandbox_exe.clone(),
+                main_execve_wrapper_exe: self.arg0_paths.main_execve_wrapper_exe.clone(),
+                ..Default::default()
+            };
+            apply_permission_profile_selection_to_config_overrides(
+                &mut overrides,
+                Some(permissions),
+            );
+            let config = self
+                .config_manager
+                .load_for_cwd(
+                    /*request_overrides*/ None,
+                    overrides,
+                    Some(snapshot.cwd.to_path_buf()),
+                )
+                .await
+                .map_err(|err| config_load_error(&err))?;
+            // Startup config is allowed to fall back when requirements
+            // disallow a configured profile. An explicit turn request
+            // is different: reject it before accepting user input.
+            if let Some(warning) = config.startup_warnings.iter().find(|warning| {
+                warning.contains("Configured value for `permission_profile` is disallowed")
+            }) {
+                return Err(invalid_request(format!(
+                    "invalid turn context override: `approval_policy = \"never\"` cannot be used with the requested permissions selection; requirements do not allow `sandbox_mode = \"danger-full-access\"`. Details: {warning}"
+                )));
+            }
+            (
+                Some(config.permissions.permission_profile().clone()),
+                config.permissions.active_permission_profile(),
+                Some(Vec::new()),
+            )
+        } else {
+            (None, None, None)
+        };
         let model = params.model;
         let effort = params.effort.map(Some);
         let summary = params.summary;
@@ -552,6 +549,8 @@ impl TurnRequestProcessor {
                 .map_err(|err| invalid_request(format!("invalid turn context override: {err}")))?;
         }
 
+        let client_user_message_content = mapped_items.clone();
+
         // Start the turn by submitting the user input. Return its submission id as turn_id.
         let turn_op = if has_any_overrides {
             Op::UserInputWithTurnContext {
@@ -576,9 +575,23 @@ impl TurnRequestProcessor {
                 personality,
             }
         } else {
+            let additional_context = params
+                .additional_context
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(key, entry)| {
+                    (
+                        key,
+                        serde_json::json!({
+                            "value": entry.value,
+                            "kind": entry.kind,
+                        }),
+                    )
+                })
+                .collect();
             Op::UserInput {
                 items: mapped_items,
-                additional_context: Default::default(),
+                additional_context,
                 environments: environment_selections,
                 final_output_json_schema: params.output_schema,
                 responsesapi_client_metadata: params.responsesapi_client_metadata,
@@ -586,7 +599,12 @@ impl TurnRequestProcessor {
             }
         };
         let turn_id = self
-            .submit_core_op(&request_id, thread.as_ref(), turn_op)
+            .submit_core_op(
+                &request_id,
+                thread.as_ref(),
+                turn_op,
+                client_user_message_id.clone(),
+            )
             .await
             .map_err(|err| {
                 let error = internal_error(format!("failed to start turn: {err}"));
@@ -606,6 +624,15 @@ impl TurnRequestProcessor {
             );
         }
 
+        if let Some(client_user_message_id) = client_user_message_id {
+            self.outgoing
+                .record_turn_client_user_message_id(
+                    &turn_id,
+                    client_user_message_content,
+                    client_user_message_id,
+                )
+                .await;
+        }
         self.outgoing
             .record_request_turn_id(&request_id, &turn_id)
             .await;
@@ -684,6 +711,7 @@ impl TurnRequestProcessor {
         if params.expected_turn_id.is_empty() {
             return Err(invalid_request("expectedTurnId must not be empty"));
         }
+        let client_user_message_id = params.client_user_message_id.clone();
         self.outgoing
             .record_request_turn_id(request_id, &params.expected_turn_id)
             .await;
@@ -702,6 +730,7 @@ impl TurnRequestProcessor {
             .map(V2UserInput::into_core)
             .collect();
 
+        let client_user_message_content = mapped_items.clone();
         let turn_id = thread
             .steer_input(
                 mapped_items,
@@ -772,6 +801,15 @@ impl TurnRequestProcessor {
                 self.track_error_response(request_id, &error, error_type);
                 error
             })?;
+        if let Some(client_user_message_id) = client_user_message_id {
+            self.outgoing
+                .record_turn_client_user_message_id(
+                    &turn_id,
+                    client_user_message_content,
+                    client_user_message_id,
+                )
+                .await;
+        }
         Ok(TurnSteerResponse { turn_id })
     }
 
@@ -834,6 +872,7 @@ impl TurnRequestProcessor {
                 }),
                 voice: params.voice,
             }),
+            None,
         )
         .await
         .map_err(|err| internal_error(format!("failed to start realtime conversation: {err}")))?;
@@ -857,6 +896,7 @@ impl TurnRequestProcessor {
             Op::RealtimeConversationAudio(ConversationAudioParams {
                 frame: params.audio.into(),
             }),
+            None,
         )
         .await
         .map_err(|err| {
@@ -882,6 +922,7 @@ impl TurnRequestProcessor {
             request_id,
             thread.as_ref(),
             Op::RealtimeConversationText(ConversationTextParams { text: params.text }),
+            None,
         )
         .await
         .map_err(|err| {
@@ -903,11 +944,14 @@ impl TurnRequestProcessor {
         else {
             return Ok(None);
         };
-        self.submit_core_op(request_id, thread.as_ref(), Op::RealtimeConversationClose)
-            .await
-            .map_err(|err| {
-                internal_error(format!("failed to stop realtime conversation: {err}"))
-            })?;
+        self.submit_core_op(
+            request_id,
+            thread.as_ref(),
+            Op::RealtimeConversationClose,
+            None,
+        )
+        .await
+        .map_err(|err| internal_error(format!("failed to stop realtime conversation: {err}")))?;
         Ok(Some(ThreadRealtimeStopResponse::default()))
     }
 
@@ -966,6 +1010,7 @@ impl TurnRequestProcessor {
                 request_id,
                 parent_thread.as_ref(),
                 Op::Review { review_request },
+                None,
             )
             .await
             .map_err(|err| internal_error(format!("failed to start review: {err}")))?;
@@ -1073,6 +1118,7 @@ impl TurnRequestProcessor {
                 request_id,
                 review_thread.as_ref(),
                 Op::Review { review_request },
+                None,
             )
             .await
             .map_err(|err| {
@@ -1165,7 +1211,7 @@ impl TurnRequestProcessor {
         // Submit the interrupt. Turn interrupts respond upon TurnAborted; startup
         // interrupts respond here because startup cancellation has no turn event.
         match self
-            .submit_core_op(request_id, thread.as_ref(), Op::Interrupt)
+            .submit_core_op(request_id, thread.as_ref(), Op::Interrupt, None)
             .await
         {
             Ok(_) if is_startup_interrupt => Ok(Some(TurnInterruptResponse {})),

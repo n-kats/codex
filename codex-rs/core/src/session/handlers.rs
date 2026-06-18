@@ -4,6 +4,7 @@ use crate::realtime_conversation::handle_close as handle_realtime_conversation_c
 use crate::realtime_conversation::handle_start as handle_realtime_conversation_start;
 use crate::realtime_conversation::handle_text as handle_realtime_conversation_text;
 use async_channel::Receiver;
+use codex_app_server_protocol::AdditionalContextEntry;
 use codex_exec_server::LOCAL_FS;
 use codex_otel::set_parent_from_w3c_trace_context;
 use codex_protocol::protocol::Submission;
@@ -44,6 +45,8 @@ use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::ThreadMemoryMode;
 use codex_protocol::protocol::ThreadRolledBackEvent;
+use codex_protocol::protocol::ThreadSettingsAppliedEvent;
+use codex_protocol::protocol::ThreadSettingsOverrides;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::WarningEvent;
 use codex_protocol::request_permissions::RequestPermissionsResponse;
@@ -60,6 +63,7 @@ use codex_protocol::user_input::UserInput;
 use codex_rmcp_client::ElicitationAction;
 use codex_rmcp_client::ElicitationResponse;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::debug;
 use tracing::info;
@@ -143,133 +147,230 @@ pub(super) async fn user_input_or_turn_inner(
     op: Op,
     mirror_user_text_to_realtime: Option<()>,
 ) {
-    let (items, updates, responsesapi_client_metadata) = match op {
-        Op::UserTurn {
-            cwd,
-            approval_policy,
-            approvals_reviewer,
-            sandbox_policy,
-            permission_profile,
-            model,
-            effort,
-            summary,
-            service_tier,
-            final_output_json_schema,
-            items,
-            collaboration_mode,
-            personality,
-            environments,
-        } => {
-            let collaboration_mode = collaboration_mode.or_else(|| {
-                Some(CollaborationMode {
-                    mode: ModeKind::Default,
-                    settings: Settings {
-                        model: model.clone(),
-                        reasoning_effort: effort,
-                        developer_instructions: None,
-                    },
-                })
-            });
-            (
+    let (
+        items,
+        updates,
+        responsesapi_client_metadata,
+        thread_settings_applied,
+        additional_context_items,
+    ) = {
+        match op {
+            Op::UserTurn {
+                cwd,
+                approval_policy,
+                approvals_reviewer,
+                sandbox_policy,
+                permission_profile,
+                model,
+                effort,
+                summary,
+                service_tier,
+                final_output_json_schema,
                 items,
-                SessionSettingsUpdate {
-                    cwd: Some(cwd),
-                    approval_policy: Some(approval_policy),
-                    approvals_reviewer,
-                    sandbox_policy: Some(sandbox_policy),
+                collaboration_mode,
+                personality,
+                environments,
+            } => {
+                let collaboration_mode = collaboration_mode.or_else(|| {
+                    Some(CollaborationMode {
+                        mode: ModeKind::Default,
+                        settings: Settings {
+                            model: model.clone(),
+                            reasoning_effort: effort,
+                            developer_instructions: None,
+                        },
+                    })
+                });
+                let thread_settings_applied = Some(ThreadSettingsOverrides {
+                    cwd: Some(cwd.clone()),
                     workspace_roots: None,
                     profile_workspace_roots: None,
-                    permission_profile,
+                    approval_policy: Some(approval_policy.clone()),
+                    approvals_reviewer: approvals_reviewer.clone(),
+                    sandbox_policy: Some(sandbox_policy.clone()),
+                    permission_profile: permission_profile.clone(),
                     active_permission_profile: None,
                     windows_sandbox_level: None,
-                    collaboration_mode,
-                    reasoning_summary: summary,
-                    service_tier,
-                    final_output_json_schema: Some(final_output_json_schema),
-                    environments,
-                    personality,
-                    project_doc_paths: None,
-                    app_server_client_name: None,
-                    app_server_client_version: None,
-                },
-                None,
-            )
-        }
-        Op::UserInputWithTurnContext {
-            cwd,
-            workspace_roots,
-            profile_workspace_roots,
-            approval_policy,
-            approvals_reviewer,
-            sandbox_policy,
-            permission_profile,
-            active_permission_profile,
-            windows_sandbox_level,
-            model,
-            effort,
-            summary,
-            service_tier,
-            final_output_json_schema,
-            items,
-            responsesapi_client_metadata,
-            collaboration_mode,
-            personality,
-            environments,
-        } => {
-            let collaboration_mode = if let Some(collab_mode) = collaboration_mode {
-                Some(collab_mode)
-            } else {
-                let state = sess.state.lock().await;
-                Some(
-                    state
-                        .session_configuration
-                        .collaboration_mode
-                        .with_updates(model, effort, /*developer_instructions*/ None),
+                    model: Some(model.clone()),
+                    effort: Some(effort),
+                    summary: summary.clone(),
+                    service_tier: service_tier.clone(),
+                    collaboration_mode: collaboration_mode.clone(),
+                    personality: personality.clone(),
+                });
+                (
+                    items,
+                    SessionSettingsUpdate {
+                        cwd: Some(cwd),
+                        approval_policy: Some(approval_policy),
+                        approvals_reviewer,
+                        sandbox_policy: Some(sandbox_policy),
+                        workspace_roots: None,
+                        profile_workspace_roots: None,
+                        permission_profile,
+                        active_permission_profile: None,
+                        windows_sandbox_level: None,
+                        collaboration_mode,
+                        reasoning_summary: summary,
+                        service_tier,
+                        final_output_json_schema: Some(final_output_json_schema),
+                        environments,
+                        personality,
+                        project_doc_paths: None,
+                        app_server_client_name: None,
+                        app_server_client_version: None,
+                    },
+                    None,
+                    thread_settings_applied,
+                    BTreeMap::new(),
                 )
-            };
-            (
+            }
+            Op::UserInputWithTurnContext {
+                cwd,
+                workspace_roots,
+                profile_workspace_roots,
+                approval_policy,
+                approvals_reviewer,
+                sandbox_policy,
+                permission_profile,
+                active_permission_profile,
+                windows_sandbox_level,
+                model,
+                effort,
+                summary,
+                service_tier,
+                final_output_json_schema,
                 items,
-                SessionSettingsUpdate {
-                    cwd,
-                    workspace_roots,
-                    profile_workspace_roots,
-                    approval_policy,
-                    approvals_reviewer,
-                    sandbox_policy,
-                    permission_profile,
-                    active_permission_profile,
-                    windows_sandbox_level,
-                    collaboration_mode,
-                    reasoning_summary: summary,
-                    service_tier,
-                    final_output_json_schema: Some(final_output_json_schema),
-                    environments,
-                    personality,
-                    project_doc_paths: None,
-                    app_server_client_name: None,
-                    app_server_client_version: None,
-                },
                 responsesapi_client_metadata,
-            )
-        }
-        Op::UserInput {
-            items,
-            additional_context: _,
-            environments,
-            final_output_json_schema,
-            responsesapi_client_metadata,
-            thread_settings: _,
-        } => (
-            items,
-            SessionSettingsUpdate {
-                final_output_json_schema: Some(final_output_json_schema),
+                collaboration_mode,
+                personality,
                 environments,
-                project_doc_paths: None,
-                ..Default::default()
-            },
-            responsesapi_client_metadata,
-        ),
-        _ => unreachable!(),
+            } => {
+                let collaboration_mode = if let Some(collab_mode) = collaboration_mode {
+                    Some(collab_mode)
+                } else {
+                    let state = sess.state.lock().await;
+                    Some(state.session_configuration.collaboration_mode.with_updates(
+                        model.clone(),
+                        effort,
+                        /*developer_instructions*/ None,
+                    ))
+                };
+                let thread_settings_applied = Some(ThreadSettingsOverrides {
+                    cwd: cwd.clone(),
+                    workspace_roots: workspace_roots.clone(),
+                    profile_workspace_roots: profile_workspace_roots.clone(),
+                    approval_policy: approval_policy.clone(),
+                    approvals_reviewer: approvals_reviewer.clone(),
+                    sandbox_policy: sandbox_policy.clone(),
+                    permission_profile: permission_profile.clone(),
+                    active_permission_profile: active_permission_profile.clone(),
+                    windows_sandbox_level: windows_sandbox_level.clone(),
+                    model: model.clone(),
+                    effort,
+                    summary: summary.clone(),
+                    service_tier: service_tier.clone(),
+                    collaboration_mode: collaboration_mode.clone(),
+                    personality: personality.clone(),
+                });
+                (
+                    items,
+                    SessionSettingsUpdate {
+                        cwd,
+                        workspace_roots,
+                        profile_workspace_roots,
+                        approval_policy,
+                        approvals_reviewer,
+                        sandbox_policy,
+                        permission_profile,
+                        active_permission_profile,
+                        windows_sandbox_level,
+                        collaboration_mode,
+                        reasoning_summary: summary,
+                        service_tier,
+                        final_output_json_schema: Some(final_output_json_schema),
+                        environments,
+                        personality,
+                        project_doc_paths: None,
+                        app_server_client_name: None,
+                        app_server_client_version: None,
+                    },
+                    responsesapi_client_metadata,
+                    thread_settings_applied,
+                    BTreeMap::new(),
+                )
+            }
+            Op::UserInput {
+                items,
+                additional_context,
+                environments,
+                final_output_json_schema,
+                responsesapi_client_metadata,
+                thread_settings,
+            } => {
+                let mut additional_context_values = BTreeMap::new();
+                for (key, value) in additional_context {
+                    match serde_json::from_value::<AdditionalContextEntry>(value) {
+                        Ok(entry) => {
+                            additional_context_values.insert(key, entry);
+                        }
+                        Err(err) => {
+                            warn!("ignoring invalid additional context entry: {err}");
+                        }
+                    }
+                }
+                (
+                    items,
+                    SessionSettingsUpdate {
+                        cwd: thread_settings.cwd.clone(),
+                        workspace_roots: thread_settings.workspace_roots.clone(),
+                        profile_workspace_roots: thread_settings.profile_workspace_roots.clone(),
+                        approval_policy: thread_settings.approval_policy.clone(),
+                        approvals_reviewer: thread_settings.approvals_reviewer.clone(),
+                        sandbox_policy: thread_settings.sandbox_policy.clone(),
+                        permission_profile: thread_settings.permission_profile.clone(),
+                        active_permission_profile: thread_settings
+                            .active_permission_profile
+                            .clone(),
+                        windows_sandbox_level: thread_settings.windows_sandbox_level.clone(),
+                        collaboration_mode: thread_settings.collaboration_mode.clone().or_else(
+                            || {
+                                thread_settings
+                                    .model
+                                    .clone()
+                                    .map(|model| CollaborationMode {
+                                        mode: ModeKind::Default,
+                                        settings: Settings {
+                                            model,
+                                            reasoning_effort: thread_settings
+                                                .effort
+                                                .clone()
+                                                .flatten(),
+                                            developer_instructions: None,
+                                        },
+                                    })
+                            },
+                        ),
+                        reasoning_summary: thread_settings.summary.clone(),
+                        service_tier: thread_settings.service_tier.clone(),
+                        final_output_json_schema: Some(final_output_json_schema),
+                        environments,
+                        personality: thread_settings.personality.clone(),
+                        project_doc_paths: None,
+                        app_server_client_name: None,
+                        app_server_client_version: None,
+                    },
+                    responsesapi_client_metadata,
+                    if thread_settings == ThreadSettingsOverrides::default() {
+                        None
+                    } else {
+                        Some(thread_settings)
+                    },
+                    additional_context_values,
+                )
+            }
+            _ => unreachable!(),
+        }
     };
 
     let Ok(current_context) = sess.new_turn_with_sub_id(sub_id.clone(), updates).await else {
@@ -278,7 +379,33 @@ pub(super) async fn user_input_or_turn_inner(
     };
     sess.maybe_emit_unknown_model_warning_for_turn(current_context.as_ref())
         .await;
-    let accepted_items = match sess
+
+    if !additional_context_items.is_empty() {
+        let mut state = sess.state.lock().await;
+        let additional_context_items = state
+            .additional_context
+            .merge(additional_context_items)
+            .into_iter()
+            .map(codex_protocol::models::ResponseItem::from)
+            .collect::<Vec<_>>();
+        drop(state);
+        if !additional_context_items.is_empty() {
+            sess.record_conversation_items(current_context.as_ref(), &additional_context_items)
+                .await;
+        }
+    }
+
+    if let Some(thread_settings_applied) = thread_settings_applied {
+        sess.send_event_raw(Event {
+            id: sub_id.clone(),
+            msg: EventMsg::ThreadSettingsApplied(ThreadSettingsAppliedEvent {
+                thread_settings: thread_settings_applied,
+            }),
+        })
+        .await;
+    }
+
+    let accepted_items: Option<Vec<UserInput>> = match sess
         .steer_input(
             items.clone(),
             /*expected_turn_id*/ None,
@@ -303,15 +430,24 @@ pub(super) async fn user_input_or_turn_inner(
             )
             .await;
             let accepted_items = items.clone();
-            sess.spawn_task(
-                Arc::clone(&current_context),
-                vec![crate::session::input_queue::TurnInput::UserInput {
-                    content: items,
-                    client_id: None,
-                }],
-                crate::tasks::RegularTask::new(),
-            )
-            .await;
+            if items.is_empty() {
+                sess.spawn_task(
+                    Arc::clone(&current_context),
+                    Vec::new(),
+                    crate::tasks::RegularTask::new(),
+                )
+                .await;
+            } else {
+                sess.spawn_task(
+                    Arc::clone(&current_context),
+                    vec![crate::session::input_queue::TurnInput::UserInput {
+                        content: items,
+                        client_id: None,
+                    }],
+                    crate::tasks::RegularTask::new(),
+                )
+                .await;
+            }
             Some(accepted_items)
         }
         Err(err) => {
@@ -358,7 +494,7 @@ pub async fn inter_agent_communication(
     communication: InterAgentCommunication,
 ) {
     let trigger_turn = communication.trigger_turn;
-    sess.enqueue_mailbox_communication(communication);
+    sess.enqueue_mailbox_communication(communication).await;
     if trigger_turn {
         sess.maybe_start_turn_for_pending_work_with_sub_id(sub_id)
             .await;
@@ -683,12 +819,14 @@ async fn shutdown_session_runtime(sess: &Arc<Session>) {
     sess.guardian_review_session.shutdown().await;
 }
 
-fn emit_thread_stop_lifecycle(sess: &Session) {
+async fn emit_thread_stop_lifecycle(sess: &Session) {
     for contributor in sess.services.extensions.thread_lifecycle_contributors() {
-        contributor.on_thread_stop(codex_extension_api::ThreadStopInput {
-            session_store: &sess.services.session_extension_data,
-            thread_store: &sess.services.thread_extension_data,
-        });
+        contributor
+            .on_thread_stop(codex_extension_api::ThreadStopInput {
+                session_store: &sess.services.session_extension_data,
+                thread_store: &sess.services.thread_extension_data,
+            })
+            .await;
     }
 }
 
@@ -707,7 +845,7 @@ pub async fn shutdown(sess: &Arc<Session>, sub_id: String) -> bool {
         &[],
     );
 
-    emit_thread_stop_lifecycle(sess.as_ref());
+    emit_thread_stop_lifecycle(sess.as_ref()).await;
 
     // Gracefully flush and shutdown thread persistence on session end so tests
     // that inspect durable state do not race with the background writer.
@@ -964,7 +1102,7 @@ pub(super) async fn submission_loop(
     // explicit shutdown op, still run session teardown.
     if !shutdown_received {
         shutdown_session_runtime(&sess).await;
-        emit_thread_stop_lifecycle(sess.as_ref());
+        emit_thread_stop_lifecycle(sess.as_ref()).await;
     }
     debug!("Agent loop exited");
 }

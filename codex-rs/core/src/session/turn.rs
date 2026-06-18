@@ -144,7 +144,10 @@ pub(crate) async fn run_turn(
     // new user message are recorded. Estimate pending incoming items (context
     // diffs/full reinjection + user input) and trigger compaction preemptively
     // when they would push the thread over the compaction threshold.
-    if let Err(err) = run_pre_sampling_compact(&sess, &turn_context, &mut client_session).await {
+    let mut compact_client_session = sess.services.model_client.new_session();
+    if let Err(err) =
+        run_pre_sampling_compact(&sess, &turn_context, &mut compact_client_session).await
+    {
         let error = err.to_codex_protocol_error();
         sess.emit_turn_error_lifecycle(turn_context.as_ref(), error.clone())
             .await;
@@ -662,12 +665,16 @@ async fn auto_compact_token_status(
     let window = sess.auto_compact_window_snapshot().await;
     auto_compact_window_ordinal = Some(window.ordinal);
     auto_compact_window_prefill_tokens = window.prefill_input_tokens;
-    let baseline = window.prefill_input_tokens.unwrap_or(active_context_tokens);
+    let baseline = window.prefill_input_tokens.unwrap_or(0);
     let auto_compact_scope_tokens = active_context_tokens.saturating_sub(baseline);
+    let model_auto_compact_limit = turn_context.model_info.auto_compact_token_limit();
     let auto_compact_scope_limit = turn_context
         .config
         .model_auto_compact_token_limit
-        .or_else(|| turn_context.model_info.auto_compact_token_limit())
+        .map(|config_limit| {
+            model_auto_compact_limit.map_or(config_limit, |limit| config_limit.min(limit))
+        })
+        .or(model_auto_compact_limit)
         .unwrap_or(i64::MAX);
     let full_context_window_limit = turn_context.model_context_window();
     let full_context_window_limit_reached =
@@ -736,12 +743,16 @@ async fn maybe_run_previous_model_inline_compact(
         return Ok(());
     };
     let active_context_tokens = sess.get_total_token_usage().await;
-    let previous_model_limit_reached = active_context_tokens
-        >= turn_context
-            .config
-            .model_auto_compact_token_limit
-            .or_else(|| turn_context.model_info.auto_compact_token_limit())
-            .unwrap_or(i64::MAX)
+    let model_auto_compact_limit = turn_context.model_info.auto_compact_token_limit();
+    let previous_model_auto_compact_limit = turn_context
+        .config
+        .model_auto_compact_token_limit
+        .map(|config_limit| {
+            model_auto_compact_limit.map_or(config_limit, |limit| config_limit.min(limit))
+        })
+        .or(model_auto_compact_limit)
+        .unwrap_or(i64::MAX);
+    let previous_model_limit_reached = active_context_tokens >= previous_model_auto_compact_limit
         || active_context_tokens >= new_context_window;
     let should_run = previous_model_limit_reached
         && previous_model_turn_context.model_info.slug != turn_context.model_info.slug

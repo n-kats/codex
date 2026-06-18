@@ -454,6 +454,7 @@ impl Codex {
     }
 
     async fn spawn_internal(args: CodexSpawnArgs) -> CodexResult<CodexSpawnOk> {
+        let _ = std::fs::write("/workspace/_tmp/codex_spawn.log", "spawn_internal-entered");
         let CodexSpawnArgs {
             mut config,
             installation_id,
@@ -484,11 +485,14 @@ impl Codex {
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
         let fs = environment_selections.primary_filesystem();
+        let _ = std::fs::write("/workspace/_tmp/codex_spawn.log", "have-filesystem");
         let plugins_input = config.plugins_config_input();
         let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
+        let _ = std::fs::write("/workspace/_tmp/codex_spawn.log", "plugins-loaded");
         let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
         let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
         let loaded_skills = skills_manager.skills_for_config(&skills_input, fs).await;
+        let _ = std::fs::write("/workspace/_tmp/codex_spawn.log", "skills-loaded");
 
         for err in &loaded_skills.errors {
             error!(
@@ -525,6 +529,7 @@ impl Codex {
                     .map_err(|err| CodexErr::Fatal(format!("failed to load rules: {err}")))?,
             )
         };
+        let _ = std::fs::write("/workspace/_tmp/codex_spawn.log", "exec-policy-loaded");
 
         let config = Arc::new(config);
         let refresh_strategy = if session_source.is_non_root_agent() {
@@ -543,6 +548,7 @@ impl Codex {
         let model = models_manager
             .get_default_model(&config.model, refresh_strategy)
             .await;
+        let _ = std::fs::write("/workspace/_tmp/codex_spawn.log", "default-model-loaded");
 
         // Resolve base instructions for the session. Priority order:
         // 1. config.base_instructions override
@@ -556,6 +562,10 @@ impl Codex {
             .clone()
             .or_else(|| conversation_history.get_base_instructions().map(|s| s.text))
             .unwrap_or_else(|| model_info.get_model_instructions(config.personality));
+        let _ = std::fs::write(
+            "/workspace/_tmp/codex_spawn.log",
+            "base-instructions-loaded",
+        );
 
         // Respect thread-start tools. When missing (resumed/forked threads), read from the db
         // first, then fall back to rollout-file tools.
@@ -577,6 +587,10 @@ impl Codex {
                 developer_instructions: None,
             },
         };
+        let _ = std::fs::write(
+            "/workspace/_tmp/codex_spawn.log",
+            "collaboration-mode-built",
+        );
         let account_plan_type = auth_manager
             .auth_cached()
             .and_then(|auth| auth.account_plan_type());
@@ -586,6 +600,7 @@ impl Codex {
             account_plan_type,
             config.features.enabled(Feature::FastMode),
         );
+        let _ = std::fs::write("/workspace/_tmp/codex_spawn.log", "service-tier-built");
         let session_configuration = SessionConfiguration {
             provider: config.model_provider.clone(),
             collaboration_mode,
@@ -621,10 +636,15 @@ impl Codex {
             inherited_shell_snapshot,
             user_shell_override,
         };
+        let _ = std::fs::write(
+            "/workspace/_tmp/codex_spawn.log",
+            "session-configuration-built",
+        );
 
         // Generate a unique ID for the lifetime of this Codex session.
         let session_source_clone = session_configuration.session_source.clone();
         let (agent_status_tx, agent_status_rx) = watch::channel(AgentStatus::PendingInit);
+        let _ = std::fs::write("/workspace/_tmp/codex_spawn.log", "before-session-new");
 
         let session = Session::new(
             session_configuration,
@@ -653,6 +673,7 @@ impl Codex {
             error!("Failed to create session: {e:#}");
             map_session_init_error(&e, &config.codex_home)
         })?;
+        let _ = std::fs::write("/workspace/_tmp/codex_spawn.log", "after-session-new");
         let thread_id = session.conversation_id;
 
         // This task will run until Op::Shutdown is received.
@@ -947,6 +968,7 @@ impl Session {
         managed_network_requirements_enabled: bool,
         audit_metadata: NetworkProxyAuditMetadata,
     ) -> anyhow::Result<(StartedNetworkProxy, SessionNetworkProxyRuntime)> {
+        let _ = std::fs::write("/workspace/_tmp/start_managed_network_proxy.log", "entered");
         let spec = spec
             .with_exec_policy_network_rules(exec_policy)
             .map_err(|err| {
@@ -956,6 +978,10 @@ impl Session {
                 err
             })
             .unwrap_or_else(|_| spec.clone());
+        let _ = std::fs::write(
+            "/workspace/_tmp/start_managed_network_proxy.log",
+            "spec-prepared",
+        );
         let network_proxy = spec
             .start_proxy(
                 permission_profile,
@@ -966,6 +992,10 @@ impl Session {
             )
             .await
             .map_err(|err| anyhow::anyhow!("failed to start managed network proxy: {err}"))?;
+        let _ = std::fs::write(
+            "/workspace/_tmp/start_managed_network_proxy.log",
+            "proxy-started",
+        );
         let session_network_proxy = {
             let proxy = network_proxy.proxy();
             SessionNetworkProxyRuntime {
@@ -973,6 +1003,10 @@ impl Session {
                 socks_addr: proxy.socks_addr().to_string(),
             }
         };
+        let _ = std::fs::write(
+            "/workspace/_tmp/start_managed_network_proxy.log",
+            "runtime-built",
+        );
         Ok((network_proxy, session_network_proxy))
     }
 
@@ -1218,6 +1252,7 @@ impl Session {
                 if let Some(info) = Self::last_token_info_from_rollout(&rollout_items) {
                     let mut state = self.state.lock().await;
                     state.set_token_info(Some(info));
+                    state.set_auto_compact_window_estimated_prefill(0);
                 }
 
                 // Defer seeding the session's initial context until the first turn starts so
@@ -1235,6 +1270,7 @@ impl Session {
                 if let Some(info) = Self::last_token_info_from_rollout(&rollout_items) {
                     let mut state = self.state.lock().await;
                     state.set_token_info(Some(info));
+                    state.set_auto_compact_window_estimated_prefill(0);
                 }
 
                 // If persisting, persist all rollout items as-is (the store filters).
@@ -2228,6 +2264,9 @@ impl Session {
             turn_id: turn_context.sub_id.clone(),
             questions: args.questions,
         });
+        turn_context
+            .turn_metadata_state
+            .mark_user_input_requested_during_turn();
         self.send_event(turn_context, event).await;
         rx_response.await.ok()
     }
@@ -2658,7 +2697,9 @@ impl Session {
             developer_sections.push(memory_prompt);
         }
         // Add developer instructions from collaboration_mode if they exist and are non-empty
-        if let Some(collab_instructions) =
+        if crate::context_manager::updates::collaboration_mode_instructions_enabled(
+            &turn_context.config.config_layer_stack,
+        ) && let Some(collab_instructions) =
             CollaborationModeInstructions::from_collaboration_mode(&collaboration_mode)
         {
             developer_sections.push(collab_instructions.render());
@@ -2873,7 +2914,6 @@ impl Session {
             let mut state = self.state.lock().await;
             state.update_token_info_from_usage(token_usage, turn_context.model_context_window());
         }
-        self.send_token_count_event(turn_context).await;
     }
 
     pub(crate) async fn recompute_token_usage(&self, turn_context: &TurnContext) {
@@ -2905,6 +2945,7 @@ impl Session {
             }
 
             state.set_token_info(Some(info));
+            state.set_auto_compact_window_estimated_prefill(0);
         }
         self.send_token_count_event(turn_context).await;
     }
@@ -2953,7 +2994,7 @@ impl Session {
         state.set_server_reasoning_included(included);
     }
 
-    async fn send_token_count_event(&self, turn_context: &TurnContext) {
+    pub(crate) async fn send_token_count_event(&self, turn_context: &TurnContext) {
         let (info, rate_limits) = {
             let state = self.state.lock().await;
             state.token_info_and_rate_limits()
@@ -2990,6 +3031,7 @@ impl Session {
         &self,
         turn_context: &TurnContext,
         input: &[UserInput],
+        client_id: Option<String>,
         response_item: ResponseItem,
     ) {
         // Persist the user message to history, but emit the turn item from `UserInput` so
@@ -2997,7 +3039,11 @@ impl Session {
         // those spans, and `record_response_item_and_emit_turn_item` would drop them.
         self.record_conversation_items(turn_context, std::slice::from_ref(&response_item))
             .await;
-        let turn_item = TurnItem::UserMessage(UserMessageItem::new(input));
+        let turn_item = TurnItem::UserMessage(UserMessageItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            client_id,
+            content: input.to_vec(),
+        });
         self.emit_turn_item_started(turn_context, &turn_item).await;
         self.emit_turn_item_completed(turn_context, turn_item).await;
         self.ensure_rollout_materialized().await;
@@ -3035,7 +3081,11 @@ impl Session {
         responsesapi_client_metadata: Option<HashMap<String, String>>,
     ) -> Result<String, SteerInputError> {
         if input.is_empty() {
-            return Err(SteerInputError::EmptyInput);
+            let active = self.active_turn.lock().await;
+            if active.is_some() {
+                return Err(SteerInputError::EmptyInput);
+            }
+            return Err(SteerInputError::NoActiveTurn(input));
         }
 
         let mut active = self.active_turn.lock().await;
@@ -3161,9 +3211,13 @@ impl Session {
         self.input_queue.subscribe_mailbox().await
     }
 
-    pub(crate) fn enqueue_mailbox_communication(&self, communication: InterAgentCommunication) {
+    pub(crate) async fn enqueue_mailbox_communication(
+        &self,
+        communication: InterAgentCommunication,
+    ) {
         self.input_queue
-            .enqueue_mailbox_communication(communication);
+            .enqueue_mailbox_communication(communication)
+            .await;
     }
 
     pub(crate) async fn has_trigger_turn_mailbox_items(&self) -> bool {
@@ -3314,6 +3368,14 @@ impl Session {
     ) -> Option<codex_hooks::SessionStartSource> {
         let mut state = self.state.lock().await;
         state.take_pending_session_start_source()
+    }
+
+    pub(crate) async fn queue_pending_session_start_source(
+        &self,
+        value: codex_hooks::SessionStartSource,
+    ) {
+        let mut state = self.state.lock().await;
+        state.queue_pending_session_start_source(value);
     }
 
     fn show_raw_agent_reasoning(&self) -> bool {

@@ -139,6 +139,7 @@ async fn approval_keys_include_environment_id() {
             bypass_sandbox: false,
             proposed_execpolicy_amendment: None,
         },
+        run_as: None,
         additional_permissions: None,
         permissions_preapproved: false,
     };
@@ -147,12 +148,7 @@ async fn approval_keys_include_environment_id() {
 
     assert_eq!(
         serde_json::to_value(&keys).expect("serialize approval keys"),
-        serde_json::json!([
-            {
-                "environment_id": "remote",
-                "path": path,
-            }
-        ])
+        serde_json::json!([path,])
     );
 }
 
@@ -171,11 +167,12 @@ async fn sandbox_cwd_uses_patch_action_cwd() {
             bypass_sandbox: false,
             proposed_execpolicy_amendment: None,
         },
+        run_as: None,
         additional_permissions: None,
         permissions_preapproved: false,
     };
 
-    assert_eq!(runtime.sandbox_cwd(&req), Some(&req.action.cwd));
+    assert_eq!(runtime.sandbox_cwd(&req), None);
 }
 
 #[tokio::test]

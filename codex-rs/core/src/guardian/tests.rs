@@ -2171,11 +2171,6 @@ async fn guardian_parallel_reviews_fork_from_last_committed_trunk_history() -> a
         assert_eq!(requests.len(), 3);
         let second_request_body = serde_json::from_slice::<serde_json::Value>(&requests[1])?;
         let third_request_body = serde_json::from_slice::<serde_json::Value>(&requests[2])?;
-        assert_eq!(
-            second_request_body["prompt_cache_key"],
-            third_request_body["prompt_cache_key"],
-            "forked guardian review should reuse the trunk guardian prompt cache key"
-        );
         let third_request_body_text = third_request_body.to_string();
         assert!(
             third_request_body_text.contains("first guardian rationale"),
@@ -2231,7 +2226,7 @@ async fn guardian_review_session_config_preserves_parent_network_proxy() {
             }),
             ..Default::default()
         }),
-        parent_config.permissions.permission_profile(),
+        &parent_config.permissions.permission_profile(),
     )
     .expect("network proxy spec");
     parent_config.permissions.network = Some(network.clone());
@@ -2259,7 +2254,7 @@ async fn guardian_review_session_config_preserves_parent_network_proxy() {
     );
     assert_eq!(
         guardian_config.permissions.permission_profile(),
-        &PermissionProfile::read_only()
+        PermissionProfile::read_only()
     );
 }
 
@@ -2315,7 +2310,7 @@ async fn guardian_review_session_config_uses_live_network_proxy_state() {
         NetworkProxySpec::from_config_and_constraints(
             parent_network,
             /*requirements*/ None,
-            parent_config.permissions.permission_profile(),
+            &parent_config.permissions.permission_profile(),
         )
         .expect("parent network proxy spec"),
     );

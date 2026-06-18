@@ -202,8 +202,8 @@ async fn exec_cli_profile_applies_model_instructions_file() {
 
     let home = TempDir::new().unwrap();
     std::fs::write(
-        home.path().join("default.config.toml"),
-        format!("model_instructions_file = \"{custom_path_str}\"\n"),
+        home.path().join("config.toml"),
+        format!("[profiles.default]\nmodel_instructions_file = \"{custom_path_str}\"\n"),
     )
     .unwrap();
 

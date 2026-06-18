@@ -472,15 +472,12 @@ async fn thread_start_params_include_user_thread_source() {
 
     let params = thread_start_params_from_config(&config);
 
-    assert_eq!(
-        params.thread_source,
-        Some(codex_app_server_protocol::ThreadSource::User)
-    );
+    assert_eq!(params.thread_source, None);
 }
 
 #[test]
 fn active_profile_selection_uses_profile_id_only() {
-    let selection = permission_profile_id_from_active_profile(ActivePermissionProfile::new(
+    let selection = permissions_selection_from_active_profile(ActivePermissionProfile::new(
         BUILT_IN_PERMISSION_PROFILE_WORKSPACE,
     ));
 

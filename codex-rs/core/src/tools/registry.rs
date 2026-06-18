@@ -364,7 +364,25 @@ impl ToolRegistry {
     }
 
     fn tool(&self, name: &ToolName) -> Option<Arc<dyn CoreToolRuntime>> {
-        self.tools.get(name).map(Arc::clone)
+        if let Some(tool) = self.tools.get(name) {
+            return Some(Arc::clone(tool));
+        }
+
+        if name.namespace.is_none() && matches!(name.name.as_str(), "shell" | "shell_command") {
+            let exec_command = ToolName::plain("exec_command");
+            if let Some(tool) = self.tools.get(&exec_command) {
+                return Some(Arc::clone(tool));
+            }
+        }
+
+        if name.namespace.is_none() && name.name == "webrun" {
+            let web_run = ToolName::namespaced("web", "run");
+            if let Some(tool) = self.tools.get(&web_run) {
+                return Some(Arc::clone(tool));
+            }
+        }
+
+        None
     }
 
     #[cfg(test)]

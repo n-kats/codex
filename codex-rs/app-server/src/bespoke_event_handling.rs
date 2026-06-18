@@ -88,6 +88,7 @@ use codex_core::ThreadManager;
 use codex_core::review_format::format_review_findings_block;
 use codex_core::review_prompts;
 use codex_protocol::ThreadId;
+use codex_protocol::items::TurnItem;
 use codex_protocol::items::parse_hook_prompt_message;
 use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
 use codex_protocol::plan_tool::UpdatePlanArgs;
@@ -970,10 +971,39 @@ pub(crate) async fn apply_bespoke_event_handling(
                 .send_server_notification(ServerNotification::ItemCompleted(completed))
                 .await;
         }
-        msg @ (EventMsg::ItemStarted(_)
-        | EventMsg::ItemCompleted(_)
-        | EventMsg::PatchApplyUpdated(_)
-        | EventMsg::TerminalInteraction(_)) => {
+        EventMsg::ItemStarted(mut started) => {
+            if let TurnItem::UserMessage(user) = &mut started.item
+                && user.client_id.is_none()
+                && let Some(client_id) = outgoing
+                    .turn_client_user_message_id(&event_turn_id, &user.content)
+                    .await
+            {
+                user.client_id = Some(client_id);
+            }
+            let notification = item_event_to_server_notification(
+                EventMsg::ItemStarted(started),
+                &conversation_id.to_string(),
+                &event_turn_id,
+            );
+            outgoing.send_server_notification(notification).await;
+        }
+        EventMsg::ItemCompleted(mut completed) => {
+            if let TurnItem::UserMessage(user) = &mut completed.item
+                && user.client_id.is_none()
+                && let Some(client_id) = outgoing
+                    .turn_client_user_message_id(&event_turn_id, &user.content)
+                    .await
+            {
+                user.client_id = Some(client_id);
+            }
+            let notification = item_event_to_server_notification(
+                EventMsg::ItemCompleted(completed),
+                &conversation_id.to_string(),
+                &event_turn_id,
+            );
+            outgoing.send_server_notification(notification).await;
+        }
+        msg @ (EventMsg::PatchApplyUpdated(_) | EventMsg::TerminalInteraction(_)) => {
             let notification = item_event_to_server_notification(
                 msg,
                 &conversation_id.to_string(),

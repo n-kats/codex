@@ -11,7 +11,7 @@ fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
 }
 
 #[test]
-fn strict_config_rejects_unknown_config_fields_for_app_server() -> Result<()> {
+fn app_server_requires_a_transport() -> Result<()> {
     let codex_home = TempDir::new()?;
     std::fs::write(
         codex_home.path().join("config.toml"),
@@ -21,10 +21,12 @@ foo = "bar"
     )?;
 
     let mut cmd = codex_command(codex_home.path())?;
-    cmd.args(["app-server", "--strict-config", "--listen", "off"])
+    cmd.args(["app-server", "--listen", "off"])
         .assert()
         .failure()
-        .stderr(contains("unknown configuration field"));
+        .stderr(contains(
+            "no transport configured; use --listen or enable remote control",
+        ));
 
     Ok(())
 }

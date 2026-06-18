@@ -64,11 +64,11 @@ impl<'a> AgentsMdManager<'a> {
         let base = codex_dir?;
         for candidate in [LOCAL_AGENTS_MD_FILENAME, DEFAULT_AGENTS_MD_FILENAME] {
             let path = base.join(candidate);
-            if let Ok(contents) = std::fs::read_to_string(&path) {
-                let trimmed = contents.trim();
+            if let Ok(contents) = std::fs::read(&path) {
+                let trimmed = String::from_utf8_lossy(&contents).trim().to_string();
                 if !trimmed.is_empty() {
                     return Some(LoadedAgentsMd {
-                        contents: trimmed.to_string(),
+                        contents: trimmed,
                         path,
                     });
                 }

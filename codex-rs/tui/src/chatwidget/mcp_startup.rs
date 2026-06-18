@@ -242,10 +242,18 @@ impl ChatWidget {
     }
 
     pub(super) fn status_header_is_mcp_startup_owned(&self) -> bool {
-        self.status_state
-            .current_status
+        self.current_status
             .header
             .starts_with(MCP_STARTUP_SINGLE_HEADER_PREFIX)
+            || self
+                .current_status
+                .header
+                .starts_with(MCP_STARTUP_MULTI_HEADER_PREFIX)
+            || self
+                .status_state
+                .current_status
+                .header
+                .starts_with(MCP_STARTUP_SINGLE_HEADER_PREFIX)
             || self
                 .status_state
                 .current_status

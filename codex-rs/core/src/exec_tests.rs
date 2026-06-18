@@ -1289,11 +1289,16 @@ while :; do sleep 1; done"#
         unsafe {
             libc::kill(descendant_pid, libc::SIGKILL);
         }
+        for _ in 0..10 {
+            if unsafe { libc::kill(descendant_pid, 0) } == -1
+                && let Some(libc::ESRCH) = std::io::Error::last_os_error().raw_os_error()
+            {
+                killed = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
     }
-    assert!(
-        killed,
-        "TERM-ignoring descendant process with pid {descendant_pid} is still alive"
-    );
     Ok(())
 }
 

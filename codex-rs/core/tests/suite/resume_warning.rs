@@ -27,6 +27,7 @@ fn resume_history(
     let turn_id = "resume-warning-seed-turn".to_string();
     let turn_ctx = TurnContextItem {
         turn_id: Some(turn_id.clone()),
+        trace_id: None,
         cwd: config.cwd.to_path_buf(),
         workspace_roots: None,
         current_date: None,
@@ -44,6 +45,10 @@ fn resume_history(
         summary: config
             .model_reasoning_summary
             .unwrap_or(ReasoningSummary::Auto),
+        user_instructions: None,
+        developer_instructions: None,
+        final_output_json_schema: None,
+        truncation_policy: None,
     };
 
     InitialHistory::Resumed(ResumedHistory {

@@ -116,10 +116,7 @@ async fn thread_settings_updated_updates_visible_state_without_transcript() {
         chat.current_reasoning_effort(),
         Some(ReasoningEffortConfig::High)
     );
-    assert_eq!(
-        chat.current_service_tier(),
-        Some(ServiceTier::Fast.request_value())
-    );
+    assert_eq!(chat.current_service_tier(), Some(ServiceTier::Fast));
     assert_eq!(
         chat.config_ref().permissions.approval_policy.value(),
         AskForApproval::OnRequest.to_core()

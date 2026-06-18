@@ -2,6 +2,7 @@ mod delegate;
 mod execute_handler;
 pub(crate) mod execute_spec;
 mod response_adapter;
+pub(crate) mod tool_mode;
 mod wait_handler;
 pub(crate) mod wait_spec;
 
@@ -30,7 +31,6 @@ use crate::tools::parallel::ToolCallRuntime;
 use crate::tools::router::ToolCall;
 use crate::tools::router::ToolCallSource;
 use crate::unified_exec::resolve_max_tokens;
-use codex_protocol::openai_models::ToolMode;
 use codex_tools::ToolName;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::formatted_truncate_text_content_items_with_policy;
@@ -40,6 +40,7 @@ use delegate::CodeModeDispatchBroker;
 use delegate::CodeModeDispatchWorker;
 pub(crate) use execute_handler::CodeModeExecuteHandler;
 use response_adapter::into_function_call_output_content_items;
+use tool_mode::code_mode_enabled;
 pub(crate) use wait_handler::CodeModeWaitHandler;
 
 pub(crate) const PUBLIC_TOOL_NAME: &str = codex_code_mode::PUBLIC_TOOL_NAME;
@@ -116,9 +117,7 @@ impl CodeModeService {
         router: Arc<ToolRouter>,
         tracker: SharedTurnDiffTracker,
     ) -> Option<CodeModeDispatchWorker> {
-        if !matches!(turn.tool_mode, ToolMode::CodeMode | ToolMode::CodeModeOnly)
-            || self.session.is_none()
-        {
+        if !code_mode_enabled(turn.as_ref()) || self.session.is_none() {
             return None;
         }
 

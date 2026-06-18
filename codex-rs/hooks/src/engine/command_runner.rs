@@ -1,3 +1,4 @@
+use std::io::ErrorKind;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -53,19 +54,21 @@ pub(crate) async fn run_command(
         }
     };
 
-    if let Some(mut stdin) = child.stdin.take()
-        && let Err(err) = stdin.write_all(input_json.as_bytes()).await
-    {
-        let _ = child.kill().await;
-        return CommandRunResult {
-            started_at,
-            completed_at: chrono::Utc::now().timestamp(),
-            duration_ms: started.elapsed().as_millis().try_into().unwrap_or(i64::MAX),
-            exit_code: None,
-            stdout: String::new(),
-            stderr: String::new(),
-            error: Some(format!("failed to write hook stdin: {err}")),
-        };
+    if let Some(mut stdin) = child.stdin.take() {
+        if let Err(err) = stdin.write_all(input_json.as_bytes()).await
+            && err.kind() != ErrorKind::BrokenPipe
+        {
+            let _ = child.kill().await;
+            return CommandRunResult {
+                started_at,
+                completed_at: chrono::Utc::now().timestamp(),
+                duration_ms: started.elapsed().as_millis().try_into().unwrap_or(i64::MAX),
+                exit_code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                error: Some(format!("failed to write hook stdin: {err}")),
+            };
+        }
     }
 
     let timeout_duration = Duration::from_secs(handler.timeout_sec);

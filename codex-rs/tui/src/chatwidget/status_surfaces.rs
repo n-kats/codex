@@ -695,7 +695,14 @@ impl ChatWidget {
             StatusSurfacePreviewItem::Model => StatusLineItem::ModelName,
             StatusSurfacePreviewItem::ModelWithReasoning => StatusLineItem::ModelWithReasoning,
         };
-        self.status_line_value_for_item(status_line_item)
+        let value = self.status_line_value_for_item(status_line_item)?;
+        let value = value.trim_end();
+        Some(match item {
+            StatusSurfacePreviewItem::FiveHourLimit | StatusSurfacePreviewItem::WeeklyLimit => {
+                value.strip_suffix(" left").unwrap_or(&value).to_string()
+            }
+            _ => value.to_string(),
+        })
     }
     /// Resolves one configured terminal-title item into a displayable segment.
     ///

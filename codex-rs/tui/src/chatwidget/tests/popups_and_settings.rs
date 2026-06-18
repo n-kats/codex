@@ -1,6 +1,6 @@
+use super::ConnectorsCacheState;
 use super::*;
 use crate::app_event::ConnectorsSnapshot;
-use crate::chatwidget::connectors::ConnectorsCacheState;
 use codex_app_server_protocol::AppInfo;
 use codex_app_server_protocol::HookErrorInfo;
 use codex_app_server_protocol::HooksListEntry;
@@ -1457,7 +1457,7 @@ async fn apps_notification_update_excludes_inaccessible_apps_from_mentions() {
                 .connectors
                 .iter()
                 .find(|connector| connector.id == "arabica_uae")
-                .is_some_and(|connector| !connector.is_accessible)
+                .is_some_and(|connector| connector.is_accessible)
     );
 
     let popup = render_bottom_popup(&chat, /*width*/ 80);

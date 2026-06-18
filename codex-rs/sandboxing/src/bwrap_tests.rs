@@ -164,10 +164,7 @@ fn root_cwd_does_not_hide_system_bwrap_candidates() {
 }
 
 fn write_fake_bwrap(contents: &str) -> tempfile::TempPath {
-    write_fake_bwrap_in(
-        &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        contents,
-    )
+    write_fake_bwrap_in(Path::new(env!("CARGO_MANIFEST_DIR")), contents)
 }
 
 fn write_fake_bwrap_in(dir: &Path, contents: &str) -> tempfile::TempPath {

@@ -144,6 +144,7 @@ fn code_mode_tool_definitions_for_spec(spec: &ToolSpec) -> Vec<CodeModeToolDefin
 
 pub fn code_mode_name_for_tool_name(tool_name: &ToolName) -> String {
     match tool_name.namespace.as_deref() {
+        Some("codex_app") => format!("codex_app_{}", tool_name.name),
         Some(namespace) if namespace.ends_with('_') || tool_name.name.starts_with('_') => {
             format!("{namespace}{}", tool_name.name)
         }

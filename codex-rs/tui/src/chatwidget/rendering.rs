@@ -1,6 +1,9 @@
 //! Render composition for the main chat widget surface.
 
 use super::*;
+use ratatui::text::Text;
+use ratatui::widgets::Clear;
+use ratatui::widgets::Widget;
 
 impl ChatWidget {
     pub(super) fn as_renderable(&self) -> RenderableItem<'_> {

@@ -214,8 +214,9 @@ impl ToolsConfig {
             session_source,
             ..
         } = params;
-        let include_code_mode = features.enabled(Feature::CodeMode);
-        let include_code_mode_only = include_code_mode && features.enabled(Feature::CodeModeOnly);
+        let include_code_mode =
+            features.enabled(Feature::CodeMode) || features.enabled(Feature::CodeModeOnly);
+        let include_code_mode_only = features.enabled(Feature::CodeModeOnly);
         let include_goal_tools = features.enabled(Feature::Goals);
         let include_multi_agent_v2 = features.enabled(Feature::MultiAgentV2);
         let include_collab_tools = include_multi_agent_v2 || features.enabled(Feature::Collab);

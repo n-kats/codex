@@ -9,8 +9,8 @@ use crate::session_prefix::format_subagent_notification_message;
 use crate::thread_manager::thread_store_from_config;
 use crate::tools::context::ToolOutput;
 use crate::tools::handlers::multi_agents_spec::WaitAgentTimeoutOptions;
+use crate::tools::handlers::multi_agents_v2::AssignTaskHandler as FollowupTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
-use crate::tools::handlers::multi_agents_v2::FollowupTaskHandler as FollowupTaskHandlerV2;
 use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHandlerV2;
 use crate::tools::handlers::multi_agents_v2::SendMessageHandler as SendMessageHandlerV2;
 use crate::tools::handlers::multi_agents_v2::SpawnAgentHandler as SpawnAgentHandlerV2;
@@ -491,7 +491,10 @@ async fn spawn_agent_service_tier_override_validates_the_effective_child_model()
             .config_snapshot()
             .await;
 
-        assert_eq!(snapshot.service_tier, Some(ServiceTier::Fast));
+        assert_eq!(
+            snapshot.service_tier.as_deref(),
+            Some(ServiceTier::Fast.request_value())
+        );
     }
 
     {
@@ -513,10 +516,7 @@ async fn spawn_agent_service_tier_override_validates_the_effective_child_model()
 
         assert_eq!(
             err,
-            FunctionCallError::RespondToModel(
-                "Service tier `turbo` is not supported for model `gpt-5.4`. Supported service tiers: priority"
-                    .to_string()
-            )
+            FunctionCallError::RespondToModel("unsupported service tier `turbo`".to_string())
         );
     }
 
@@ -589,7 +589,10 @@ async fn spawn_agent_service_tier_inheritance_preserves_supported_or_configured_
             .config_snapshot()
             .await;
 
-        assert_eq!(snapshot.service_tier, Some(ServiceTier::Fast));
+        assert_eq!(
+            snapshot.service_tier.as_deref(),
+            Some(ServiceTier::Fast.request_value())
+        );
     }
 
     {
@@ -693,7 +696,10 @@ service_tier = "priority"
             .config_snapshot()
             .await;
 
-        assert_eq!(snapshot.service_tier, Some(ServiceTier::Fast));
+        assert_eq!(
+            snapshot.service_tier.as_deref(),
+            Some(ServiceTier::Fast.request_value())
+        );
     }
 }
 
@@ -763,7 +769,10 @@ service_tier = "turbo"
         .config_snapshot()
         .await;
 
-    assert_eq!(snapshot.service_tier, Some(ServiceTier::Fast));
+    assert_eq!(
+        snapshot.service_tier.as_deref(),
+        Some(ServiceTier::Fast.request_value())
+    );
 }
 
 #[tokio::test]
@@ -810,8 +819,7 @@ service_tier = "priority"
     assert_eq!(
         result.err(),
         Some(FunctionCallError::RespondToModel(
-            "Service tier `turbo` is not supported for model `gpt-5.4`. Supported service tiers: priority"
-                .to_string()
+            "unsupported service tier `turbo`".to_string()
         ))
     );
 }
@@ -858,7 +866,10 @@ async fn spawn_agent_full_history_fork_accepts_explicit_service_tier() {
         .config_snapshot()
         .await;
 
-    assert_eq!(snapshot.service_tier, Some(ServiceTier::Fast));
+    assert_eq!(
+        snapshot.service_tier.as_deref(),
+        Some(ServiceTier::Fast.request_value())
+    );
 }
 
 #[tokio::test]
@@ -921,7 +932,10 @@ async fn multi_agent_v2_full_history_fork_accepts_explicit_service_tier() {
         .config_snapshot()
         .await;
 
-    assert_eq!(snapshot.service_tier, Some(ServiceTier::Fast));
+    assert_eq!(
+        snapshot.service_tier.as_deref(),
+        Some(ServiceTier::Fast.request_value())
+    );
 }
 
 #[tokio::test]

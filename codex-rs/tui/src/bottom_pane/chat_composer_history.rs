@@ -957,12 +957,10 @@ mod tests {
                 remote_image_urls: Vec::new(),
                 mention_bindings: vec![
                     MentionBinding {
-                        sigil: '$',
                         mention: "sample".to_string(),
                         path: "plugin://sample@test".to_string(),
                     },
                     MentionBinding {
-                        sigil: '$',
                         mention: "figma".to_string(),
                         path: "app://figma".to_string(),
                     },
@@ -988,12 +986,10 @@ mod tests {
                 remote_image_urls: Vec::new(),
                 mention_bindings: vec![
                     MentionBinding {
-                        sigil: '@',
                         mention: "sample".to_string(),
                         path: "plugin://sample@test".to_string(),
                     },
                     MentionBinding {
-                        sigil: '$',
                         mention: "figma".to_string(),
                         path: "app://figma".to_string(),
                     },

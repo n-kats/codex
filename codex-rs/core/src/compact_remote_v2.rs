@@ -24,6 +24,7 @@ use codex_analytics::CompactionPhase;
 use codex_analytics::CompactionReason;
 use codex_analytics::CompactionTrigger;
 use codex_features::Feature;
+use codex_hooks::SessionStartSource;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::ContextCompactionItem;
@@ -132,6 +133,8 @@ async fn run_remote_compact_task_inner(
             attempt.track(sess.as_ref(), status, error).await;
             return Err(CodexErr::TurnAborted);
         }
+        sess.queue_pending_session_start_source(SessionStartSource::Compact)
+            .await;
     }
     attempt.track(sess.as_ref(), status, error.clone()).await;
     if let Err(err) = result {

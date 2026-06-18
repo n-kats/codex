@@ -18,6 +18,7 @@ use tokio::sync::Semaphore;
 /// A session has at most 1 running task at a time, and can be interrupted by user input.
 pub(crate) struct Session {
     pub(crate) conversation_id: ThreadId,
+    pub(crate) forked_from_id: Option<ThreadId>,
     pub(crate) installation_id: String,
     pub(super) tx_event: Sender<Event>,
     pub(super) agent_status: watch::Sender<AgentStatus>,
@@ -516,7 +517,11 @@ impl Session {
         // - initialize thread persistence with new or resumed session info
         // - perform default shell discovery
         // - load history metadata (skipped for subagents)
-        let thread_persistence_fut = async {
+        let thread_persistence_fut = Box::pin(async {
+            let _ = std::fs::write(
+                "/workspace/_tmp/session_new.log",
+                "thread-persistence-start",
+            );
             if config.ephemeral {
                 Ok::<_, anyhow::Error>(None)
             } else {
@@ -570,25 +575,32 @@ impl Session {
                         .await?
                     }
                 };
+                let _ = std::fs::write(
+                    "/workspace/_tmp/session_new.log",
+                    "thread-persistence-finished",
+                );
                 Ok(Some(live_thread))
             }
-        }
+        })
         .instrument(info_span!(
             "session_init.thread_persistence",
             otel.name = "session_init.thread_persistence",
             session_init.ephemeral = config.ephemeral,
         ));
-        let state_db_fut = async {
+        let state_db_fut = Box::pin(async {
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "state-db-start");
             if config.ephemeral {
                 None
             } else if let Some(local_store) =
                 thread_store.as_any().downcast_ref::<LocalThreadStore>()
             {
-                local_store.state_db().await
+                let state_db = local_store.state_db().await;
+                let _ = std::fs::write("/workspace/_tmp/session_new.log", "state-db-finished");
+                state_db
             } else {
                 None
             }
-        }
+        })
         .instrument(info_span!(
             "session_init.state_db",
             otel.name = "session_init.state_db",
@@ -598,27 +610,33 @@ impl Session {
         let auth_manager_clone = Arc::clone(&auth_manager);
         let config_for_mcp = Arc::clone(&config);
         let mcp_manager_for_mcp = Arc::clone(&mcp_manager);
-        let auth_and_mcp_fut = async move {
+        let auth_and_mcp_fut = Box::pin(async move {
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "auth-mcp-start");
             let auth = auth_manager_clone.auth().await;
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "auth-loaded");
             let mcp_servers = mcp_manager_for_mcp
                 .effective_servers(&config_for_mcp, auth.as_ref())
                 .await;
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "mcp-servers-loaded");
             let auth_statuses = compute_auth_statuses(
                 mcp_servers.iter(),
                 config_for_mcp.mcp_oauth_credentials_store_mode,
                 auth.as_ref(),
             )
             .await;
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "auth-statuses-loaded");
             (auth, mcp_servers, auth_statuses)
-        }
+        })
         .instrument(info_span!(
             "session_init.auth_mcp",
             otel.name = "session_init.auth_mcp",
         ));
 
-        // Join all independent futures.
-        let (thread_persistence_result, state_db_ctx, (auth, mcp_servers, auth_statuses)) =
-            tokio::join!(thread_persistence_fut, state_db_fut, auth_and_mcp_fut);
+        // Run the setup futures sequentially to keep initialization stack usage small.
+        let thread_persistence_result = thread_persistence_fut.await;
+        let state_db_ctx = state_db_fut.await;
+        let (auth, mcp_servers, auth_statuses) = auth_and_mcp_fut.await;
+        let _ = std::fs::write("/workspace/_tmp/session_new.log", "after-join");
 
         let mut live_thread_init =
             LiveThreadInitGuard::new(thread_persistence_result.map_err(|e| {
@@ -631,6 +649,7 @@ impl Session {
             } else {
                 None
             };
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "rollout-path");
             let trace_agent_path = session_configuration
                 .session_source
                 .get_agent_path()
@@ -662,6 +681,7 @@ impl Session {
             } else {
                 ThreadTraceContext::start_root_or_disabled(trace_metadata)
             };
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "trace-built");
 
             let mut post_session_configured_events = Vec::<Event>::new();
 
@@ -731,6 +751,7 @@ impl Session {
             if let Some(service_name) = session_configuration.metrics_service_name.as_deref() {
                 session_telemetry = session_telemetry.with_metrics_service_name(service_name);
             }
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "telemetry-built");
             let network_proxy_audit_metadata = NetworkProxyAuditMetadata {
                 conversation_id: Some(thread_id.to_string()),
                 app_version: Some(env!("CARGO_PKG_VERSION").to_string()),
@@ -772,6 +793,7 @@ impl Session {
             );
 
             let use_zsh_fork_shell = config.features.enabled(Feature::ShellZshFork);
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "before-default-shell");
             let mut default_shell = if let Some(user_shell_override) =
                 session_configuration.user_shell_override.clone()
             {
@@ -792,6 +814,7 @@ impl Session {
             } else {
                 shell::default_user_shell()
             };
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "default-shell-built");
             // Create the mutable state for the Session.
             let shell_snapshot_tx = if config.features.enabled(Feature::ShellSnapshot) {
                 if let Some(snapshot) = session_configuration.inherited_shell_snapshot.clone() {
@@ -813,24 +836,24 @@ impl Session {
                 default_shell.shell_snapshot = rx;
                 tx
             };
-            let thread_name =
-                thread_title_from_thread_store(live_thread_init.as_ref(), &thread_store, thread_id)
-                    .instrument(info_span!(
-                        "session_init.thread_name_lookup",
-                        otel.name = "session_init.thread_name_lookup",
-                    ))
-                    .await;
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "shell-snapshot-built");
+            let thread_name = None;
             session_configuration.thread_name = thread_name.clone();
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "thread-name-set");
             validate_config_lock_if_configured(&session_configuration).await?;
             export_config_lock_if_configured(&session_configuration, thread_id).await?;
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "config-lock-validated");
             let state = SessionState::new(session_configuration.clone());
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "state-created");
             let managed_network_requirements_configured = config
                 .config_layer_stack
                 .requirements_toml()
                 .network
                 .is_some();
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "managed-network-checked");
             let managed_network_requirements_enabled = config.managed_network_requirements_enabled();
             let network_approval = Arc::new(NetworkApprovalService::default());
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "network-approval-created");
             // The managed proxy can call back into core for allowlist-miss decisions.
             let network_policy_decider_session = if managed_network_requirements_configured {
                 config
@@ -841,6 +864,7 @@ impl Session {
             } else {
                 None
             };
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "network-policy-decider-built");
             let blocked_request_observer = if managed_network_requirements_configured {
                 config
                     .permissions
@@ -850,6 +874,7 @@ impl Session {
             } else {
                 None
             };
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "blocked-observer-built");
             let network_policy_decider =
                 network_policy_decider_session
                     .as_ref()
@@ -859,13 +884,18 @@ impl Session {
                             Arc::clone(network_policy_decider_session),
                         )
                     });
+            let _ = std::fs::write("/workspace/_tmp/session_new.log", "network-policy-decider-built-2");
             let (network_proxy, session_network_proxy) =
                 if let Some(spec) = config.permissions.network.as_ref() {
+                    let _ = std::fs::write("/workspace/_tmp/session_new.log", "network-branch-entered");
                     let current_exec_policy = exec_policy.current();
+                    let _ = std::fs::write("/workspace/_tmp/session_new.log", "current-exec-policy-loaded");
+                    let permission_profile = config.permissions.permission_profile();
+                    let _ = std::fs::write("/workspace/_tmp/session_new.log", "permission-profile-loaded");
                     let (network_proxy, session_network_proxy) = Self::start_managed_network_proxy(
                         spec,
                         current_exec_policy.as_ref(),
-                        &config.permissions.permission_profile(),
+                        &permission_profile,
                         network_policy_decider.as_ref().map(Arc::clone),
                         blocked_request_observer.as_ref().map(Arc::clone),
                         managed_network_requirements_configured,
@@ -912,13 +942,15 @@ impl Session {
             let thread_extension_data =
                 codex_extension_api::ExtensionData::new(thread_id.to_string());
             for contributor in extensions.thread_lifecycle_contributors() {
-                contributor.on_thread_start(codex_extension_api::ThreadStartInput {
+                contributor
+                    .on_thread_start(codex_extension_api::ThreadStartInput {
                     config: config.as_ref(),
                     session_source: &session_configuration.session_source,
                     persistent_thread_state_available: !config.ephemeral,
                     session_store: &session_extension_data,
                     thread_store: &thread_extension_data,
-                });
+                })
+                .await;
             }
 
             let services = SessionServices {
@@ -996,6 +1028,7 @@ impl Session {
 
             let sess = Arc::new(Session {
                 conversation_id: thread_id,
+                forked_from_id,
                 installation_id,
                 tx_event: tx_event.clone(),
                 agent_status,
@@ -1172,7 +1205,15 @@ impl Session {
             };
 
             // record_initial_history can emit events. We record only after the SessionConfiguredEvent is emitted.
+            let _ = std::fs::write(
+                format!("/workspace/_tmp/session_new-{}.log", std::process::id()),
+                "before-record-initial-history",
+            );
             sess.record_initial_history(initial_history).await;
+            let _ = std::fs::write(
+                format!("/workspace/_tmp/session_new-{}.log", std::process::id()),
+                "after-record-initial-history",
+            );
             {
                 let mut state = sess.state.lock().await;
                 state.queue_pending_session_start_source(session_start_source);

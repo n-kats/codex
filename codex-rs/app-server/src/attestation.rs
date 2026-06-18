@@ -16,7 +16,7 @@ use tracing::warn;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::thread_state::ThreadStateManager;
 
-const ATTESTATION_GENERATE_TIMEOUT: Duration = Duration::from_millis(100);
+const ATTESTATION_GENERATE_TIMEOUT: Duration = Duration::from_secs(1);
 
 pub(crate) fn app_server_attestation_provider(
     outgoing: Arc<OutgoingMessageSender>,

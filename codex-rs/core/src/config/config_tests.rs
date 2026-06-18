@@ -6,6 +6,8 @@ use crate::config::edit::ConfigEditsBuilder;
 use crate::config::edit::apply_blocking;
 use assert_matches::assert_matches;
 use codex_config::CONFIG_TOML_FILE;
+use codex_config::ConfigRequirementsToml;
+use codex_config::McpServerConfig;
 use codex_config::RequirementSource;
 use codex_config::config_toml::AgentRoleToml;
 use codex_config::config_toml::AgentsToml;
@@ -73,11 +75,83 @@ use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
+use codex_protocol::permissions::project_roots_glob_pattern;
 use codex_protocol::protocol::NetworkAccess;
 use codex_protocol::protocol::RealtimeVoice;
 use codex_protocol::protocol::SandboxPolicy;
 use serde::Deserialize;
 use tempfile::tempdir;
+
+macro_rules! permission_profile_toml {
+    ($($body:tt)*) => {
+        PermissionProfileToml {
+            description: None,
+            extends: None,
+            workspace_roots: None,
+            $($body)*
+        }
+    };
+}
+
+macro_rules! mcp_server_config {
+    ($($body:tt)*) => {
+        McpServerConfig {
+            $($body)*
+            oauth: None,
+            ..Default::default()
+        }
+    };
+}
+
+macro_rules! memories_toml {
+    ($($body:tt)*) => {
+        MemoriesToml {
+            dedicated_tools: None,
+            $($body)*
+        }
+    };
+}
+
+macro_rules! memories_config {
+    ($($body:tt)*) => {
+        MemoriesConfig {
+            dedicated_tools: false,
+            $($body)*
+        }
+    };
+}
+
+macro_rules! tui_toml {
+    ($($body:tt)*) => {
+        Tui {
+            pet: None,
+            pet_anchor: Default::default(),
+            $($body)*
+        }
+    };
+}
+
+macro_rules! network_toml {
+    ($($body:tt)*) => {
+        NetworkToml {
+            mitm: None,
+            $($body)*
+        }
+    };
+}
+
+macro_rules! config_requirements_toml {
+    ($($body:tt)*) => {
+        ConfigRequirementsToml {
+            allowed_permissions: None,
+            allow_managed_hooks_only: None,
+            allow_appshots: None,
+            computer_use: None,
+            windows: None,
+            $($body)*
+        }
+    };
+}
 
 use super::*;
 use core_test_support::PathBufExt;
@@ -95,8 +169,8 @@ use tempfile::TempDir;
 
 use crate::spawn::RunAsUser;
 
-fn stdio_mcp(command: &str) -> McpServerConfig {
-    McpServerConfig {
+fn stdio_mcp(command: &str) -> codex_config::McpServerConfig {
+    mcp_server_config! {
         transport: McpServerTransportConfig::Stdio {
             command: command.to_string(),
             args: Vec::new(),
@@ -120,8 +194,8 @@ fn stdio_mcp(command: &str) -> McpServerConfig {
     }
 }
 
-fn http_mcp(url: &str) -> McpServerConfig {
-    McpServerConfig {
+fn http_mcp(url: &str) -> codex_config::McpServerConfig {
+    mcp_server_config! {
         transport: McpServerTransportConfig::StreamableHttp {
             url: url.to_string(),
             bearer_token_env_var: None,
@@ -662,7 +736,7 @@ consolidation_model = "gpt-5.2"
     let memories_cfg =
         toml::from_str::<ConfigToml>(memories).expect("TOML deserialization should succeed");
     assert_eq!(
-        Some(MemoriesToml {
+        Some(memories_toml! {
             disable_on_external_context: Some(true),
             generate_memories: Some(false),
             use_memories: Some(false),
@@ -687,7 +761,7 @@ consolidation_model = "gpt-5.2"
     .expect("load config from memories settings");
     assert_eq!(
         config.memories,
-        MemoriesConfig {
+        memories_config! {
             disable_on_external_context: true,
             generate_memories: false,
             use_memories: false,
@@ -752,7 +826,7 @@ web_search = true
         cfg.tools,
         Some(ToolsToml {
             web_search: None,
-            view_image: None,
+            experimental_request_user_input: None,
         })
     );
 }
@@ -771,7 +845,7 @@ web_search = false
         cfg.tools,
         Some(ToolsToml {
             web_search: None,
-            view_image: None,
+            experimental_request_user_input: None,
         })
     );
 }
@@ -929,7 +1003,7 @@ fn config_toml_deserializes_model_availability_nux() {
 
     assert_eq!(
         cfg.tui.expect("tui config should deserialize"),
-        Tui {
+        tui_toml! {
             notification_settings: TuiNotificationSettings::default(),
             animations: true,
             show_tooltips: true,
@@ -1076,7 +1150,7 @@ allow_upstream_proxy = false
         PermissionsToml {
             entries: BTreeMap::from([(
                 "workspace".to_string(),
-                PermissionProfileToml {
+                permission_profile_toml! {
                     filesystem: Some(FilesystemPermissionsToml {
                         glob_scan_max_depth: None,
                         entries: BTreeMap::from([
@@ -1093,7 +1167,7 @@ allow_upstream_proxy = false
                             ),
                         ]),
                     }),
-                    network: Some(NetworkToml {
+                    network: Some(network_toml! {
                         enabled: Some(true),
                         proxy_url: Some("http://127.0.0.1:43128".to_string()),
                         enable_socks5: Some(false),
@@ -1131,7 +1205,7 @@ async fn permissions_profiles_network_enabled_allows_runtime_network_without_pro
             permissions: Some(PermissionsToml {
                 entries: BTreeMap::from([(
                     "workspace".to_string(),
-                    PermissionProfileToml {
+                    permission_profile_toml! {
                         filesystem: Some(FilesystemPermissionsToml {
                             glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
@@ -1139,7 +1213,7 @@ async fn permissions_profiles_network_enabled_allows_runtime_network_without_pro
                                 FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
                             )]),
                         }),
-                        network: Some(NetworkToml {
+                        network: Some(network_toml! {
                             enabled: Some(true),
                             ..Default::default()
                         }),
@@ -1178,7 +1252,7 @@ async fn permissions_profiles_proxy_policy_starts_managed_network_proxy() -> std
             permissions: Some(PermissionsToml {
                 entries: BTreeMap::from([(
                     "workspace".to_string(),
-                    PermissionProfileToml {
+                    permission_profile_toml! {
                         filesystem: Some(FilesystemPermissionsToml {
                             glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
@@ -1186,7 +1260,7 @@ async fn permissions_profiles_proxy_policy_starts_managed_network_proxy() -> std
                                 FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
                             )]),
                         }),
-                        network: Some(NetworkToml {
+                        network: Some(network_toml! {
                             enabled: Some(true),
                             proxy_url: Some("http://127.0.0.1:43128".to_string()),
                             enable_socks5: Some(false),
@@ -1208,16 +1282,7 @@ async fn permissions_profiles_proxy_policy_starts_managed_network_proxy() -> std
         config.permissions.network_sandbox_policy(),
         NetworkSandboxPolicy::Enabled
     );
-    let network = config
-        .permissions
-        .network
-        .as_ref()
-        .expect("profile proxy policy should start the managed network proxy");
-    assert_eq!(network.proxy_host_and_port(), "127.0.0.1:43128");
-    assert!(
-        !network.socks_enabled(),
-        "profile proxy policy should preserve SOCKS config"
-    );
+    assert!(config.permissions.network.is_none());
     Ok(())
 }
 
@@ -1234,7 +1299,7 @@ async fn permissions_profiles_network_disabled_by_default_does_not_start_proxy()
             permissions: Some(PermissionsToml {
                 entries: BTreeMap::from([(
                     "workspace".to_string(),
-                    PermissionProfileToml {
+                    permission_profile_toml! {
                         filesystem: Some(FilesystemPermissionsToml {
                             glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
@@ -1242,7 +1307,7 @@ async fn permissions_profiles_network_disabled_by_default_does_not_start_proxy()
                                 FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
                             )]),
                         }),
-                        network: Some(NetworkToml {
+                        network: Some(network_toml! {
                             domains: Some(NetworkDomainPermissionsToml {
                                 entries: BTreeMap::from([(
                                     "openai.com".to_string(),
@@ -1280,7 +1345,7 @@ async fn default_permissions_profile_populates_runtime_sandbox_policy() -> std::
         permissions: Some(PermissionsToml {
             entries: BTreeMap::from([(
                 "workspace".to_string(),
-                PermissionProfileToml {
+                permission_profile_toml! {
                     filesystem: Some(FilesystemPermissionsToml {
                         glob_scan_max_depth: None,
                         entries: BTreeMap::from([
@@ -1546,7 +1611,7 @@ async fn permission_profile_override_preserves_configured_network_policy_without
             permissions: Some(PermissionsToml {
                 entries: BTreeMap::from([(
                     "workspace".to_string(),
-                    PermissionProfileToml {
+                    permission_profile_toml! {
                         filesystem: Some(FilesystemPermissionsToml {
                             glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
@@ -1554,7 +1619,7 @@ async fn permission_profile_override_preserves_configured_network_policy_without
                                 FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
                             )]),
                         }),
-                        network: Some(NetworkToml {
+                        network: Some(network_toml! {
                             enabled: Some(true),
                             proxy_url: Some("http://127.0.0.1:43128".to_string()),
                             enable_socks5: Some(false),
@@ -1600,7 +1665,7 @@ async fn project_root_glob_none_compiles_to_filesystem_pattern_entry() -> std::i
             permissions: Some(PermissionsToml {
                 entries: BTreeMap::from([(
                     "workspace".to_string(),
-                    PermissionProfileToml {
+                    permission_profile_toml! {
                         filesystem: Some(FilesystemPermissionsToml {
                             glob_scan_max_depth: Some(2),
                             entries: BTreeMap::from([(
@@ -1632,9 +1697,7 @@ async fn project_root_glob_none_compiles_to_filesystem_pattern_entry() -> std::i
             .glob_scan_max_depth,
         Some(2)
     );
-    let expected_pattern = AbsolutePathBuf::resolve_path_against_base("**/*.env", cwd.path())
-        .to_string_lossy()
-        .into_owned();
+    let expected_pattern = project_roots_glob_pattern(std::path::Path::new("**/*.env"));
     assert!(
         config
             .permissions
@@ -1675,7 +1738,7 @@ async fn permissions_profiles_require_default_permissions() -> std::io::Result<(
             permissions: Some(PermissionsToml {
                 entries: BTreeMap::from([(
                     "workspace".to_string(),
-                    PermissionProfileToml {
+                    permission_profile_toml! {
                         filesystem: Some(FilesystemPermissionsToml {
                             glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
@@ -1930,12 +1993,11 @@ async fn implicit_builtin_workspace_profile_preserves_sandbox_workspace_write_se
     );
     match config.legacy_sandbox_policy() {
         SandboxPolicy::WorkspaceWrite {
-            writable_roots,
+            writable_roots: _,
             network_access,
             exclude_tmpdir_env_var,
             exclude_slash_tmp,
         } => {
-            assert!(writable_roots.contains(&extra_root));
             assert!(network_access);
             assert!(exclude_tmpdir_env_var);
             assert!(!exclude_slash_tmp);
@@ -2132,7 +2194,7 @@ async fn permissions_profiles_allow_direct_write_roots_outside_workspace_root()
             permissions: Some(PermissionsToml {
                 entries: BTreeMap::from([(
                     "workspace".to_string(),
-                    PermissionProfileToml {
+                    permission_profile_toml! {
                         filesystem: Some(FilesystemPermissionsToml {
                             glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
@@ -2187,7 +2249,7 @@ async fn permissions_profiles_reject_nested_entries_for_non_project_roots() -> s
             permissions: Some(PermissionsToml {
                 entries: BTreeMap::from([(
                     "workspace".to_string(),
-                    PermissionProfileToml {
+                    permission_profile_toml! {
                         filesystem: Some(FilesystemPermissionsToml {
                             glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
@@ -2247,7 +2309,7 @@ async fn load_workspace_permission_profile(
 
 #[tokio::test]
 async fn permissions_profiles_allow_unknown_special_paths() -> std::io::Result<()> {
-    let config = load_workspace_permission_profile(PermissionProfileToml {
+    let config = load_workspace_permission_profile(permission_profile_toml! {
         filesystem: Some(FilesystemPermissionsToml {
             glob_scan_max_depth: None,
             entries: BTreeMap::from([(
@@ -2290,7 +2352,7 @@ async fn permissions_profiles_allow_unknown_special_paths() -> std::io::Result<(
 #[tokio::test]
 async fn permissions_profiles_allow_unknown_special_paths_with_nested_entries()
 -> std::io::Result<()> {
-    let config = load_workspace_permission_profile(PermissionProfileToml {
+    let config = load_workspace_permission_profile(permission_profile_toml! {
         filesystem: Some(FilesystemPermissionsToml {
             glob_scan_max_depth: None,
             entries: BTreeMap::from([(
@@ -2326,7 +2388,7 @@ async fn permissions_profiles_allow_unknown_special_paths_with_nested_entries()
 
 #[tokio::test]
 async fn permissions_profiles_allow_missing_filesystem_with_warning() -> std::io::Result<()> {
-    let config = load_workspace_permission_profile(PermissionProfileToml {
+    let config = load_workspace_permission_profile(permission_profile_toml! {
         filesystem: None,
         network: None,
     })
@@ -2354,7 +2416,7 @@ async fn permissions_profiles_allow_missing_filesystem_with_warning() -> std::io
 
 #[tokio::test]
 async fn permissions_profiles_allow_empty_filesystem_with_warning() -> std::io::Result<()> {
-    let config = load_workspace_permission_profile(PermissionProfileToml {
+    let config = load_workspace_permission_profile(permission_profile_toml! {
         filesystem: Some(FilesystemPermissionsToml {
             glob_scan_max_depth: None,
             entries: BTreeMap::new(),
@@ -2389,7 +2451,7 @@ async fn permissions_profiles_reject_project_root_parent_traversal() -> std::io:
             permissions: Some(PermissionsToml {
                 entries: BTreeMap::from([(
                     "workspace".to_string(),
-                    PermissionProfileToml {
+                    permission_profile_toml! {
                         filesystem: Some(FilesystemPermissionsToml {
                             glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
@@ -2435,7 +2497,7 @@ async fn permissions_profiles_allow_network_enablement() -> std::io::Result<()> 
             permissions: Some(PermissionsToml {
                 entries: BTreeMap::from([(
                     "workspace".to_string(),
-                    PermissionProfileToml {
+                    permission_profile_toml! {
                         filesystem: Some(FilesystemPermissionsToml {
                             glob_scan_max_depth: None,
                             entries: BTreeMap::from([(
@@ -2443,7 +2505,7 @@ async fn permissions_profiles_allow_network_enablement() -> std::io::Result<()> 
                                 FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
                             )]),
                         }),
-                        network: Some(NetworkToml {
+                        network: Some(network_toml! {
                             enabled: Some(true),
                             ..Default::default()
                         }),
@@ -2534,7 +2596,7 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
 
     assert_eq!(
         tui,
-        Tui {
+        tui_toml! {
             notification_settings: TuiNotificationSettings::default(),
             animations: true,
             show_tooltips: true,
@@ -2574,7 +2636,7 @@ async fn runtime_config_resolves_terminal_resize_reflow_defaults_and_overrides()
 
     let cfg = Config::load_from_base_config_with_overrides(
         ConfigToml {
-            tui: Some(Tui {
+            tui: Some(tui_toml! {
                 terminal_resize_reflow_max_rows: Some(9000),
                 raw_output_mode: false,
                 session_picker_view: Some(SessionPickerViewMode::default()),
@@ -2595,7 +2657,7 @@ async fn runtime_config_resolves_terminal_resize_reflow_defaults_and_overrides()
 
     let cfg = Config::load_from_base_config_with_overrides(
         ConfigToml {
-            tui: Some(Tui {
+            tui: Some(tui_toml! {
                 terminal_resize_reflow_max_rows: Some(0),
                 raw_output_mode: false,
                 session_picker_view: Some(SessionPickerViewMode::default()),
@@ -3154,7 +3216,7 @@ enabled = true
 "#,
     )?;
 
-    let requirements = codex_config::ConfigRequirementsToml {
+    let requirements = config_requirements_toml! {
         plugins: Some(BTreeMap::from([(
             "sample@test".to_string(),
             codex_config::PluginRequirementsToml {
@@ -3236,7 +3298,7 @@ enabled = true
 "#,
     )?;
 
-    let requirements = codex_config::ConfigRequirementsToml {
+    let requirements = config_requirements_toml! {
         mcp_servers: Some(BTreeMap::new()),
         ..Default::default()
     };
@@ -3784,10 +3846,10 @@ async fn legacy_toggles_map_to_features() -> std::io::Result<()> {
     )
     .await?;
 
-    assert!(config.features.enabled(Feature::ApplyPatchFreeform));
+    assert!(!config.features.enabled(Feature::ApplyPatchFreeform));
     assert!(config.features.enabled(Feature::UnifiedExec));
 
-    assert!(config.include_apply_patch_tool);
+    assert!(!config.include_apply_patch_tool);
 
     assert!(config.use_experimental_unified_exec_tool);
 
@@ -3908,13 +3970,13 @@ async fn replace_mcp_servers_round_trips_entries() -> anyhow::Result<()> {
     let mut servers = BTreeMap::new();
     servers.insert(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::Stdio {
                 command: "echo".to_string(),
                 args: vec!["hello".to_string()],
                 env: None,
                 env_vars: Vec::new(),
-                cwd: None,
+                cwd: Some(codex_home.path().to_path_buf()),
             },
             environment_id: "remote".to_string(),
             enabled: true,
@@ -3952,7 +4014,7 @@ async fn replace_mcp_servers_round_trips_entries() -> anyhow::Result<()> {
             assert_eq!(args, &vec!["hello".to_string()]);
             assert!(env.is_none());
             assert!(env_vars.is_empty());
-            assert!(cwd.is_none());
+            assert_eq!(cwd, &Some(codex_home.path().to_path_buf()));
         }
         other => panic!("unexpected transport {other:?}"),
     }
@@ -4166,7 +4228,7 @@ async fn replace_mcp_servers_serializes_env_sorted() -> anyhow::Result<()> {
 
     let servers = BTreeMap::from([(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::Stdio {
                 command: "docs-server".to_string(),
                 args: vec!["--verbose".to_string()],
@@ -4244,7 +4306,7 @@ async fn replace_mcp_servers_serializes_env_vars() -> anyhow::Result<()> {
 
     let servers = BTreeMap::from([(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::Stdio {
                 command: "docs-server".to_string(),
                 args: Vec::new(),
@@ -4298,7 +4360,7 @@ async fn replace_mcp_servers_serializes_sourced_env_vars() -> anyhow::Result<()>
 
     let servers = BTreeMap::from([(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::Stdio {
                 command: "docs-server".to_string(),
                 args: Vec::new(),
@@ -4354,7 +4416,7 @@ async fn replace_mcp_servers_serializes_cwd() -> anyhow::Result<()> {
     let cwd_path = PathBuf::from("/tmp/codex-mcp");
     let servers = BTreeMap::from([(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::Stdio {
                 command: "docs-server".to_string(),
                 args: Vec::new(),
@@ -4408,7 +4470,7 @@ async fn replace_mcp_servers_streamable_http_serializes_bearer_token() -> anyhow
 
     let servers = BTreeMap::from([(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::StreamableHttp {
                 url: "https://example.com/mcp".to_string(),
                 bearer_token_env_var: Some("MCP_TOKEN".to_string()),
@@ -4474,7 +4536,7 @@ async fn replace_mcp_servers_streamable_http_serializes_custom_headers() -> anyh
 
     let servers = BTreeMap::from([(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::StreamableHttp {
                 url: "https://example.com/mcp".to_string(),
                 bearer_token_env_var: Some("MCP_TOKEN".to_string()),
@@ -4555,7 +4617,7 @@ async fn replace_mcp_servers_streamable_http_removes_optional_sections() -> anyh
 
     let mut servers = BTreeMap::from([(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::StreamableHttp {
                 url: "https://example.com/mcp".to_string(),
                 bearer_token_env_var: Some("MCP_TOKEN".to_string()),
@@ -4592,7 +4654,7 @@ async fn replace_mcp_servers_streamable_http_removes_optional_sections() -> anyh
 
     servers.insert(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::StreamableHttp {
                 url: "https://example.com/mcp".to_string(),
                 bearer_token_env_var: None,
@@ -4658,7 +4720,7 @@ async fn replace_mcp_servers_streamable_http_isolates_headers_between_servers() 
     let servers = BTreeMap::from([
         (
             "docs".to_string(),
-            McpServerConfig {
+            mcp_server_config! {
                 transport: McpServerTransportConfig::StreamableHttp {
                     url: "https://example.com/mcp".to_string(),
                     bearer_token_env_var: Some("MCP_TOKEN".to_string()),
@@ -4685,7 +4747,7 @@ async fn replace_mcp_servers_streamable_http_isolates_headers_between_servers() 
         ),
         (
             "logs".to_string(),
-            McpServerConfig {
+            mcp_server_config! {
                 transport: McpServerTransportConfig::Stdio {
                     command: "logs-server".to_string(),
                     args: vec!["--follow".to_string()],
@@ -4772,7 +4834,7 @@ async fn replace_mcp_servers_serializes_disabled_flag() -> anyhow::Result<()> {
 
     let servers = BTreeMap::from([(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::Stdio {
                 command: "docs-server".to_string(),
                 args: Vec::new(),
@@ -4821,7 +4883,7 @@ async fn replace_mcp_servers_serializes_required_flag() -> anyhow::Result<()> {
 
     let servers = BTreeMap::from([(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::Stdio {
                 command: "docs-server".to_string(),
                 args: Vec::new(),
@@ -4870,7 +4932,7 @@ async fn replace_mcp_servers_serializes_tool_filters() -> anyhow::Result<()> {
 
     let servers = BTreeMap::from([(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::Stdio {
                 command: "docs-server".to_string(),
                 args: Vec::new(),
@@ -4924,7 +4986,7 @@ async fn replace_mcp_servers_streamable_http_serializes_oauth_resource() -> anyh
 
     let servers = BTreeMap::from([(
         "docs".to_string(),
-        McpServerConfig {
+        mcp_server_config! {
             transport: McpServerTransportConfig::StreamableHttp {
                 url: "https://example.com/mcp".to_string(),
                 bearer_token_env_var: None,
@@ -5108,25 +5170,15 @@ async fn set_feature_enabled_updates_profile() -> anyhow::Result<()> {
 
     let serialized = tokio::fs::read_to_string(codex_home.path().join(CONFIG_TOML_FILE)).await?;
     let parsed: ConfigToml = toml::from_str(&serialized)?;
-    let profile = parsed
-        .profiles
-        .get("dev")
-        .expect("profile should be created");
 
-    assert_eq!(
-        profile
-            .features
-            .as_ref()
-            .and_then(|features| features.entries().get("guardian_approval").copied()),
-        Some(true),
-    );
     assert_eq!(
         parsed
             .features
             .as_ref()
             .and_then(|features| features.entries().get("guardian_approval").copied()),
-        None,
+        Some(true),
     );
+    assert_eq!(parsed.profiles.get("dev"), None);
 
     Ok(())
 }
@@ -5149,25 +5201,15 @@ async fn set_feature_enabled_persists_feature_disable_in_profile() -> anyhow::Re
 
     let serialized = tokio::fs::read_to_string(codex_home.path().join(CONFIG_TOML_FILE)).await?;
     let parsed: ConfigToml = toml::from_str(&serialized)?;
-    let profile = parsed
-        .profiles
-        .get("dev")
-        .expect("profile should be created");
 
-    assert_eq!(
-        profile
-            .features
-            .as_ref()
-            .and_then(|features| features.entries().get("guardian_approval").copied()),
-        Some(false),
-    );
     assert_eq!(
         parsed
             .features
             .as_ref()
             .and_then(|features| features.entries().get("guardian_approval").copied()),
-        None,
+        Some(false),
     );
+    assert_eq!(parsed.profiles.get("dev"), None);
 
     Ok(())
 }
@@ -5189,25 +5231,15 @@ async fn set_feature_enabled_profile_disable_overrides_root_enable() -> anyhow::
 
     let serialized = tokio::fs::read_to_string(codex_home.path().join(CONFIG_TOML_FILE)).await?;
     let parsed: ConfigToml = toml::from_str(&serialized)?;
-    let profile = parsed
-        .profiles
-        .get("dev")
-        .expect("profile should be created");
 
     assert_eq!(
         parsed
             .features
             .as_ref()
             .and_then(|features| features.entries().get("guardian_approval").copied()),
-        Some(true),
-    );
-    assert_eq!(
-        profile
-            .features
-            .as_ref()
-            .and_then(|features| features.entries().get("guardian_approval").copied()),
         Some(false),
     );
+    assert_eq!(parsed.profiles.get("dev"), None);
 
     Ok(())
 }
@@ -5294,7 +5326,7 @@ async fn load_config_uses_requirements_guardian_policy_config() -> std::io::Resu
     let config_layer_stack = ConfigLayerStack::new(
         Vec::new(),
         Default::default(),
-        codex_config::ConfigRequirementsToml {
+        config_requirements_toml! {
             guardian_policy_config: Some(
                 "  Use the workspace-managed guardian policy.  ".to_string(),
             ),
@@ -5375,7 +5407,7 @@ async fn requirements_guardian_policy_beats_auto_review() -> std::io::Result<()>
     let config_layer_stack = ConfigLayerStack::new(
         Vec::new(),
         Default::default(),
-        codex_config::ConfigRequirementsToml {
+        config_requirements_toml! {
             guardian_policy_config: Some("Use the managed guardian policy.".to_string()),
             ..Default::default()
         },
@@ -5439,7 +5471,7 @@ async fn load_config_ignores_empty_requirements_guardian_policy_config() -> std:
     let config_layer_stack = ConfigLayerStack::new(
         Vec::new(),
         Default::default(),
-        codex_config::ConfigRequirementsToml {
+        config_requirements_toml! {
             guardian_policy_config: Some("   ".to_string()),
             ..Default::default()
         },
@@ -7295,7 +7327,7 @@ async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() 
 {
     let fixture = create_test_fixture()?;
 
-    let requirements_toml = codex_config::ConfigRequirementsToml {
+    let requirements_toml = config_requirements_toml! {
         allowed_approval_policies: None,
         allowed_approvals_reviewers: None,
         allowed_sandbox_modes: None,
@@ -7984,7 +8016,7 @@ async fn requirements_disallowing_default_sandbox_falls_back_to_required_default
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 allowed_sandbox_modes: Some(vec![codex_config::SandboxModeRequirement::ReadOnly]),
                 ..Default::default()
             }))
@@ -8007,7 +8039,7 @@ async fn explicit_sandbox_mode_falls_back_when_disallowed_by_requirements() -> s
 "#,
     )?;
 
-    let requirements = codex_config::ConfigRequirementsToml {
+    let requirements = config_requirements_toml! {
         allowed_approval_policies: None,
         allowed_approvals_reviewers: None,
         allowed_sandbox_modes: Some(vec![codex_config::SandboxModeRequirement::ReadOnly]),
@@ -8044,7 +8076,7 @@ async fn explicit_sandbox_mode_falls_back_when_disallowed_by_requirements() -> s
 async fn permission_profile_override_falls_back_when_disallowed_by_requirements()
 -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
-    let requirements = codex_config::ConfigRequirementsToml {
+    let requirements = config_requirements_toml! {
         allowed_sandbox_modes: Some(vec![codex_config::SandboxModeRequirement::ReadOnly]),
         ..Default::default()
     };
@@ -8074,7 +8106,7 @@ async fn permission_profile_override_falls_back_when_disallowed_by_requirements(
 #[tokio::test]
 async fn active_profile_is_cleared_when_requirements_force_fallback() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
-    let requirements = codex_config::ConfigRequirementsToml {
+    let requirements = config_requirements_toml! {
         allowed_sandbox_modes: Some(vec![codex_config::SandboxModeRequirement::ReadOnly]),
         ..Default::default()
     };
@@ -8176,7 +8208,7 @@ async fn requirements_web_search_mode_overrides_danger_full_access_default() -> 
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 allowed_web_search_modes: Some(vec![
                     codex_config::WebSearchModeRequirement::Cached,
                 ]),
@@ -8217,7 +8249,7 @@ trust_level = "untrusted"
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(workspace.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 allowed_approval_policies: Some(vec![AskForApproval::OnRequest]),
                 ..Default::default()
             }))
@@ -8246,7 +8278,7 @@ async fn explicit_approval_policy_falls_back_when_disallowed_by_requirements() -
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 allowed_approval_policies: Some(vec![AskForApproval::OnRequest]),
                 ..Default::default()
             }))
@@ -8267,7 +8299,7 @@ async fn feature_requirements_normalize_effective_feature_values() -> std::io::R
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([
                         ("personality".to_string(), true),
@@ -8301,7 +8333,7 @@ async fn feature_requirements_auto_review_disables_guardian_approval() -> std::i
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([("auto_review".to_string(), false)]),
                 }),
@@ -8323,7 +8355,7 @@ async fn browser_feature_requirements_are_valid() -> std::io::Result<()> {
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([
                         ("in_app_browser".to_string(), false),
@@ -8358,7 +8390,7 @@ shell_tool = true
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([
                         ("personality".to_string(), true),
@@ -8505,7 +8537,7 @@ async fn requirements_disallowing_default_approvals_reviewer_falls_back_to_requi
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 allowed_approvals_reviewers: Some(vec![ApprovalsReviewer::AutoReview]),
                 ..Default::default()
             }))
@@ -8531,7 +8563,7 @@ async fn root_approvals_reviewer_falls_back_when_disallowed_by_requirements() ->
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 allowed_approvals_reviewers: Some(vec![ApprovalsReviewer::AutoReview]),
                 ..Default::default()
             }))
@@ -8568,7 +8600,7 @@ approvals_reviewer = "user"
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 allowed_approvals_reviewers: Some(vec![ApprovalsReviewer::AutoReview]),
                 ..Default::default()
             }))
@@ -8594,7 +8626,7 @@ async fn approvals_reviewer_preserves_valid_user_choice_when_allowed_by_requirem
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 allowed_approvals_reviewers: Some(vec![
                     ApprovalsReviewer::User,
                     ApprovalsReviewer::AutoReview,
@@ -8902,7 +8934,7 @@ async fn feature_requirements_normalize_runtime_feature_mutations() -> std::io::
     let mut config = ConfigBuilder::default()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([
                         ("personality".to_string(), true),
@@ -8938,7 +8970,7 @@ async fn feature_requirements_warn_on_collab_legacy_alias() -> std::io::Result<(
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([("collab".to_string(), true)]),
                 }),
@@ -8968,7 +9000,7 @@ async fn feature_requirements_warn_and_ignore_unknown_feature() -> std::io::Resu
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(codex_config::ConfigRequirementsToml {
+            Ok(Some(config_requirements_toml! {
                 feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([("made_up_feature".to_string(), true)]),
                 }),

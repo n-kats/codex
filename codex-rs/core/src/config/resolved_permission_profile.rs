@@ -19,7 +19,9 @@ impl BuiltInPermissionProfileId {
         match id {
             BUILT_IN_PERMISSION_PROFILE_READ_ONLY => Some(Self::ReadOnly),
             BUILT_IN_PERMISSION_PROFILE_WORKSPACE => Some(Self::Workspace),
-            BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS => Some(Self::DangerFullAccess),
+            BUILT_IN_PERMISSION_PROFILE_DANGER_FULL_ACCESS | ":danger-no-sandbox" => {
+                Some(Self::DangerFullAccess)
+            }
             _ => None,
         }
     }

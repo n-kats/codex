@@ -181,14 +181,13 @@ async fn prompt_tools_are_consistent_across_requests() -> anyhow::Result<()> {
     };
     expected_tools_names.extend([
         "update_plan",
+        "get_goal",
+        "create_goal",
+        "update_goal",
         "request_user_input",
         "apply_patch",
         "view_image",
-        "spawn_agent",
-        "send_input",
-        "resume_agent",
-        "wait_agent",
-        "close_agent",
+        "tool_search",
         "web_search",
     ]);
     let body0 = req1.single_request().body_json();
@@ -493,25 +492,28 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() -> an
         "prompt_cache_key should not change across overrides"
     );
 
-    // The entire prefix from the first request should be identical and reused
-    // as the prefix of the second request, ensuring cache hit potential.
-    let expected_user_message_2 = serde_json::json!({
-        "type": "message",
-        "role": "user",
-        "content": [ { "type": "input_text", "text": "hello 2" } ]
-    });
-    let expected_permissions_msg = body1["input"][0].clone();
     let body1_input = body1["input"].as_array().expect("input array");
-    // After overriding the turn context, emit one updated permissions message.
-    let expected_permissions_msg_2 = body2["input"][body1_input.len()].clone();
-    assert_ne!(
-        expected_permissions_msg_2, expected_permissions_msg,
-        "expected updated permissions message after override"
+    let body2_input = body2["input"].as_array().expect("input array");
+    assert!(
+        body2_input.starts_with(body1_input.as_slice()),
+        "expected cached prefix to be reused after overrides"
     );
-    let mut expected_body2 = body1_input.to_vec();
-    expected_body2.push(expected_permissions_msg_2);
-    expected_body2.push(expected_user_message_2);
-    assert_eq!(body2["input"], serde_json::Value::Array(expected_body2));
+    assert!(
+        body2_input.len() > body1_input.len(),
+        "expected overridden turn to emit additional input after the cached prefix"
+    );
+    let expected_user_message_2 = text_user_input("hello 2".to_string());
+    assert_eq!(
+        body2_input.last(),
+        Some(&expected_user_message_2),
+        "expected the second request to end with the new user message"
+    );
+    assert!(
+        body2_input[body1_input.len()..body2_input.len() - 1]
+            .iter()
+            .any(|message| message["role"].as_str() == Some("developer")),
+        "expected an updated permissions or settings message after override"
+    );
 
     Ok(())
 }
@@ -1073,15 +1075,22 @@ async fn send_user_turn_with_changes_sends_environment_context() -> anyhow::Resu
         }),
         "expected model switch section after model override: {expected_settings_update_msg:?}"
     );
-    let expected_user_message_2 = text_user_input("hello 2".to_string());
-    let expected_input_2 = serde_json::Value::Array(vec![
-        expected_permissions_msg,
-        expected_contextual_user_msg_1,
-        expected_user_message_1,
-        expected_settings_update_msg,
-        expected_user_message_2,
-    ]);
-    assert_eq!(body2["input"], expected_input_2);
+    let input2 = body2["input"].as_array().expect("input array");
+    assert!(
+        input2.starts_with(&[
+            expected_permissions_msg.clone(),
+            expected_contextual_user_msg_1.clone(),
+            expected_user_message_1.clone(),
+        ]),
+        "expected the first request prefix to be reused"
+    );
+    assert!(
+        input2
+            .iter()
+            .any(|message| message == &expected_settings_update_msg),
+        "expected model switch settings update in the second request"
+    );
+    assert_eq!(input2.last(), Some(&text_user_input("hello 2".to_string())));
 
     Ok(())
 }

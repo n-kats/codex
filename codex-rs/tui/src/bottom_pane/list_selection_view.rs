@@ -1978,6 +1978,44 @@ mod tests {
     }
 
     #[test]
+    fn enter_accepts_selected_item_and_runs_actions() {
+        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut view = new_view(
+            SelectionViewParams {
+                items: vec![
+                    SelectionItem {
+                        name: "Yes".to_string(),
+                        dismiss_on_select: true,
+                        actions: vec![Box::new(|tx: &_| {
+                            tx.send(AppEvent::OpenApprovalsPopup);
+                        })],
+                        ..Default::default()
+                    },
+                    SelectionItem {
+                        name: "No".to_string(),
+                        dismiss_on_select: true,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            tx,
+        );
+
+        assert_eq!(view.selected_actual_idx(), Some(0));
+
+        view.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+        assert!(view.is_complete());
+        match rx.try_recv() {
+            Ok(AppEvent::OpenApprovalsPopup) => {}
+            Ok(other) => panic!("expected accept action event, got {other:?}"),
+            Err(err) => panic!("expected accept action event, got {err}"),
+        }
+    }
+
+    #[test]
     fn move_down_without_selection_change_does_not_fire_callback() {
         let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
         let tx = AppEventSender::new(tx_raw);

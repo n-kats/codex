@@ -157,189 +157,37 @@ pub(super) async fn make_chatwidget_manual(
     if let Some(model) = model_override {
         cfg.model = Some(model.to_string());
     }
-    let prevent_idle_sleep = cfg.features.enabled(Feature::PreventIdleSleep);
     let session_telemetry = test_session_telemetry(&cfg, resolved_model.as_str());
-    let mut bottom = BottomPane::new(BottomPaneParams {
-        app_event_tx: app_event_tx.clone(),
-        frame_requester: FrameRequester::test_dummy(),
-        has_input_focus: true,
-        enhanced_keys_supported: false,
-        placeholder_text: "Ask Codex to do anything".to_string(),
-        disable_paste_burst: false,
-        animations_enabled: cfg.animations,
-        skills: None,
-    });
-    bottom.set_collaboration_modes_enabled(/*enabled*/ true);
     let model_catalog = test_model_catalog(&cfg);
-    let reasoning_effort = None;
-    let base_mode = CollaborationMode {
-        mode: ModeKind::Default,
-        settings: Settings {
-            model: resolved_model.clone(),
-            reasoning_effort,
-            developer_instructions: None,
-        },
-    };
-    let current_collaboration_mode = base_mode;
-    let active_collaboration_mask = collaboration_modes::default_mask(model_catalog.as_ref());
-    let effective_service_tier = cfg.service_tier.clone();
-    let mut widget = ChatWidget {
-        app_event_tx,
-        codex_op_target: super::CodexOpTarget::Direct(op_tx),
-        bottom_pane: bottom,
-        active_cell: None,
-        active_cell_revision: 0,
-        raw_output_mode: cfg.tui_raw_output_mode,
+    let common = ChatWidgetInit {
         config: cfg,
-        tui_pet: None,
-        tui_pet_anchor: TuiPetAnchor::BottomRight,
-        ambient_pet: None,
-        pet_picker_preview_state: crate::pets::PetPickerPreviewState::default(),
-        pet_picker_preview_pet: None,
-        pet_picker_preview_request_id: 0,
-        pet_picker_preview_image_visible: std::cell::Cell::new(false),
-        pet_selection_load_request_id: 0,
-        #[cfg(test)]
-        pet_image_support_override: None,
-        effective_service_tier,
-        current_collaboration_mode,
-        active_collaboration_mask,
+        frame_requester: FrameRequester::test_dummy(),
+        app_event_tx,
+        initial_user_message: None,
+        enhanced_keys_supported: false,
         has_chatgpt_account: false,
         model_catalog,
-        session_telemetry,
-        session_header: SessionHeader::new(resolved_model.clone()),
-        initial_user_message: None,
+        feedback: codex_feedback::CodexFeedback::new(),
+        is_first_run: true,
         status_account_display: None,
         runtime_model_provider_base_url: None,
-        token_info: None,
-        rate_limit_snapshots_by_limit_id: BTreeMap::new(),
-        refreshing_status_outputs: Vec::new(),
-        next_status_refresh_request_id: 0,
-        plan_type: None,
-        codex_rate_limit_reached_type: None,
-        rate_limit_warnings: RateLimitWarningState::default(),
-        rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
-        add_credits_nudge_email_in_flight: None,
-        adaptive_chunking: crate::streaming::chunking::AdaptiveChunkingPolicy::default(),
-        stream_controller: None,
-        plan_stream_controller: None,
-        clipboard_lease: None,
-        copy_last_response_binding: crate::keymap::RuntimeKeymap::defaults().app.copy,
-        pending_guardian_review_status: PendingGuardianReviewStatus::default(),
-        recent_auto_review_denials: RecentAutoReviewDenials::default(),
-        terminal_title_status_kind: TerminalTitleStatusKind::Working,
-        last_agent_markdown: None,
-        agent_turn_markdowns: Vec::new(),
-        visible_user_turn_count: 0,
-        copy_history_evicted_by_rollback: false,
-        latest_proposed_plan_markdown: None,
-        saw_copy_source_this_turn: false,
-        running_commands: HashMap::new(),
-        collab_agent_metadata: HashMap::new(),
-        pending_collab_spawn_requests: HashMap::new(),
-        suppressed_exec_calls: HashSet::new(),
-        skills_all: Vec::new(),
-        skills_initial_state: None,
-        last_unified_wait: None,
-        unified_exec_wait_streak: None,
-        turn_sleep_inhibitor: SleepInhibitor::new(prevent_idle_sleep),
-        task_complete_pending: false,
-        unified_exec_processes: Vec::new(),
-        agent_turn_running: false,
-        mcp_startup_status: None,
-        mcp_startup_expected_servers: None,
-        mcp_startup_ignore_updates_until_next_start: false,
-        mcp_startup_allow_terminal_only_next_round: false,
-        mcp_startup_pending_next_round: HashMap::new(),
-        mcp_startup_pending_next_round_saw_starting: false,
-        connectors_cache: ConnectorsCacheState::default(),
-        connectors_partial_snapshot: None,
-        plugin_install_apps_needing_auth: Vec::new(),
-        plugin_install_auth_flow: None,
-        plugins_active_tab_id: None,
-        newly_installed_marketplace_tab_id: None,
-        connectors_prefetch_in_flight: false,
-        connectors_force_refetch_pending: false,
-        plugins_cache: PluginsCacheState::default(),
-        plugins_fetch_state: PluginListFetchState::default(),
-        interrupts: InterruptManager::new(),
-        reasoning_buffer: String::new(),
-        full_reasoning_buffer: String::new(),
-        transcript: transcript::TranscriptState::new(None),
-        current_status: StatusIndicatorState::working(),
-        active_hook_cell: None,
-        status_state: status_state::StatusState::default(),
-        retry_status_header: None,
-        pending_status_indicator_restore: false,
-        suppress_queue_autosend: false,
-        thread_id: None,
-        dismissed_plan_mode_nudge_scopes: HashSet::new(),
-        last_turn_id: None,
-        budget_limited_turn_ids: HashSet::new(),
-        thread_name: None,
-        thread_rename_block_message: None,
-        active_side_conversation: false,
-        normal_placeholder_text: "Ask Codex to do anything".to_string(),
-        side_placeholder_text: "Check recently modified functions for compatibility".to_string(),
-        forked_from: None,
-        interrupted_turn_notice_mode: InterruptedTurnNoticeMode::Default,
-        frame_requester: FrameRequester::test_dummy(),
-        show_welcome_banner: true,
+        initial_plan_type: None,
+        model: Some(resolved_model.clone()),
         startup_tooltip_override: None,
-        queued_user_messages: VecDeque::new(),
-        queued_user_message_history_records: VecDeque::new(),
-        user_turn_pending_start: false,
-        rejected_steers_queue: VecDeque::new(),
-        rejected_steer_history_records: VecDeque::new(),
-        pending_steers: VecDeque::new(),
-        submit_pending_steers_after_interrupt: false,
-        chat_keymap: crate::keymap::RuntimeKeymap::defaults().chat,
-        queued_message_edit_hint_binding: Some(crate::key_hint::alt(KeyCode::Up)),
-        suppress_session_configured_redraw: false,
-        suppress_initial_user_message_submit: false,
-        pending_notification: None,
-        quit_shortcut_expires_at: None,
-        quit_shortcut_key: None,
-        is_review_mode: false,
-        pre_review_token_info: None,
-        needs_final_message_separator: false,
-        had_work_activity: false,
-        saw_plan_update_this_turn: false,
-        saw_plan_item_this_turn: false,
-        last_plan_progress: None,
-        plan_delta_buffer: String::new(),
-        plan_item_active: false,
-        turn_runtime_metrics: RuntimeMetricsSummary::default(),
-        last_rendered_width: std::cell::Cell::new(None),
-        feedback: codex_feedback::CodexFeedback::new(),
-        current_rollout_path: None,
-        current_cwd: None,
-        workspace_command_runner: None,
-        instruction_source_paths: Vec::new(),
-        session_network_proxy: None,
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
-        last_terminal_title: None,
-        last_terminal_title_requires_action: false,
-        terminal_title_setup_original_items: None,
-        terminal_title_animation_origin: Instant::now(),
-        status_line_project_root_name_cache: None,
-        status_line_branch: None,
-        status_line_branch_cwd: None,
-        status_line_branch_pending: false,
-        status_line_branch_lookup_complete: false,
-        status_line_git_summary: None,
-        status_line_git_summary_cwd: None,
-        status_line_git_summary_pending: false,
-        status_line_git_summary_lookup_complete: false,
-        current_goal_status_indicator: None,
-        current_goal_status: None,
-        goal_status_active_turn_started_at: None,
-        external_editor_state: ExternalEditorState::Closed,
-        realtime_conversation: RealtimeConversationUiState::default(),
-        last_rendered_user_message_display: None,
-        last_non_retry_error: None,
+        workspace_command_runner: None,
+        session_telemetry,
     };
+    let mut widget = ChatWidget::new_with_op_target(common, super::CodexOpTarget::Direct(op_tx));
+    widget.transcript.active_cell = None;
+    widget.transcript.active_cell_revision = 0;
+    widget.normal_placeholder_text = "Ask Codex to do anything".to_string();
+    widget.side_placeholder_text =
+        "Check recently modified functions for compatibility".to_string();
+    widget
+        .bottom_pane
+        .set_placeholder_text(widget.normal_placeholder_text.clone());
     widget.set_model(&resolved_model);
     (widget, rx, op_rx)
 }
@@ -865,6 +713,7 @@ pub(super) fn replay_user_message_inputs(
     chat.replay_thread_item(
         AppServerThreadItem::UserMessage {
             id: item_id.to_string(),
+            client_id: None,
             content,
         },
         "turn-1".to_string(),
@@ -947,25 +796,7 @@ pub(super) fn begin_exec_with_source(
     raw_cmd: &str,
     source: ExecCommandSource,
 ) -> AppServerThreadItem {
-    // Build the full command vec and parse it using core's parser,
-    // then convert to protocol variants for the event payload.
-    let command = vec!["bash".to_string(), "-lc".to_string(), raw_cmd.to_string()];
-    let command_actions = codex_shell_command::parse_command::parse_command(&command)
-        .into_iter()
-        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &chat.config.cwd))
-        .collect();
-    let item = AppServerThreadItem::CommandExecution {
-        id: call_id.to_string(),
-        command: codex_shell_command::parse_command::shlex_join(&command),
-        cwd: chat.config.cwd.clone(),
-        process_id: None,
-        source,
-        status: AppServerCommandExecutionStatus::InProgress,
-        command_actions,
-        aggregated_output: None,
-        exit_code: None,
-        duration_ms: None,
-    };
+    let item = build_exec_item(chat, call_id, raw_cmd, source, None);
     handle_exec_begin(chat, item.clone());
     item
 }
@@ -976,21 +807,50 @@ pub(super) fn begin_unified_exec_startup(
     process_id: &str,
     raw_cmd: &str,
 ) -> AppServerThreadItem {
-    let command = vec!["bash".to_string(), "-lc".to_string(), raw_cmd.to_string()];
-    let item = AppServerThreadItem::CommandExecution {
+    let item = build_exec_item(
+        chat,
+        call_id,
+        raw_cmd,
+        ExecCommandSource::UnifiedExecStartup,
+        Some(process_id.to_string()),
+    );
+    handle_exec_begin(chat, item.clone());
+    item
+}
+
+fn build_exec_item(
+    chat: &mut ChatWidget,
+    call_id: &str,
+    raw_cmd: &str,
+    source: ExecCommandSource,
+    process_id: Option<String>,
+) -> AppServerThreadItem {
+    // Unified exec startup/interaction events are already represented as direct argv-like
+    // commands in upstream, while ordinary shell commands still go through the shell wrapper.
+    let command = if matches!(
+        source,
+        ExecCommandSource::UnifiedExecStartup | ExecCommandSource::UnifiedExecInteraction
+    ) {
+        crate::exec_command::split_command_string(raw_cmd)
+    } else {
+        vec!["bash".to_string(), "-lc".to_string(), raw_cmd.to_string()]
+    };
+    let command_actions = codex_shell_command::parse_command::parse_command(&command)
+        .into_iter()
+        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &chat.config.cwd))
+        .collect();
+    AppServerThreadItem::CommandExecution {
         id: call_id.to_string(),
         command: codex_shell_command::parse_command::shlex_join(&command),
         cwd: chat.config.cwd.clone(),
-        process_id: Some(process_id.to_string()),
-        source: ExecCommandSource::UnifiedExecStartup,
+        process_id,
+        source,
         status: AppServerCommandExecutionStatus::InProgress,
-        command_actions: Vec::new(),
+        command_actions,
         aggregated_output: None,
         exit_code: None,
         duration_ms: None,
-    };
-    handle_exec_begin(chat, item.clone());
-    item
+    }
 }
 
 pub(super) fn handle_exec_begin(chat: &mut ChatWidget, item: AppServerThreadItem) {
@@ -1087,6 +947,7 @@ pub(super) fn complete_user_message_for_inputs(
             completed_at_ms: 0,
             item: AppServerThreadItem::UserMessage {
                 id: item_id.to_string(),
+                client_id: None,
                 content,
             },
         }),
@@ -1236,6 +1097,7 @@ pub(super) fn handle_exec_end(chat: &mut ChatWidget, item: AppServerThreadItem) 
 
 pub(super) fn active_blob(chat: &ChatWidget) -> String {
     let lines = chat
+        .transcript
         .active_cell
         .as_ref()
         .expect("active cell present")
@@ -1450,6 +1312,8 @@ pub(super) fn plugins_test_summary(
 ) -> PluginSummary {
     PluginSummary {
         id: id.to_string(),
+        remote_plugin_id: None,
+        local_version: None,
         name: name.to_string(),
         share_context: None,
         source: PluginSource::Local {
@@ -1707,5 +1571,7 @@ fn hook_event_label(event_name: codex_app_server_protocol::HookEventName) -> &'s
         codex_app_server_protocol::HookEventName::SessionStart => "SessionStart",
         codex_app_server_protocol::HookEventName::UserPromptSubmit => "UserPromptSubmit",
         codex_app_server_protocol::HookEventName::Stop => "Stop",
+        codex_app_server_protocol::HookEventName::SubagentStart => "SubagentStart",
+        codex_app_server_protocol::HookEventName::SubagentStop => "SubagentStop",
     }
 }

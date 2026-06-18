@@ -168,6 +168,7 @@ fn turn_context_item_filesystem_uses_workspace_roots_instead_of_cwd() {
     let repo_private = repo.join("private");
     let item = TurnContextItem {
         turn_id: None,
+        trace_id: None,
         cwd: test_path_buf("/not-the-workspace"),
         workspace_roots: Some(vec![repo.clone(), other_repo.clone()]),
         current_date: None,
@@ -183,6 +184,10 @@ fn turn_context_item_filesystem_uses_workspace_roots_instead_of_cwd() {
         realtime_active: None,
         effort: None,
         summary: codex_protocol::config_types::ReasoningSummary::Auto,
+        user_instructions: None,
+        developer_instructions: None,
+        final_output_json_schema: None,
+        truncation_policy: None,
     };
 
     let context = EnvironmentContext::from_turn_context_item(&item, fake_shell_name()).render();

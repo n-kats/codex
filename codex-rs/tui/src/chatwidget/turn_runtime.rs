@@ -49,13 +49,13 @@ impl ChatWidget {
     pub(super) fn on_task_started(&mut self) {
         self.input_queue.user_turn_pending_start = false;
         self.turn_lifecycle.start(Instant::now());
-        self.saw_copy_source_this_turn = false;
-        self.saw_plan_update_this_turn = false;
-        self.saw_plan_item_this_turn = false;
-        self.had_work_activity = false;
-        self.latest_proposed_plan_markdown = None;
-        self.plan_delta_buffer.clear();
-        self.plan_item_active = false;
+        self.transcript.saw_copy_source_this_turn = false;
+        self.transcript.saw_plan_update_this_turn = false;
+        self.transcript.saw_plan_item_this_turn = false;
+        self.transcript.had_work_activity = false;
+        self.transcript.latest_proposed_plan_markdown = None;
+        self.transcript.plan_delta_buffer.clear();
+        self.transcript.plan_item_active = false;
         self.adaptive_chunking.reset();
         self.plan_stream_controller = None;
         self.turn_runtime_metrics = RuntimeMetricsSummary::default();
@@ -64,11 +64,11 @@ impl ChatWidget {
         self.quit_shortcut_expires_at = None;
         self.quit_shortcut_key = None;
         self.update_task_running_state();
-        self.retry_status_header = None;
+        self.status_state.retry_status_header = None;
         if self.active_hook_cell.take().is_some() {
             self.bump_active_cell_revision();
         }
-        self.pending_status_indicator_restore = false;
+        self.status_state.pending_status_indicator_restore = false;
         self.bottom_pane
             .set_interrupt_hint_visible(/*visible*/ true);
         self.terminal_title_status_kind = TerminalTitleStatusKind::Working;
@@ -101,7 +101,7 @@ impl ChatWidget {
         if let Some(message) = sanitized_last_agent_message
             .as_ref()
             .filter(|message| !message.is_empty())
-            && !self.saw_copy_source_this_turn
+            && !self.transcript.saw_copy_source_this_turn
         {
             self.record_agent_markdown(message);
         }
@@ -112,14 +112,14 @@ impl ChatWidget {
             .filter(|message| !message.is_empty())
             .cloned()
             .or_else(|| {
-                if self.saw_copy_source_this_turn {
-                    self.last_agent_markdown.clone()
+                if self.transcript.saw_copy_source_this_turn {
+                    self.transcript.last_agent_markdown.clone()
                 } else {
                     None
                 }
             })
             .unwrap_or_default();
-        self.saw_copy_source_this_turn = false;
+        self.transcript.saw_copy_source_this_turn = false;
         // If a stream is currently active, finalize it.
         self.flush_answer_stream_with_separator();
         if let Some(mut controller) = self.plan_stream_controller.take() {
@@ -139,8 +139,8 @@ impl ChatWidget {
             self.collect_runtime_metrics_delta();
             let runtime_metrics =
                 (!self.turn_runtime_metrics.is_empty()).then_some(self.turn_runtime_metrics);
-            let show_work_separator =
-                self.had_work_activity && (self.needs_final_message_separator || runtime_metrics.is_some());
+            let show_work_separator = self.transcript.had_work_activity
+                && (self.transcript.needs_final_message_separator || runtime_metrics.is_some());
             if show_work_separator || runtime_metrics.is_some() {
                 let elapsed_seconds = if show_work_separator {
                     duration_ms
@@ -160,13 +160,13 @@ impl ChatWidget {
                 ));
             }
             self.turn_runtime_metrics = RuntimeMetricsSummary::default();
-            self.needs_final_message_separator = false;
-            self.had_work_activity = false;
+            self.transcript.needs_final_message_separator = false;
+            self.transcript.had_work_activity = false;
             self.request_status_line_branch_refresh();
             self.request_status_line_git_summary_refresh();
         }
         // Mark task stopped and request redraw now that all content is in history.
-        self.pending_status_indicator_restore = false;
+        self.status_state.pending_status_indicator_restore = false;
         self.input_queue.user_turn_pending_start = false;
         self.turn_lifecycle.finish();
         self.update_task_running_state();
@@ -189,7 +189,7 @@ impl ChatWidget {
         // Keep this flag for replayed completion events so a subsequent live TurnComplete can
         // still show the prompt once after thread switch replay.
         if !from_replay {
-            self.saw_plan_item_this_turn = false;
+            self.transcript.saw_plan_item_this_turn = false;
         }
         // If there is a queued user message, send exactly one now to begin the next turn.
         let follow_up_started = self.maybe_send_next_queued_input();
@@ -220,7 +220,7 @@ impl ChatWidget {
         if self.active_mode_kind() != ModeKind::Plan {
             return;
         }
-        if !self.saw_plan_item_this_turn {
+        if !self.transcript.saw_plan_item_this_turn {
             return;
         }
         if !self.bottom_pane.no_modal_or_popup_active() {
@@ -244,7 +244,7 @@ impl ChatWidget {
         self.bottom_pane
             .show_selection_view(plan_implementation::selection_view_params(
                 default_mask,
-                self.latest_proposed_plan_markdown.as_deref(),
+                self.transcript.latest_proposed_plan_markdown.as_deref(),
                 context_usage_label.as_deref(),
             ));
         self.notify(Notification::PlanModePrompt {
@@ -322,7 +322,7 @@ impl ChatWidget {
         self.adaptive_chunking.reset();
         self.stream_controller = None;
         self.plan_stream_controller = None;
-        self.pending_status_indicator_restore = false;
+        self.status_state.pending_status_indicator_restore = false;
         self.request_status_line_branch_refresh();
         self.request_status_line_git_summary_refresh();
         self.maybe_show_pending_rate_limit_prompt();
@@ -461,7 +461,7 @@ impl ChatWidget {
     }
 
     pub(super) fn on_plan_update(&mut self, update: UpdatePlanArgs) {
-        self.saw_plan_update_this_turn = true;
+        self.transcript.saw_plan_update_this_turn = true;
         let total = update.plan.len();
         let completed = update
             .plan

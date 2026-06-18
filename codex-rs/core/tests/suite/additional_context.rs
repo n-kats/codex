@@ -47,17 +47,19 @@ async fn additional_context_is_model_visible_but_not_a_user_message_item() -> Re
             additional_context: BTreeMap::from([
                 (
                     "browser_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: "tab one".to_string(),
                         kind: AdditionalContextKind::Untrusted,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
                 (
                     "automation_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: "run one".to_string(),
                         kind: AdditionalContextKind::Application,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
             ]),
             thread_settings: Default::default(),
@@ -192,17 +194,19 @@ async fn additional_context_trust_controls_message_role() -> Result<()> {
             additional_context: BTreeMap::from([
                 (
                     "browser_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: "tab one".to_string(),
                         kind: AdditionalContextKind::Untrusted,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
                 (
                     "automation_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: "run one".to_string(),
                         kind: AdditionalContextKind::Application,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
             ]),
             thread_settings: Default::default(),
@@ -255,10 +259,11 @@ async fn additional_context_is_deduplicated_between_turns_while_retained() -> Re
         .await?;
     let additional_context = BTreeMap::from([(
         "browser_info".to_string(),
-        AdditionalContextEntry {
+        serde_json::to_value(AdditionalContextEntry {
             value: "same tab".to_string(),
             kind: AdditionalContextKind::Untrusted,
-        },
+        })
+        .expect("serialize additional context entry"),
     )]);
 
     test.codex
@@ -353,17 +358,19 @@ async fn additional_context_removes_one_value_while_adding_another() -> Result<(
             additional_context: BTreeMap::from([
                 (
                     "automation_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: "run one".to_string(),
                         kind: AdditionalContextKind::Untrusted,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
                 (
                     "browser_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: "tab one".to_string(),
                         kind: AdditionalContextKind::Untrusted,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
             ]),
             thread_settings: Default::default(),
@@ -386,17 +393,19 @@ async fn additional_context_removes_one_value_while_adding_another() -> Result<(
             additional_context: BTreeMap::from([
                 (
                     "automation_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: "run one".to_string(),
                         kind: AdditionalContextKind::Untrusted,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
                 (
                     "terminal_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: "pty one".to_string(),
                         kind: AdditionalContextKind::Untrusted,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
             ]),
             thread_settings: Default::default(),
@@ -419,24 +428,27 @@ async fn additional_context_removes_one_value_while_adding_another() -> Result<(
             additional_context: BTreeMap::from([
                 (
                     "automation_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: "run one".to_string(),
                         kind: AdditionalContextKind::Untrusted,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
                 (
                     "browser_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: "tab one".to_string(),
                         kind: AdditionalContextKind::Untrusted,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
                 (
                     "terminal_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: "pty one".to_string(),
                         kind: AdditionalContextKind::Untrusted,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
             ]),
             thread_settings: Default::default(),
@@ -516,17 +528,19 @@ async fn additional_context_values_are_truncated_before_model_input() -> Result<
             additional_context: BTreeMap::from([
                 (
                     "automation_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: long_automation_value.clone(),
                         kind: AdditionalContextKind::Application,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
                 (
                     "browser_info".to_string(),
-                    AdditionalContextEntry {
+                    serde_json::to_value(AdditionalContextEntry {
                         value: long_browser_value.clone(),
                         kind: AdditionalContextKind::Untrusted,
-                    },
+                    })
+                    .expect("serialize additional context entry"),
                 ),
             ]),
             thread_settings: Default::default(),

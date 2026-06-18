@@ -236,10 +236,7 @@ service_tier = "priority"
         .await
         .expect("custom role should apply");
 
-    assert_eq!(
-        config.service_tier,
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
+    assert_eq!(config.service_tier, Some(ServiceTier::Fast));
 }
 
 #[tokio::test]
@@ -266,10 +263,7 @@ async fn apply_role_preserves_existing_service_tier_without_override() {
         .await
         .expect("custom role should apply");
 
-    assert_eq!(
-        config.service_tier,
-        Some(ServiceTier::Fast.request_value().to_string())
-    );
+    assert_eq!(config.service_tier, Some(ServiceTier::Fast));
 }
 
 #[tokio::test]

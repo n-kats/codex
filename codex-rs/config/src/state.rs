@@ -135,6 +135,11 @@ impl ConfigLayerEntry {
         }
     }
 
+    pub fn with_raw_toml(mut self, raw_toml: String) -> Self {
+        self.raw_toml = Some(raw_toml);
+        self
+    }
+
     pub fn new_disabled(
         name: ConfigLayerSource,
         config: TomlValue,
