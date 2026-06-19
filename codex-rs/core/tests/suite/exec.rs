@@ -47,6 +47,7 @@ where
         windows_sandbox_private_desktop: false,
         justification: None,
         arg0: None,
+        run_as: None,
     };
 
     process_exec_tool_call(

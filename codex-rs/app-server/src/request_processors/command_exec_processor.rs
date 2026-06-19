@@ -306,6 +306,7 @@ impl CommandExecRequestProcessor {
                 .windows_sandbox_private_desktop,
             justification: None,
             arg0: None,
+            run_as: None,
         };
 
         let codex_linux_sandbox_exe = self.arg0_paths.codex_linux_sandbox_exe.clone();

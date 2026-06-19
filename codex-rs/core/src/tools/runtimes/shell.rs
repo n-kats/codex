@@ -9,6 +9,7 @@ pub(crate) mod unix_escalation;
 pub(crate) mod zsh_fork_backend;
 
 use crate::command_canonicalization::canonicalize_command_for_approval;
+use crate::custom::exec::RunAsUser;
 use crate::exec::ExecCapturePolicy;
 use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianNetworkAccessTrigger;
@@ -69,6 +70,7 @@ pub struct ShellRequest {
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
     pub exec_approval_requirement: ExecApprovalRequirement,
+    pub run_as: Option<RunAsUser>,
 }
 
 /// Selects `ShellRuntime` behavior for different callers.
@@ -320,9 +322,10 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
             expiration,
             capture_policy: ExecCapturePolicy::ShellTool,
         };
-        let env = attempt
+        let mut env = attempt
             .env_for(command, options, managed_network)
             .map_err(ToolError::Codex)?;
+        env.run_as = req.run_as.clone();
         let out = execute_env(env, Self::stdout_stream(ctx))
             .await
             .map_err(ToolError::Codex)?;

@@ -94,6 +94,12 @@
   - systemd の `AmbientCapabilities=` 等で起動時に capabilities を付与（ファイルに `setcap` したくない場合）
   - `setcap` が使えない環境では、`sudoers` の許可でパスワードなし `sudo` を使えると worker-user 実行を維持できる。
   - root で起動する（推奨しない）
+
+### 許可された fallback
+
+- 詳細は `_docs/custom_notes/allowed_sudo_fallback.md` に記録する。
+- 要点: 許可する fallback は、worker user 実行を維持するための `sudo -n -u "#UID" -g "#GID" -- env -i ...` のみ。
+- worker 実行に失敗したコマンドを invoker 権限で自動再実行する fallback は許可しない。
 - `.env` 等の secrets は作業ツリー（AI が触るディレクトリ）に置かないことが最も確実。
   - シンボリックリンクで secrets を指す運用は、`chmod -R` 等の誤操作や参照境界が複雑化しやすい点に注意する。
 - `custom.exec.*` を有効にしても、コマンド実行時に渡される環境変数自体が多いと `env` / `printenv` 等で情報が出る。
@@ -138,6 +144,11 @@ include_only = [
 
 ## 現在の実装メモ
 
+- 2026-06-19 の再実装では、rebase しやすさを優先して custom 固有実装を分離した。
+  - 設定の TOML 型は `codex-rs/config/src/custom/exec.rs` に置く。
+  - 設定解決は `codex-rs/core/src/config/custom/exec.rs` に置く。
+  - 実行時の worker-user/run-as 実装は `codex-rs/core/src/custom/exec/run_as.rs` に置く。
+  - 既存 upstream ファイル側は `run_as` を通すためのフィールド追加と、spawn 直前の helper 呼び出しだけにする。
 - `custom.exec.worker_user` / `worker_uid` / `worker_gid` は `core/src/config/mod.rs` で解決し、`Config::custom_exec_run_as()` として各 runtime に渡している。
 - `core/src/spawn.rs` の `SpawnChildRequest` に `run_as` を追加し、`setgroups` → `setgid` → `setuid` を spawn 直前で適用している。
 - `shell` / `shell_command` / `exec_command` / `unified_exec` の各経路で `run_as` を埋めるようにしている。
@@ -153,7 +164,12 @@ include_only = [
 - `CUSTOM.md`
 - `Makefile`
 - `docs/config.md`
+- `_docs/custom_notes/allowed_sudo_fallback.md`
 - `codex-rs/core/src/config/mod.rs`
+- `codex-rs/core/src/config/custom/exec.rs`
+- `codex-rs/core/src/custom/exec/mod.rs`
+- `codex-rs/core/src/custom/exec/run_as.rs`
+- `codex-rs/config/src/custom/exec.rs`
 - `codex-rs/core/src/spawn.rs`
 - `codex-rs/core/src/sandboxing/mod.rs`
 - `codex-rs/core/src/tools/runtimes/shell.rs`

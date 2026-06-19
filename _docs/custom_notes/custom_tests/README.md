@@ -56,6 +56,11 @@
 - `codex-rs/tui/src/diff_render/custom_tests.rs`
   - `custom__差分テーマ色__*`
 
+## custom 追加テスト棚卸し
+
+- `custom` ブランチで追加されたテストと custom 機能の対応関係は `custom_added_tests_inventory.md` に記録する。
+- 再実装時は、機能ごとの実装対象/再実装対象外候補をこの棚卸しから確認する。
+
 ## つまずきと対処（2026-02-27）
 
 - 症状
@@ -75,5 +80,6 @@
 ## 関連ファイル一覧
 
 - `_docs/custom_notes/rebase_rules/README.md`
+- `_docs/custom_notes/custom_tests/custom_added_tests_inventory.md`
 - `CUSTOM.md`
 - `codex-rs/core/tests/suite/compact_resume_fork.rs`

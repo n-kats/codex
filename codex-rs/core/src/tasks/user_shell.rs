@@ -10,6 +10,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::error;
 use uuid::Uuid;
 
+use crate::custom::user_shell as custom_user_shell;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::StdoutStream;
 use crate::exec::execute_exec_request;
@@ -157,7 +158,7 @@ pub(crate) async fn execute_user_shell_command(
     };
     let shell_snapshot_location = turn_environment.shell_snapshot(&cwd);
     let mut exec_env_map = create_env(
-        &turn_context.config.permissions.shell_environment_policy,
+        custom_user_shell::shell_environment_policy(turn_context.as_ref()),
         Some(session.thread_id),
     );
     if exec_env_map.contains_key(PROXY_ACTIVE_ENV_KEY) {
@@ -167,11 +168,7 @@ pub(crate) async fn execute_user_shell_command(
         &display_command,
         environment_shell,
         shell_snapshot_location.as_ref(),
-        &turn_context
-            .config
-            .permissions
-            .shell_environment_policy
-            .r#set,
+        &custom_user_shell::shell_environment_set(turn_context.as_ref()),
         &mut exec_env_map,
     );
 
@@ -223,6 +220,7 @@ pub(crate) async fn execute_user_shell_command(
         network_sandbox_policy: permission_profile.network_sandbox_policy(),
         windows_sandbox_filesystem_overrides: None,
         arg0: None,
+        run_as: None,
     };
 
     let stdout_stream = Some(StdoutStream {
@@ -443,6 +441,10 @@ async fn persist_user_shell_output(
     exec_output: &ExecToolCallOutput,
     mode: UserShellCommandMode,
 ) {
+    if custom_user_shell::no_inject(turn_context) {
+        return;
+    }
+
     let output_item = user_shell_command_record_item(raw_command, exec_output, turn_context);
 
     if mode == UserShellCommandMode::StandaloneTurn {

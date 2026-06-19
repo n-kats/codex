@@ -142,6 +142,7 @@ use toml_edit::DocumentMut;
 
 pub(crate) mod agent_roles;
 mod auth_keyring;
+pub(crate) mod custom;
 pub mod edit;
 mod managed_features;
 mod network_proxy_spec;
@@ -341,6 +342,8 @@ pub struct Permissions {
     pub allow_login_shell: bool,
     /// Policy used to build process environments for shell/unified exec.
     pub shell_environment_policy: ShellEnvironmentPolicy,
+    /// Custom fork-specific permission overrides.
+    pub(crate) custom: custom::CustomPermissions,
     /// Effective Windows sandbox mode derived from `[windows].sandbox` or
     /// legacy feature keys.
     pub windows_sandbox_mode: Option<WindowsSandboxModeToml>,
@@ -364,6 +367,7 @@ impl Permissions {
             network: None,
             allow_login_shell: true,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
+            custom: custom::CustomPermissions::default(),
             windows_sandbox_mode: None,
             windows_sandbox_private_desktop: true,
         })
@@ -3304,7 +3308,12 @@ impl Config {
             })?
             .clone();
 
-        let shell_environment_policy = cfg.shell_environment_policy.into();
+        let shell_environment_policy: ShellEnvironmentPolicy = cfg.shell_environment_policy.into();
+        let custom = custom::resolve_custom_config(
+            &cfg.custom,
+            &shell_environment_policy,
+            &mut startup_warnings,
+        )?;
         let allow_login_shell = cfg.allow_login_shell.unwrap_or(true);
 
         let history = cfg.history.unwrap_or_default();
@@ -3674,6 +3683,7 @@ impl Config {
                 network,
                 allow_login_shell,
                 shell_environment_policy,
+                custom,
                 windows_sandbox_mode,
                 windows_sandbox_private_desktop,
             },

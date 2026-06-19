@@ -30,6 +30,7 @@ use super::super::shell_spec::create_shell_command_tool;
 use super::RunExecLikeArgs;
 use super::run_exec_like;
 use super::shell_command_payload_command;
+use crate::custom::exec as custom_exec;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ShellCommandBackend {
@@ -101,7 +102,7 @@ impl ShellCommandHandler {
             expiration: params.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
             env: create_env(
-                &turn_context.config.permissions.shell_environment_policy,
+                custom_exec::assistant_shell_environment_policy(turn_context),
                 Some(thread_id),
             ),
             network: turn_context.network.clone(),
@@ -114,6 +115,7 @@ impl ShellCommandHandler {
                 .windows_sandbox_private_desktop,
             justification: params.justification.clone(),
             arg0: None,
+            run_as: custom_exec::run_as_for_assistant_shell(turn_context),
         })
     }
 }

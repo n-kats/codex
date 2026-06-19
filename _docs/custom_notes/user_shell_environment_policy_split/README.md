@@ -17,6 +17,8 @@
 
 ## 現在の実装メモ
 
+- 2026-06-19 の再実装では、設定 TOML 型を `codex-rs/config/src/custom/mod.rs`、設定解決を `codex-rs/core/src/config/custom/mod.rs`、実行時の参照 helper を `codex-rs/core/src/custom/exec/mod.rs` と `codex-rs/core/src/custom/user_shell.rs` 側に分離した。
+- upstream 側の接続点は、assistant 起点の shell/unified-exec が `assistant_shell_environment_policy` を参照し、`!` が `user_shell_environment_policy` を参照する差し替えだけに限定する。
 - `core/src/config/mod.rs` に `assistant_shell_environment_policy()` / `user_shell_environment_policy()` を追加し、`Config` に保持した `custom` を元に解決している。
 - `core/src/session/turn_context.rs` では turn-context 経由で両 policy を参照できるようにしている。
 - `core/src/tools/handlers/shell.rs`、`core/src/tools/runtimes/shell.rs`、`core/src/tools/runtimes/unified_exec.rs`、`core/src/tools/js_repl/mod.rs`、`core/src/unified_exec/process_manager.rs` では assistant policy を使って env を構築している。
@@ -54,5 +56,9 @@ set = { HOME = "/home/ubuntu" }
 ## 関連ファイル
 
 - `codex-rs/core/src/config/mod.rs`
+- `codex-rs/core/src/config/custom/mod.rs`
+- `codex-rs/core/src/custom/exec/mod.rs`
+- `codex-rs/core/src/custom/user_shell.rs`
+- `codex-rs/config/src/custom/mod.rs`
 - `codex-rs/core/src/codex.rs`
 - `codex-rs/core/src/tasks/user_shell.rs`

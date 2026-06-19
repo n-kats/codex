@@ -1,4 +1,5 @@
 use super::ShellRequest;
+use crate::custom::exec::RunAsUser;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::exec::cancel_when_either;
@@ -138,13 +139,14 @@ pub(super) async fn try_run_zsh_fork(
         expiration: req.timeout_ms.into(),
         capture_policy: ExecCapturePolicy::ShellTool,
     };
-    let sandbox_exec_request = attempt
+    let mut sandbox_exec_request = attempt
         .env_for(
             command,
             options,
             managed_network_for_sandbox_permissions(req.network.as_ref(), req.sandbox_permissions),
         )
         .map_err(ToolError::Codex)?;
+    sandbox_exec_request.run_as = req.run_as.clone();
     let crate::sandboxing::ExecRequest {
         command,
         cwd: sandbox_cwd,
@@ -164,6 +166,7 @@ pub(super) async fn try_run_zsh_fork(
         network_sandbox_policy,
         windows_sandbox_filesystem_overrides: _windows_sandbox_filesystem_overrides,
         arg0,
+        run_as,
     } = sandbox_exec_request;
     let ParsedShellCommand { script, login, .. } = extract_shell_script(&command)?;
     let effective_timeout = Duration::from_millis(
@@ -192,6 +195,7 @@ pub(super) async fn try_run_zsh_fork(
         network: sandbox_network,
         windows_sandbox_level,
         arg0,
+        run_as,
         sandbox_policy_cwd,
         windows_sandbox_workspace_roots,
         codex_linux_sandbox_exe: ctx.turn.config.codex_linux_sandbox_exe.clone(),
@@ -304,6 +308,7 @@ pub(crate) async fn prepare_unified_exec_zsh_fork(
         network: exec_request.network.clone(),
         windows_sandbox_level: exec_request.windows_sandbox_level,
         arg0: exec_request.arg0.clone(),
+        run_as: exec_request.run_as.clone(),
         sandbox_policy_cwd,
         windows_sandbox_workspace_roots: exec_request.windows_sandbox_workspace_roots.clone(),
         codex_linux_sandbox_exe: ctx.turn.config.codex_linux_sandbox_exe.clone(),
@@ -812,6 +817,7 @@ struct CoreShellCommandExecutor {
     network: Option<codex_network_proxy::NetworkProxy>,
     windows_sandbox_level: WindowsSandboxLevel,
     arg0: Option<String>,
+    run_as: Option<RunAsUser>,
     sandbox_policy_cwd: AbsolutePathBuf,
     windows_sandbox_workspace_roots: Vec<AbsolutePathBuf>,
     codex_linux_sandbox_exe: Option<PathBuf>,
@@ -893,6 +899,7 @@ impl CoreShellCommandExecutor {
                 network_sandbox_policy: self.network_sandbox_policy,
                 windows_sandbox_filesystem_overrides: None,
                 arg0: self.arg0.clone(),
+                run_as: self.run_as.clone(),
             },
             /*stdout_stream*/ None,
             after_spawn,

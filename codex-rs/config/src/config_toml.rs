@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::HooksToml;
+use crate::custom::CustomConfigToml;
 use crate::permissions_toml::PermissionsToml;
 use crate::profile_toml::ConfigProfile;
 use crate::types::AnalyticsConfigToml;
@@ -169,6 +170,10 @@ pub struct ConfigToml {
 
     #[serde(default)]
     pub shell_environment_policy: ShellEnvironmentPolicyToml,
+
+    /// Custom fork-specific settings.
+    #[serde(default)]
+    pub custom: CustomConfigToml,
 
     /// Whether the model may request a login shell for shell-based tools.
     /// Default to `true`

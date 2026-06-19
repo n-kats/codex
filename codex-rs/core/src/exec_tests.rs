@@ -279,6 +279,7 @@ async fn exec_full_buffer_capture_ignores_expiration() -> Result<()> {
             windows_sandbox_private_desktop: false,
             justification: None,
             arg0: None,
+            run_as: None,
         },
         NetworkSandboxPolicy::Enabled,
         /*stdout_stream*/ None,
@@ -316,6 +317,7 @@ async fn exec_full_buffer_capture_keeps_io_drain_timeout_when_descendant_holds_p
                 windows_sandbox_private_desktop: false,
                 justification: None,
                 arg0: None,
+                run_as: None,
             },
             NetworkSandboxPolicy::Enabled,
             /*stdout_stream*/ None,
@@ -364,6 +366,7 @@ async fn process_exec_tool_call_preserves_full_buffer_capture_policy() -> Result
             windows_sandbox_private_desktop: false,
             justification: None,
             arg0: None,
+            run_as: None,
         },
         &permission_profile,
         &cwd,
@@ -1007,6 +1010,7 @@ fn build_exec_request_preserves_windows_workspace_roots() -> Result<()> {
             windows_sandbox_private_desktop: false,
             justification: None,
             arg0: None,
+            run_as: None,
         },
         &PermissionProfile::Disabled,
         &cwd,
@@ -1062,6 +1066,7 @@ async fn kill_child_process_group_kills_grandchildren_on_timeout() -> Result<()>
         windows_sandbox_private_desktop: false,
         justification: None,
         arg0: None,
+        run_as: None,
     };
 
     let output = exec(
@@ -1118,6 +1123,7 @@ async fn process_exec_tool_call_respects_cancellation_token() -> Result<()> {
         windows_sandbox_private_desktop: false,
         justification: None,
         arg0: None,
+        run_as: None,
     };
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(1_000)).await;
@@ -1202,6 +1208,7 @@ while :; do sleep 1; done"#
         windows_sandbox_private_desktop: false,
         justification: None,
         arg0: None,
+        run_as: None,
     };
 
     let result = timeout(

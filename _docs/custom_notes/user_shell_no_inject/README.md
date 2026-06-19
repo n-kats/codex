@@ -52,6 +52,8 @@ no_inject = true
 
 ## 現在の実装メモ
 
+- 2026-06-19 の再実装では、TOML 型を `codex-rs/config/src/custom/user_shell.rs`、設定解決を `codex-rs/core/src/config/custom/user_shell.rs`、実行時 helper を `codex-rs/core/src/custom/user_shell.rs` に分離した。
+- `core/src/tasks/user_shell.rs` は `custom_user_shell::no_inject(...)` を接続点として参照し、実装詳細を持たない。
 - `core/src/config/mod.rs` の `Config::user_shell_no_inject()` で `custom.user_shell.no_inject` を解決し、`Config` に保持した `custom` を参照している。
 - `core/src/tasks/user_shell.rs` の `persist_user_shell_output()` が `turn_context.user_shell_no_inject()` を最初に見て、`true` の場合はモデル注入とローカル履歴保存を止める。
 - `ExecCommandBegin` / `ExecCommandEnd` は通常どおり流し、`no_inject` は保存だけを切り替える。
@@ -62,7 +64,9 @@ no_inject = true
 
 ## 関連ファイル一覧
 
-- `codex-rs/core/src/config/custom.rs`
+- `codex-rs/config/src/custom/user_shell.rs`
+- `codex-rs/core/src/config/custom/user_shell.rs`
+- `codex-rs/core/src/custom/user_shell.rs`
 - `codex-rs/core/src/config/mod.rs`
 - `codex-rs/core/src/tasks/user_shell.rs`
 - `codex-rs/core/src/user_shell_command.rs`
