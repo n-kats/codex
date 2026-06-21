@@ -32,7 +32,7 @@
 | `update_check_custom_version_suffix` | custom suffix 付き semver parse/compare |
 | `tui_remote_alignment` | websocket remote addr normalize、remote auth token transport policy |
 | `custom_tests` 運用 | `cargo test custom__`、`list-custom-tests`、custom test file separation |
-| `docker_test_env` / `make_test_almost_no_fail_fast` / `test_almost_skip_list` | Docker 検証環境、`make almost`、`test-almost`、skip list、ログ集約 |
+| `docker_test_env` / `make_test_almost_no_fail_fast` / `skip_test_list.txt` | Docker 検証環境、`make almost`、`test-almost`、skip list、ログ集約 |
 | `exec_mcp_*` | MCP 経由の build/test 相当、background stop、almost 相当 |
 | 本家追従/再実装対象外候補 | app-server/thread/config/TUI など、custom 固有名ではない追加テスト |
 
@@ -113,22 +113,34 @@
 
 ## `command_exec_worker_user`
 
+現行の再実装では、設定解決テストは `core/src/config/config_tests.rs` ではなく
+`core/src/config/custom/mod.rs` に置く。理由は、custom 固有の設定解決を
+本家の巨大な config test ファイルへ混ぜないため。
+
+### 実装済み
+
 | パス | テスト | 内容 | 疑似コード |
 |---|---|---|---|
-| `codex-rs/core/src/config/config_tests.rs` | `custom_exec_requires_uid_and_gid_together` | `worker_uid` / `worker_gid` 片方だけの指定を拒否する。 | `load only uid; assert InvalidInput` |
-| `codex-rs/core/src/config/config_tests.rs` | `custom_exec_accepts_uid_gid_pair` | uid/gid ペアを `RunAsUser` に解決する。 | `load uid/gid; assert RunAsUser` |
-| `codex-rs/core/src/config/config_tests.rs` | `custom_exec_resolves_to_current_user_adds_startup_warning` | current user に解決されたら startup warning を出す。 | `load current user; assert warning` |
-| `codex-rs/core/src/config/config_tests.rs` | `custom_exec_accepts_matching_user_and_uid_gid` | user と uid/gid が一致する場合に補助グループ付きで解決する。 | `load user+ids; assert supplementary_gids` |
-| `codex-rs/core/src/config/config_tests.rs` | `custom_exec_rejects_inherit_all_shell_environment_policy` | run-as と `shell_environment_policy.inherit = "all"` の併用を拒否する。 | `load inherit=all + worker; assert InvalidInput` |
-| `codex-rs/core/src/config/config_tests.rs` | `custom_exec_rejects_mismatched_user_and_uid_gid` | user と uid/gid が不一致なら拒否する。 | `load mismatched ids; assert InvalidInput` |
-| `codex-rs/core/src/config/config_tests.rs` | `resolve_user_to_ids_includes_current_process_groups` | `worker_user` のみ指定時に補助グループを解決し primary gid を除外する。 | `load worker_user; assert uid/gid/groups` |
+| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__requires_uid_and_gid_together` | `worker_uid` / `worker_gid` 片方だけの指定を拒否する。 | `resolve custom config with only uid; assert InvalidInput` |
+| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__accepts_uid_gid_pair` | uid/gid ペアを `RunAsUser` に解決する。 | `resolve uid/gid; assert exec_run_as == RunAsUser` |
+| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__resolves_to_current_user_adds_startup_warning` | current user に解決されたら startup warning を出す。 | `resolve current uid/gid; assert warning` |
+| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__accepts_matching_user_and_uid_gid` | user と uid/gid が一致する場合に補助グループ付きで解決する。 | `resolve user+ids; assert uid/gid and supplementary_gids` |
+| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__rejects_mismatched_user_and_uid_gid` | user と uid/gid が不一致なら拒否する。 | `resolve mismatched ids; assert InvalidInput` |
+| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__resolves_worker_user_to_ids_and_groups` | `worker_user` のみ指定時に system user database から uid/gid/groups を解決する。 | `resolve worker_user; assert uid/gid and supplementary_gids` |
+| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__rejects_inherit_all_shell_environment_policy` | run-as と `shell_environment_policy.inherit = "all"` の併用を拒否する。 | `resolve base inherit=all + worker; assert InvalidInput` |
+| `Makefile` | `verify-command-exec-worker-user` | worker 権限関連の custom unit tests をまとめて実行する。 | `cargo test custom__exec_worker_user__` |
+| `docker/Dockerfile` | worker user fixture | `assistant` user と passwordless sudo を用意する。 | `create assistant; allow ubuntu -> assistant sudo` |
+
+### 未実装 / 再実装候補
+
+| パス | テスト | 内容 | 疑似コード |
+|---|---|---|---|
 | `codex-rs/core/tests/suite/custom_exec_command_worker_user.rs` | `custom__exec_worker_user__exec_command_tty_false_runs_as_worker_user` | unified exec `exec_command` が worker uid で動く。 | `run id -u; assert worker uid` |
 | `codex-rs/core/tests/suite/custom_exec_command_worker_user.rs` | `custom__exec_worker_user__shell_runs_as_worker_user` | `shell` tool が worker uid で動く。 | `shell id -u; assert worker uid` |
+| `codex-rs/core/tests/suite/custom_exec_command_worker_user.rs` | `custom__exec_worker_user__sudo_fallback_preserves_worker_user` | direct `setuid` が使えない環境でも、許可された sudo fallback で worker uid を維持する。 | `force direct run_as failure or run without capability; assert sudo command runs as worker` |
 | `codex-rs/core/tests/suite/custom_exec_command_worker_user.rs` | `custom__exec_worker_user__apply_patch_respects_worker_user_permissions` | apply_patch が worker 権限で動き invoker 所有 `0600` を変更できない。 | `patch locked file; assert permission error` |
 | `codex-rs/core/tests/suite/custom_user_shell_cmd.rs` | `custom__exec_worker_user__user_shell_stays_invoker_owned_even_with_worker_user` | `!` user shell は worker ではなく invoker のまま動く。 | `RunUserShellCommand id -u; assert invoker uid` |
 | `codex-rs/core/tests/suite/resume.rs` | `resume_preserves_custom_exec_worker_user_for_apply_patch` | resume 後も worker user 設定が apply_patch に効く。 | `resume; apply_patch; assert worker behavior` |
-| `Makefile` | `verify-command-exec-worker-user` | worker user 関連 custom tests をまとめて実行する。 | `cargo test custom__exec_worker_user__` |
-| `docker/Dockerfile` | worker user fixture | `assistant` user と passwordless sudo を用意する。 | `create assistant; allow ubuntu -> assistant sudo` |
 
 ## `user_shell_environment_policy_split`
 

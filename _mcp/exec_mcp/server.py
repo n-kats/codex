@@ -65,29 +65,7 @@ DEFAULT_TARGET_DIR = "_tmp/exec_mcp_target"
 DEFAULT_TMP_DIR = "_tmp"
 _ACTIVE_RUNS: dict[str, ActiveRun] = {}
 _ACTIVE_RUNS_LOCK = threading.Lock()
-SKIP_ALMOST_TESTS = (
-    "view_image_tool_attaches_local_image",
-    "approval_matrix_covers_all_modes",
-    "drop_kills_wrapper_process_group",
-    "denying_network_policy_amendment_persists_policy_and_skips_future_network_prompt",
-    "unified_exec_streams_after_lagged_output",
-    "remote_models_merge_adds_new_high_priority_first",
-    "turn_start_jsonrpc_span_parents_core_turn_spans",
-    "suite::codex_tool::test_shell_command_approval_triggers_elicitation",
-    "system_bwrap_warning_skips_supported_system_bwrap",
-    "chatwidget::tests::approval_modal_exec_no_reason",
-    "chatwidget::tests::approval_modal_exec",
-    "chatwidget::tests::chatwidget_markdown_code_blocks_vt100_snapshot",
-    "chatwidget::tests::compact_queues_user_messages_snapshot",
-    "chatwidget::tests::review_queues_user_messages_snapshot",
-    "history_cell::tests::user_history_cell_wraps_and_prefixes_each_line_snapshot",
-    "suite::landlock::bwrap_populates_minimal_dev_nodes",
-    "suite::landlock::bwrap_preserves_writable_dev_shm_bind_mount",
-    "suite::landlock::sandbox_blocks_git_and_codex_writes_inside_writable_root",
-    "suite::landlock::sandbox_blocks_codex_symlink_replacement_attack",
-    "suite::landlock::sandbox_blocks_explicit_split_policy_carveouts_under_bwrap",
-    "suite::landlock::sandbox_blocks_root_read_carveouts_under_bwrap",
-)
+ALMOST_SKIP_TESTS_FILE = "skip_test_list.txt"
 
 
 def _configure_logging() -> None:
@@ -206,6 +184,19 @@ def _limit_text(text: str, max_chars: int) -> tuple[str, bool]:
     if len(text) <= max_chars:
         return text, False
     return text[:max_chars], True
+
+
+def _almost_skip_tests_file() -> Path:
+    return _root_dir() / ALMOST_SKIP_TESTS_FILE
+
+
+def _load_almost_skip_tests() -> tuple[str, ...]:
+    skip_tests = []
+    for raw_line in _almost_skip_tests_file().read_text(encoding="utf-8").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if line:
+            skip_tests.append(line)
+    return tuple(skip_tests)
 
 
 def _path_snapshot(
@@ -992,7 +983,7 @@ def _linux_sandbox_step() -> StepSpec | None:
         return None
     return StepSpec(
         name="build-linux-sandbox",
-        argv=["cargo", "build", "-p", "codex-linux-sandbox"],
+        argv=["cargo", "build", "-p", "codex-linux-sandbox", "-p", "codex-bwrap"],
         cwd=DEFAULT_CODEX_RS_DIR,
     )
 
@@ -1106,6 +1097,7 @@ async def run_make_all_equivalent() -> dict[str, Any]:
 @mcp.tool
 async def run_make_almost_equivalent() -> dict[str, Any]:
     """`make almost` 相当で `cargo +nightly fmt` と `test-almost` を順に実行します。"""
+    skip_tests = _load_almost_skip_tests()
     steps = [
         StepSpec(
             name="fmt",
@@ -1123,7 +1115,7 @@ async def run_make_almost_equivalent() -> dict[str, Any]:
                 "cargo",
                 "test",
                 "--",
-                *[item for test in SKIP_ALMOST_TESTS for item in ("--skip", test)],
+                *[item for test in skip_tests for item in ("--skip", test)],
             ],
             cwd=DEFAULT_CODEX_RS_DIR,
         )

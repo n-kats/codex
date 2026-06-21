@@ -805,6 +805,68 @@
       },
       "type": "object"
     },
+    "CustomConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "assistant_shell_environment_policy": {
+          "$ref": "#/definitions/ShellEnvironmentPolicyToml"
+        },
+        "exec": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomExecToml"
+            }
+          ],
+          "default": {
+            "worker_gid": null,
+            "worker_uid": null,
+            "worker_user": null
+          }
+        },
+        "user_shell": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomUserShellToml"
+            }
+          ],
+          "default": {
+            "no_inject": null
+          }
+        },
+        "user_shell_environment_policy": {
+          "$ref": "#/definitions/ShellEnvironmentPolicyToml"
+        }
+      },
+      "type": "object"
+    },
+    "CustomExecToml": {
+      "additionalProperties": false,
+      "properties": {
+        "worker_gid": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "worker_uid": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "worker_user": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "CustomUserShellToml": {
+      "additionalProperties": false,
+      "properties": {
+        "no_inject": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "CurrentTimeReminderConfigToml": {
       "additionalProperties": false,
       "properties": {
@@ -4577,6 +4639,26 @@
     "compact_prompt": {
       "description": "Compact prompt used for history compaction.",
       "type": "string"
+    },
+    "custom": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/CustomConfigToml"
+        }
+      ],
+      "default": {
+        "assistant_shell_environment_policy": null,
+        "exec": {
+          "worker_gid": null,
+          "worker_uid": null,
+          "worker_user": null
+        },
+        "user_shell": {
+          "no_inject": null
+        },
+        "user_shell_environment_policy": null
+      },
+      "description": "Custom fork-specific settings."
     },
     "debug": {
       "allOf": [

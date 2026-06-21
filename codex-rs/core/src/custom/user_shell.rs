@@ -7,9 +7,7 @@ pub(crate) fn shell_environment_policy(turn_context: &TurnContext) -> &ShellEnvi
         .config
         .permissions
         .custom
-        .user_shell_environment_policy(
-            &turn_context.config.permissions.shell_environment_policy,
-        )
+        .user_shell_environment_policy(&turn_context.config.permissions.shell_environment_policy)
 }
 
 pub(crate) fn shell_environment_set(turn_context: &TurnContext) -> HashMap<String, String> {

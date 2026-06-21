@@ -33,7 +33,7 @@ no_inject = true
 
 - `no_inject = true` でも、実行中の表示（stdout/stderr）が完全に秘匿されるわけではない。
 - 既定値は `false`（互換性維持）。意図せず秘密を含めないよう、秘密が絡む場合は `no_inject = true` を推奨。
-- 起動時のワーニングは、`custom.user_shell.no_inject = false`（未設定で既定 `false` を含む）の場合に表示される。
+- 起動時のワーニングは、`custom.user_shell.no_inject = false` を明示した場合に表示される。未設定時は既定 `false` だが、上流テストや通常起動に不要な warning を混入させないため静かに扱う。
 
 ## 動作確認手順
 
@@ -58,7 +58,7 @@ no_inject = true
 - `core/src/tasks/user_shell.rs` の `persist_user_shell_output()` が `turn_context.user_shell_no_inject()` を最初に見て、`true` の場合はモデル注入とローカル履歴保存を止める。
 - `ExecCommandBegin` / `ExecCommandEnd` は通常どおり流し、`no_inject` は保存だけを切り替える。
 - そのため、`!` の表示は維持しつつ、履歴混入だけを抑える方針を保っている。
-- 起動時 warning は `custom.user_shell.no_inject = false`（未設定の既定 `false` を含む）で出す。
+- 起動時 warning は `custom.user_shell.no_inject = false` を明示した場合だけ出す。未設定の既定 `false` では出さない。
 - 回帰テストとして、`core/src/config/config_tests.rs` に warning 解決テストを追加し、`core/tests/suite/custom_user_shell_cmd.rs` に `no_inject` の履歴非保存テストを追加した。
 - `custom.exec.worker_user` と組み合わせたときも、`!` の挙動は invoker 側で維持されることを `core/tests/suite/user_shell_cmd.rs` で確認している。
 

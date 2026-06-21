@@ -4,9 +4,9 @@ use crate::session::turn_context::TurnContext;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
 use std::collections::HashMap;
 
-pub(crate) use run_as::RunAsUser;
 #[cfg(unix)]
 pub(crate) use run_as::RunAsRetry;
+pub(crate) use run_as::RunAsUser;
 #[cfg(unix)]
 pub(crate) use run_as::apply_unix_run_as;
 #[cfg(unix)]

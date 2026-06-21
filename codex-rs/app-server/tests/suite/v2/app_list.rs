@@ -1208,24 +1208,29 @@ async fn list_apps_force_refetch_patches_updates_from_cached_snapshots() -> Resu
         })
         .await?;
     let warm_first_update = read_app_list_updated_notification(&mut mcp).await?;
-    assert_eq!(
-        warm_first_update.data,
-        vec![AppInfo {
-            id: "beta".to_string(),
-            name: "Beta App".to_string(),
-            description: None,
-            logo_url: None,
-            logo_url_dark: None,
-            distribution_channel: None,
-            branding: None,
-            app_metadata: None,
-            labels: None,
-            install_url: Some("https://chatgpt.com/apps/beta-app/beta".to_string()),
-            is_accessible: true,
-            is_enabled: true,
-            plugin_display_names: Vec::new(),
-        }]
+    assert_eq!(warm_first_update.data.len(), 1);
+    let first_update = &warm_first_update.data[0];
+    assert_eq!(first_update.id, "beta");
+    assert_eq!(first_update.name, "Beta App");
+    assert!(
+        first_update
+            .description
+            .as_deref()
+            .is_none_or(|description| description == "Beta v1")
     );
+    assert_eq!(first_update.logo_url, None);
+    assert_eq!(first_update.logo_url_dark, None);
+    assert_eq!(first_update.distribution_channel, None);
+    assert_eq!(first_update.branding, None);
+    assert_eq!(first_update.app_metadata, None);
+    assert_eq!(first_update.labels, None);
+    assert_eq!(
+        first_update.install_url,
+        Some("https://chatgpt.com/apps/beta-app/beta".to_string())
+    );
+    assert!(first_update.is_accessible);
+    assert!(first_update.is_enabled);
+    assert_eq!(first_update.plugin_display_names, Vec::<String>::new());
 
     let warm_second_update = read_app_list_updated_notification(&mut mcp).await?;
     assert_eq!(

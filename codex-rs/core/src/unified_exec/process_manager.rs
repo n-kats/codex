@@ -1047,7 +1047,8 @@ impl UnifiedExecProcessManager {
     ) -> Result<(UnifiedExecProcess, Option<DeferredNetworkApproval>), UnifiedExecError> {
         let assistant_shell_environment_policy =
             custom_exec::assistant_shell_environment_policy(&context.turn);
-        let local_policy_env = create_env(assistant_shell_environment_policy, /*thread_id*/ None);
+        let local_policy_env =
+            create_env(assistant_shell_environment_policy, /*thread_id*/ None);
         let mut env = local_policy_env.clone();
         env.insert(
             CODEX_THREAD_ID_ENV_VAR.to_string(),

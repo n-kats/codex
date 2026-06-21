@@ -24,6 +24,7 @@
 ## まず辿る導線
 
 - custom 全体方針: `CUSTOM.md`
+- 上流追従しやすい custom 実装方針: `_docs/custom_notes/implementation_policy.md`
 - rebase 運用: `_docs/custom_notes/rebase_rules/README.md`
 - custom 専用テスト運用: `_docs/custom_notes/custom_tests/README.md`
 - 許可された sudo fallback: `_docs/custom_notes/allowed_sudo_fallback.md`

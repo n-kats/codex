@@ -58,7 +58,7 @@
 ## 実装範囲の整理
 
 - `shell` / `shell_command` / `exec_command` は `worker_user` 対象で、実装済み
-  - これらは `custom_exec_run_as()` を子プロセス起動に渡している
+  - これらは `permissions.custom.exec_run_as` を `run_as` として子プロセス起動に渡している
 - `!`（UserShell）は対象外で、実装済み
   - 人間が明示的に実行する経路なので、invoker 権限でよい
 - hooks は対象外で、現状のままでよい
@@ -108,7 +108,8 @@
 
 ## 動作確認手順（実装後に追記）
 
-- `make verify-command-exec-worker-user` で設定解決（`custom.exec.*`）のテストが通ること
+- `make verify-command-exec-worker-user` で worker 権限関連の custom unit tests が通ること
+  - `custom__exec_worker_user__*`
 - `make test-core` で既存のコマンド実行系テストが通ること
 - `custom.exec.worker_uid/gid` を設定して、`shell` / `shell_command` / `exec_command`（unified exec）で spawn が worker UID/GID になること
   - 例: `id -u` / `id -g` を実行して期待値になること
@@ -146,30 +147,36 @@ include_only = [
 
 - 2026-06-19 の再実装では、rebase しやすさを優先して custom 固有実装を分離した。
   - 設定の TOML 型は `codex-rs/config/src/custom/exec.rs` に置く。
-  - 設定解決は `codex-rs/core/src/config/custom/exec.rs` に置く。
+  - 設定解決は `codex-rs/core/src/config/custom/exec.rs` と `codex-rs/core/src/config/custom/mod.rs` に置く。
   - 実行時の worker-user/run-as 実装は `codex-rs/core/src/custom/exec/run_as.rs` に置く。
   - 既存 upstream ファイル側は `run_as` を通すためのフィールド追加と、spawn 直前の helper 呼び出しだけにする。
-- `custom.exec.worker_user` / `worker_uid` / `worker_gid` は `core/src/config/mod.rs` で解決し、`Config::custom_exec_run_as()` として各 runtime に渡している。
+- `custom.exec.worker_user` / `worker_uid` / `worker_gid` は `core/src/config/custom/exec.rs` で解決し、`Permissions.custom.exec_run_as` として保持する。
 - `core/src/spawn.rs` の `SpawnChildRequest` に `run_as` を追加し、`setgroups` → `setgid` → `setuid` を spawn 直前で適用している。
 - `shell` / `shell_command` / `exec_command` / `unified_exec` の各経路で `run_as` を埋めるようにしている。
 - `shell_environment_policy.inherit = "all"` と `custom.exec` の併用は、`custom.exec` が設定された状態での env 漏えいを防ぐために `InvalidInput` にしている。
 - `custom.exec.worker_user` の supplementary groups は Unix で `getgrouplist` から解決し、`worker_user` が現在のログインユーザーでも実行ユーザーとしてのグループ境界を保つようにしている。
 - 起動時には `custom.exec.*` が invoker と同じユーザーへ解決される場合に warning を出す。
-- 回帰テストとして、`core/src/config/config_tests.rs` に warning 解決テストを追加し、`core/tests/suite/custom_exec_command_worker_user.rs` に `exec_command` / `shell` が worker uid/gid で動く E2E テストを追加した。
-- さらに `core/tests/suite/user_shell_cmd.rs` で、`!` が worker user の設定に影響されず invoker 側のまま動くことを確認している。
-- `core/tests/suite/resume.rs` では、`resume_preserves_custom_exec_worker_user_for_apply_patch` が `TurnComplete` のイベント待ちに依存せず、`mount_sse_sequence` の request ログと `function_call_output_text(...)` を見て `apply_patch` の結果を確認する。`new` 版と同じ判定方法に寄せ、`almost` の負荷で落ちにくくしている。
+- 回帰テストとして、`core/src/config/custom/mod.rs` に `custom__exec_worker_user__*` の unit tests を追加した。
+  - `worker_uid` / `worker_gid` の片側指定拒否
+  - uid/gid ペアの解決
+  - `worker_user` と uid/gid の一致/不一致判定
+  - `worker_user` の uid/gid/supplementary groups 解決
+  - current user へ解決された場合の warning
+  - `shell_environment_policy.inherit = "all"` との併用拒否
+- 旧 custom にあった `core/tests/suite/custom_exec_command_worker_user.rs` / `core/tests/suite/custom_user_shell_cmd.rs` / `resume_preserves_custom_exec_worker_user_for_apply_patch` は、現行再実装ではまだ未実装。必要な E2E 候補として `_docs/custom_notes/custom_tests/custom_added_tests_inventory.md` に残している。
 
 ## 関連ファイル（実装時に追記）
 
 - `CUSTOM.md`
 - `Makefile`
-- `docs/config.md`
 - `_docs/custom_notes/allowed_sudo_fallback.md`
 - `codex-rs/core/src/config/mod.rs`
 - `codex-rs/core/src/config/custom/exec.rs`
+- `codex-rs/core/src/config/custom/mod.rs`
 - `codex-rs/core/src/custom/exec/mod.rs`
 - `codex-rs/core/src/custom/exec/run_as.rs`
 - `codex-rs/config/src/custom/exec.rs`
+- `codex-rs/config/src/custom/mod.rs`
 - `codex-rs/core/src/spawn.rs`
 - `codex-rs/core/src/sandboxing/mod.rs`
 - `codex-rs/core/src/tools/runtimes/shell.rs`
@@ -177,4 +184,3 @@ include_only = [
 - `codex-rs/core/src/tasks/user_shell.rs`
 - `codex-rs/core/src/exec.rs`
 - `codex-rs/core/src/landlock.rs`
-- `codex-rs/core/src/config/config_tests.rs`

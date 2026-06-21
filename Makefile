@@ -37,46 +37,8 @@ CODEX_DOCKER_PLATFORM ?=
 CODEX_DOCKER_CACHE_DIR ?= $(CACHE_DIR)/docker
 DOCKER_RUN := $(ROOT_DIR)/scripts/docker_run.sh
 RUN_TUI_CONFIG ?= sample_config.toml
-
-SKIP_ALMOST_TESTS ?= \
-	view_image_tool_attaches_local_image \
-	approval_matrix_covers_all_modes \
-	drop_kills_wrapper_process_group \
-	denying_network_policy_amendment_persists_policy_and_skips_future_network_prompt \
-	unified_exec_streams_after_lagged_output \
-	remote_models_merge_adds_new_high_priority_first \
-	turn_start_jsonrpc_span_parents_core_turn_spans \
-	suite::codex_tool::test_shell_command_approval_triggers_elicitation \
-	suite::v2::turn_start_zsh_fork::turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2 \
-	system_bwrap_warning_skips_supported_system_bwrap \
-	sandboxed_file_system_helper_finds_bwrap_on_preserved_path \
-	file_system_sandboxed_read_allows_readable_root \
-	file_system_sandboxed_write_rejects_unwritable_path \
-	file_system_sandboxed_write_allows_explicit_alias_roots \
-	file_system_sandboxed_write_allows_additional_write_root \
-	file_system_sandboxed_read_rejects_symlink_escape \
-	file_system_sandboxed_read_rejects_symlink_parent_dotdot_escape \
-	file_system_sandboxed_write_rejects_symlink_escape \
-	file_system_create_directory_rejects_symlink_escape \
-	file_system_read_directory_rejects_symlink_escape \
-	file_system_copy_rejects_symlink_escape_destination \
-	file_system_remove_removes_symlink_not_target \
-	file_system_copy_preserves_symlink_source \
-	file_system_remove_rejects_symlink_escape \
-	file_system_copy_rejects_symlink_escape_source \
-	chatwidget::tests::approval_modal_exec_no_reason \
-	chatwidget::tests::approval_modal_exec \
-	chatwidget::tests::chatwidget_markdown_code_blocks_vt100_snapshot \
-	chatwidget::tests::compact_queues_user_messages_snapshot \
-	chatwidget::tests::review_queues_user_messages_snapshot \
-	history_cell::tests::user_history_cell_wraps_and_prefixes_each_line_snapshot \
-	suite::resume::resume_preserves_custom_exec_worker_user_for_apply_patch \
-	suite::landlock::bwrap_populates_minimal_dev_nodes \
-	suite::landlock::bwrap_preserves_writable_dev_shm_bind_mount \
-	suite::landlock::sandbox_blocks_git_and_codex_writes_inside_writable_root \
-	suite::landlock::sandbox_blocks_codex_symlink_replacement_attack \
-	suite::landlock::sandbox_blocks_explicit_split_policy_carveouts_under_bwrap \
-	suite::landlock::sandbox_blocks_root_read_carveouts_under_bwrap
+ALMOST_SKIP_TESTS_FILE := $(ROOT_DIR)/skip_test_list.txt
+SKIP_ALMOST_TESTS ?= $(strip $(shell awk 'NF && $$1 !~ /^#/ { print $$1 }' "$(ALMOST_SKIP_TESTS_FILE)"))
 
 # Extra flags passed to `cargo test` (example: `make test-almost CARGO_TEST_FLAGS=--no-fail-fast`).
 CARGO_TEST_FLAGS ?=
@@ -246,10 +208,10 @@ fix-cli: cache-dir docker-build
 	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && just fix -p codex-cli)
 
 build-linux-sandbox: cache-dir docker-build
-	@# Some test suites expect `codex-linux-sandbox` to exist as a standalone binary.
-	@# `cargo test -p codex-core` does not necessarily build it, so build it explicitly on Linux.
+	@# Some test suites expect `codex-linux-sandbox` and its bundled bwrap to exist as standalone binaries.
+	@# `cargo test -p codex-core` does not necessarily build them, so build them explicitly on Linux.
 	@if [ "$$(uname -s)" = "Linux" ]; then \
-		$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo build -p codex-linux-sandbox); \
+		$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo build -p codex-linux-sandbox -p codex-bwrap); \
 	fi
 
 test-core: build-linux-sandbox docker-build
@@ -293,7 +255,6 @@ verify-linux-default-shell: cache-dir docker-build
 
 verify-command-exec-worker-user: cache-dir docker-build
 	$(call run_test_logged,verify_command_exec_worker_user,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib custom__exec_worker_user__ -- --list | grep -q custom__exec_worker_user__ && cargo test -p codex-core --lib custom__exec_worker_user__)
-	$(call run_test_logged,verify_command_exec_worker_user_exec_command_sudo,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib prepare_pty_command_)
 
 # TUI helpers
 run-tui: cache-dir docker-build

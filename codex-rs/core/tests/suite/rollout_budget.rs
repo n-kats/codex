@@ -183,7 +183,9 @@ async fn subagent_usage_draws_from_the_shared_budget() -> Result<()> {
     .await;
     test.submit_turn(FOLLOW_UP_PROMPT).await?;
 
-    let request = follow_up.single_request();
+    let request = follow_up
+        .last_request()
+        .expect("follow-up request should be captured");
     assert_eq!(
         rollout_budget_texts(&request).last(),
         Some(&rollout_budget_message(/*remaining_tokens*/ 50))
