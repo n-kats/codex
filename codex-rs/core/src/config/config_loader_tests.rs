@@ -196,6 +196,7 @@ invalid = ["#,
         &[] as &[(String, TomlValue)],
         LoaderOverrides {
             ignore_user_config: true,
+            ignore_project_config: true,
             ..Default::default()
         },
         &codex_config::NoopThreadConfigLoader,
@@ -226,6 +227,7 @@ async fn ignore_rules_marks_config_stack_for_exec_policy_rule_skip() -> std::io:
         &[] as &[(String, TomlValue)],
         LoaderOverrides {
             ignore_user_and_project_exec_policy_rules: true,
+            ignore_project_config: false,
             ..Default::default()
         },
         &codex_config::NoopThreadConfigLoader,

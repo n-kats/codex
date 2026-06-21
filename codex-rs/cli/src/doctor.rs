@@ -32,6 +32,7 @@ use codex_api::ApiError;
 use codex_api::ResponsesWebsocketClient;
 use codex_api::is_azure_responses_provider;
 use codex_arg0::Arg0DispatchPaths;
+use codex_config::LoaderOverrides;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerTransportConfig;
 use codex_core::config::Config;
@@ -306,10 +307,18 @@ impl DoctorCheck {
 pub async fn run_doctor(
     command: DoctorCommand,
     root_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
     interactive: &TuiCli,
     arg0_paths: &Arg0DispatchPaths,
 ) -> anyhow::Result<()> {
-    let report = build_report(&command, root_config_overrides, interactive, arg0_paths).await;
+    let report = build_report(
+        &command,
+        root_config_overrides,
+        loader_overrides,
+        interactive,
+        arg0_paths,
+    )
+    .await;
 
     if command.json {
         println!(
@@ -333,6 +342,7 @@ pub async fn run_doctor(
 async fn build_report(
     command: &DoctorCommand,
     root_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
     interactive: &TuiCli,
     arg0_paths: &Arg0DispatchPaths,
 ) -> DoctorReport {
@@ -346,7 +356,13 @@ async fn build_report(
     checks.push(run_sync_check("search", progress.clone(), search_check));
 
     progress.begin("config");
-    let config_result = load_config(root_config_overrides, interactive, arg0_paths).await;
+    let config_result = load_config(
+        root_config_overrides,
+        loader_overrides,
+        interactive,
+        arg0_paths,
+    )
+    .await;
     match &config_result {
         Ok(config) => {
             let auth_manager =
@@ -493,6 +509,7 @@ async fn build_report(
 
 async fn load_config(
     root_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
     interactive: &TuiCli,
     arg0_paths: &Arg0DispatchPaths,
 ) -> anyhow::Result<Config> {
@@ -512,6 +529,7 @@ async fn load_config(
     };
 
     ConfigBuilder::default()
+        .loader_overrides(loader_overrides)
         .cli_overrides(cli_kv_overrides)
         .harness_overrides(overrides)
         .build()
