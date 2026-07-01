@@ -55,6 +55,7 @@ struct ThreadSettingsBuildParams {
     approvals_reviewer: Option<codex_app_server_protocol::ApprovalsReviewer>,
     sandbox_policy: Option<codex_app_server_protocol::SandboxPolicy>,
     permissions: Option<String>,
+    project_doc_paths: Option<Vec<PathBuf>>,
     model: Option<String>,
     service_tier: Option<Option<String>>,
     effort: Option<ReasoningEffort>,
@@ -449,6 +450,7 @@ impl TurnRequestProcessor {
                     approvals_reviewer: params.approvals_reviewer,
                     sandbox_policy: params.sandbox_policy,
                     permissions: params.permissions,
+                    project_doc_paths: None,
                     model: params.model,
                     service_tier: params.service_tier,
                     effort: params.effort,
@@ -555,6 +557,7 @@ impl TurnRequestProcessor {
             approvals_reviewer,
             sandbox_policy,
             permissions,
+            project_doc_paths,
             model,
             service_tier,
             effort,
@@ -576,7 +579,11 @@ impl TurnRequestProcessor {
         // `thread/settings/update` only acknowledges that the update was queued.
         // Clients that send dependent partial updates should wait for
         // `thread/settings/updated` or combine the fields in one request.
-        let snapshot = if permissions.is_some() {
+        let needs_snapshot = permissions.is_some()
+            || project_doc_paths
+                .as_ref()
+                .is_some_and(|paths| paths.iter().any(|path| !path.is_absolute()));
+        let snapshot = if needs_snapshot {
             Some(thread.config_snapshot().await)
         } else {
             None
@@ -588,6 +595,7 @@ impl TurnRequestProcessor {
             || approvals_reviewer.is_some()
             || sandbox_policy.is_some()
             || permissions.is_some()
+            || project_doc_paths.is_some()
             || model.is_some()
             || service_tier.is_some()
             || effort.is_some()
@@ -597,6 +605,38 @@ impl TurnRequestProcessor {
 
         let runtime_workspace_roots =
             runtime_workspace_roots_request.map(resolve_runtime_workspace_roots);
+        let project_doc_base_cwd = environments
+            .as_ref()
+            .map(|environments| environments.legacy_fallback_cwd.clone())
+            .or_else(|| snapshot.as_ref().map(|snapshot| snapshot.cwd().clone()));
+        let project_doc_paths = project_doc_paths
+            .map(|paths| {
+                paths
+                    .into_iter()
+                    .map(|path| {
+                        if path.is_absolute() {
+                            AbsolutePathBuf::try_from(path)
+                        } else {
+                            let base_cwd = project_doc_base_cwd
+                                .as_ref()
+                                .expect("relative project doc paths require a base cwd");
+                            AbsolutePathBuf::try_from(base_cwd.as_path().join(path))
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()
+            .map_err(|err| invalid_request(format!("invalid project doc path: {err}")))?;
+        if let Some(project_doc_paths) = &project_doc_paths {
+            for path in project_doc_paths {
+                if !path.as_path().is_file() {
+                    return Err(invalid_request(format!(
+                        "project doc path is not a file: {}",
+                        path.display()
+                    )));
+                }
+            }
+        }
         let approval_policy =
             approval_policy.map(codex_app_server_protocol::AskForApproval::to_core);
         let approvals_reviewer =
@@ -664,6 +704,7 @@ impl TurnRequestProcessor {
                     active_permission_profile: active_permission_profile.clone(),
                     profile_workspace_roots: profile_workspace_roots.clone(),
                     windows_sandbox_level: None,
+                    project_doc_paths: project_doc_paths.clone(),
                     model: model.clone(),
                     effort: effort.clone(),
                     summary,
@@ -681,6 +722,7 @@ impl TurnRequestProcessor {
             environments,
             workspace_roots: runtime_workspace_roots,
             profile_workspace_roots,
+            project_doc_paths,
             approval_policy,
             approvals_reviewer,
             sandbox_policy,
@@ -717,6 +759,7 @@ impl TurnRequestProcessor {
                     approvals_reviewer: params.approvals_reviewer,
                     sandbox_policy: params.sandbox_policy,
                     permissions: params.permissions,
+                    project_doc_paths: params.project_doc_paths,
                     model: params.model,
                     service_tier: params.service_tier,
                     effort: params.effort,

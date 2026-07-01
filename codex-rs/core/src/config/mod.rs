@@ -30,6 +30,7 @@ use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
 use codex_config::config_toml::ThreadStoreToml;
 use codex_config::config_toml::validate_model_providers;
+use codex_config::custom::CustomThemeDiffToml;
 use codex_config::loader::load_config_layers_state;
 use codex_config::loader::project_trust_key;
 use codex_config::permissions_toml::PermissionsToml;
@@ -768,6 +769,9 @@ pub struct Config {
 
     /// Syntax highlighting theme override (kebab-case name).
     pub tui_theme: Option<String>,
+
+    /// Custom fork-specific diff color overrides for the TUI.
+    pub custom_theme_diff: Option<CustomThemeDiffToml>,
 
     /// Pet id preselected by the terminal pet picker.
     pub tui_pet: Option<String>,
@@ -3906,6 +3910,7 @@ impl Config {
                 .unwrap_or(true),
             tui_terminal_title: cfg.tui.as_ref().and_then(|t| t.terminal_title.clone()),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
+            custom_theme_diff: cfg.custom.theme.diff.clone(),
             tui_pet: cfg.tui.as_ref().and_then(|t| t.pet.clone()),
             tui_pet_anchor: cfg
                 .tui

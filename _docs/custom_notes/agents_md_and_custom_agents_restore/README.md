@@ -25,6 +25,18 @@
 - `codex-rs/tui/src/main.rs` は API 変更に合わせて `run_main(..., Vec::new())` を渡すよう更新した。
 - 回帰防止として `cli/src/custom_tests.rs` に `custom__agents_md__interactive起動時にtuiへ引き継がれる` を追加し、interactive 起動時の引き継ぎを検証する。
 
+## 追記（2026-07-01 custom2 再実装）
+
+- `custom2` の現行コードでは `--agents-md` / `project_doc_paths` の起動時配線は戻っていたが、TUI の `/custom-agents` command が未復元だったため再実装した。
+- `SlashCommand::CustomAgents` を追加し、`/custom-agents <path> [path...]` と `/custom-agents clear` を受け付ける。
+  - `clear/off/none/auto/default` は空の `project_doc_paths` を送り、自動探索へ戻す。
+  - パス指定時は TUI の現在 cwd 基準で相対パスを解決し、存在する通常ファイルだけを canonical path として送る。
+  - 指定パスが存在しない、または通常ファイルでない場合は TUI でエラー表示して既存設定を維持する。
+- `AppCommand::OverrideTurnContext` / `thread/settings/update` / `ThreadSettingsOverrides` / `SessionSettingsUpdate` に `project_doc_paths` を追加した。
+- session settings update で `project_doc_paths` が変わった場合、`Config.project_doc_paths` を更新し、`load_project_instructions()` で `loaded_agents_md` を再生成する。
+- `project_doc_paths` 更新時は `reference_context_item` をクリアし、次ターンで新しい project docs を full context として再注入できるようにした。
+- TUI 回帰テストとして、path 指定が `OverrideTurnContext { project_doc_paths: Some(vec![...]) }` を送ること、`clear` が `Some(vec![])` を送ることを追加した。
+
 ## 対象範囲（非対象も）
 
 - 対象:
@@ -47,6 +59,12 @@
   - `cd codex-rs && cargo test -p codex-tui`
   - `cd codex-rs && cargo test -p codex-core project_doc`
   - `cd codex-rs && cargo test -p codex-cli agents_md_flag_parses`
+- 2026-07-01 custom2 再実装時の確認:
+  - `cargo check`
+  - `cargo fmt --all -- --check`
+  - `cargo test -p codex-tui --lib custom_agents`
+  - `cargo test -p codex-app-server-protocol --lib thread_settings_update_params`
+  - `cargo test -p codex-app-server --test all thread_settings_update`
 - 手動確認:
   - `codex --agents-md <path>` 起動時に対象ドキュメントが instructions に反映されること
   - TUI で `/custom-agents <path>` と `/custom-agents clear` が期待どおり動作すること
@@ -70,12 +88,22 @@
 - `codex-rs/tui/src/main.rs`
 - `codex-rs/tui/src/chatwidget.rs`
 - `codex-rs/tui/src/chatwidget/tests.rs`
+- `codex-rs/tui/src/slash_command.rs`
+- `codex-rs/tui/src/app_command.rs`
+- `codex-rs/tui/src/app/thread_settings.rs`
+- `codex-rs/tui/src/chatwidget/slash_dispatch.rs`
+- `codex-rs/tui/src/chatwidget/tests/slash_commands.rs`
 - `codex-rs/exec/src/lib.rs`
 - `codex-rs/core/src/config/mod.rs`
 - `codex-rs/core/src/project_doc.rs`
 - `codex-rs/core/src/codex.rs`
 - `codex-rs/core/src/session/mod.rs`
 - `codex-rs/core/src/session/session.rs`
+- `codex-rs/core/src/session/handlers.rs`
+- `codex-rs/core/src/codex_thread.rs`
 - `codex-rs/core/src/session/tests.rs`
 - `codex-rs/tui/src/chatwidget/slash_dispatch.rs`
 - `codex-rs/tui/src/chatwidget/tests/slash_commands.rs`
+- `codex-rs/protocol/src/protocol.rs`
+- `codex-rs/app-server-protocol/src/protocol/v2/thread.rs`
+- `codex-rs/app-server/src/request_processors/turn_processor.rs`

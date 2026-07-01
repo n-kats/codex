@@ -3471,6 +3471,30 @@ fn tui_theme_defaults_to_none() {
 }
 
 #[test]
+fn custom_theme_diff_deserializes_from_toml() {
+    let cfg = r##"
+[custom.theme.diff]
+enabled = true
+line_bg = false
+gutter = true
+sign = false
+content = true
+add_line_bg = "#102030"
+del_line_bg = "402010"
+"##;
+    let parsed = toml::from_str::<ConfigToml>(cfg).expect("TOML deserialization should succeed");
+    let diff = parsed.custom.theme.diff.expect("custom diff theme");
+
+    assert_eq!(diff.enabled, Some(true));
+    assert_eq!(diff.line_bg, Some(false));
+    assert_eq!(diff.gutter, Some(true));
+    assert_eq!(diff.sign, Some(false));
+    assert_eq!(diff.content, Some(true));
+    assert_eq!(diff.add_line_bg.as_deref(), Some("#102030"));
+    assert_eq!(diff.del_line_bg.as_deref(), Some("402010"));
+}
+
+#[test]
 fn tui_session_picker_view_deserializes_from_toml() {
     let cfg = r#"
 [tui]

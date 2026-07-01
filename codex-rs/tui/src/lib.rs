@@ -1676,6 +1676,11 @@ async fn run_ratatui_app(
     ) {
         config.startup_warnings.push(w);
     }
+    config
+        .startup_warnings
+        .extend(crate::diff_render::set_custom_diff_theme_override(
+            config.custom_theme_diff.as_ref(),
+        ));
 
     set_default_client_residency_requirement(config.enforce_residency.value());
     let should_show_trust_screen = should_show_trust_screen(&config);

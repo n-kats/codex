@@ -805,6 +805,30 @@
       },
       "type": "object"
     },
+    "CurrentTimeReminderConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "clock_source": {
+          "$ref": "#/definitions/CurrentTimeSource"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "reminder_interval_model_requests": {
+          "format": "uint64",
+          "minimum": 1.0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "CurrentTimeSource": {
+      "enum": [
+        "system",
+        "external"
+      ],
+      "type": "string"
+    },
     "CustomConfigToml": {
       "additionalProperties": false,
       "properties": {
@@ -821,6 +845,16 @@
             "worker_gid": null,
             "worker_uid": null,
             "worker_user": null
+          }
+        },
+        "theme": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomThemeToml"
+            }
+          ],
+          "default": {
+            "diff": null
           }
         },
         "user_shell": {
@@ -858,6 +892,47 @@
       },
       "type": "object"
     },
+    "CustomThemeDiffToml": {
+      "additionalProperties": false,
+      "properties": {
+        "add_line_bg": {
+          "type": "string"
+        },
+        "content": {
+          "type": "boolean"
+        },
+        "del_line_bg": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "gutter": {
+          "type": "boolean"
+        },
+        "line_bg": {
+          "type": "boolean"
+        },
+        "sign": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeToml": {
+      "additionalProperties": false,
+      "properties": {
+        "diff": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomThemeDiffToml"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
     "CustomUserShellToml": {
       "additionalProperties": false,
       "properties": {
@@ -866,30 +941,6 @@
         }
       },
       "type": "object"
-    },
-    "CurrentTimeReminderConfigToml": {
-      "additionalProperties": false,
-      "properties": {
-        "clock_source": {
-          "$ref": "#/definitions/CurrentTimeSource"
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "reminder_interval_model_requests": {
-          "format": "uint64",
-          "minimum": 1.0,
-          "type": "integer"
-        }
-      },
-      "type": "object"
-    },
-    "CurrentTimeSource": {
-      "enum": [
-        "system",
-        "external"
-      ],
-      "type": "string"
     },
     "DebugConfigLockToml": {
       "additionalProperties": false,
@@ -4652,6 +4703,9 @@
           "worker_gid": null,
           "worker_uid": null,
           "worker_user": null
+        },
+        "theme": {
+          "diff": null
         },
         "user_shell": {
           "no_inject": null
