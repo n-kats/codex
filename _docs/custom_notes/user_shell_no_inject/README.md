@@ -38,7 +38,7 @@ no_inject = true
 ## 動作確認手順
 
 - 手動:
-  1. `~/.codex/config.toml`（または `--config` 指定のファイル）に `[custom.user_shell] no_inject = true` を設定
+  1. `~/.codex/config.toml`（または `--config-file` 指定のファイル）に `[custom.user_shell] no_inject = true` を設定
   2. Codex を起動し、`! echo hello` を実行
   3. スレッドの履歴（保存されたセッション）を確認し、`<user_shell_command>` が保存されていないことを確認
 - テスト:
@@ -60,7 +60,6 @@ no_inject = true
 - そのため、`!` の表示は維持しつつ、履歴混入だけを抑える方針を保っている。
 - 起動時 warning は `custom.user_shell.no_inject = false` を明示した場合だけ出す。未設定の既定 `false` では出さない。
 - 回帰テストとして、`core/src/config/config_tests.rs` に warning 解決テストを追加し、`core/tests/suite/custom_user_shell_cmd.rs` に `no_inject` の履歴非保存テストを追加した。
-- `custom.exec.worker_user` と組み合わせたときも、`!` の挙動は invoker 側で維持されることを `core/tests/suite/user_shell_cmd.rs` で確認している。
 
 ## 関連ファイル一覧
 

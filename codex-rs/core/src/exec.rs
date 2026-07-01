@@ -17,7 +17,6 @@ use tokio::io::BufReader;
 use tokio::process::Child;
 use tokio_util::sync::CancellationToken;
 
-use crate::custom::exec::RunAsUser;
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::ExecRequest;
 use crate::sandboxing::SandboxPermissions;
@@ -102,7 +101,6 @@ pub struct ExecParams {
     pub windows_sandbox_private_desktop: bool,
     pub justification: Option<String>,
     pub arg0: Option<String>,
-    pub run_as: Option<RunAsUser>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -327,7 +325,6 @@ pub fn build_exec_request(
         network_environment_id,
         windows_sandbox_level,
         windows_sandbox_private_desktop,
-        run_as,
 
         // TODO: Should arg0 be set on the ExecRequest that is returned?
         arg0: _,
@@ -398,7 +395,6 @@ pub fn build_exec_request(
             )
         })
         .map_err(CodexErr::from)?;
-    exec_req.run_as = run_as;
     let use_windows_elevated_backend = windows_sandbox_uses_elevated_backend(
         exec_req.windows_sandbox_level,
         exec_req.network.is_some(),
@@ -446,7 +442,6 @@ pub(crate) async fn execute_exec_request(
         windows_sandbox_filesystem_overrides,
         network_environment_id,
         arg0,
-        run_as,
     } = exec_request;
 
     // TODO(anp): Keep PathUri through the local process launch boundary.
@@ -471,7 +466,6 @@ pub(crate) async fn execute_exec_request(
         windows_sandbox_private_desktop,
         justification: None,
         arg0,
-        run_as,
     };
 
     let start = Instant::now();
@@ -955,7 +949,6 @@ async fn exec(
         network,
         network_environment_id: _,
         arg0,
-        run_as,
         expiration,
         capture_policy,
 
@@ -990,7 +983,6 @@ async fn exec(
         network: None,
         stdio_policy: StdioPolicy::RedirectForShellTool,
         env,
-        run_as,
     })
     .await?;
     if let Some(after_spawn) = after_spawn {

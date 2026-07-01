@@ -198,7 +198,6 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
             .permissions_preapproved,
         justification: exec_params.justification.clone(),
         exec_approval_requirement,
-        run_as: exec_params.run_as.clone(),
     };
     let mut orchestrator = ToolOrchestrator::new();
     let mut runtime = ShellRuntime::for_shell_command(shell_runtime_backend);

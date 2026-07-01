@@ -28,6 +28,7 @@ pub struct CliConfigOverrides {
     ///   - `-c shell_environment_policy.inherit=all`
     #[arg(
         short = 'c',
+        long = "config",
         value_name = "key=value",
         action = ArgAction::Append,
         global = true,

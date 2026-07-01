@@ -1097,7 +1097,6 @@ impl UnifiedExecProcessManager {
             additional_permissions_preapproved: request.additional_permissions_preapproved,
             justification: request.justification.clone(),
             exec_approval_requirement,
-            run_as: custom_exec::run_as_for_assistant_shell(&context.turn),
         };
         let tool_ctx = ToolCtx {
             session: context.session.clone(),

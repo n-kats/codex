@@ -68,10 +68,6 @@
 
 fallback を入れる場合、浅い場所に専用ノートを作る。
 
-例:
-
-- `_docs/custom_notes/allowed_sudo_fallback.md`
-
 必ず記録すること:
 
 - fallback の目的
@@ -88,7 +84,6 @@ fallback を入れる場合、浅い場所に専用ノートを作る。
 
 例:
 
-- `custom.exec.worker_user`
 - `custom.user_shell.no_inject`
 
 理由:
@@ -165,6 +160,5 @@ custom helper は、上流の既存設定・既存 policy を受け取り、必�
 
 ## 関連ノート
 
-- `_docs/custom_notes/allowed_sudo_fallback.md`
 - `_docs/custom_notes/custom_tests/README.md`
 - `_docs/custom_notes/rebase_rules/README.md`

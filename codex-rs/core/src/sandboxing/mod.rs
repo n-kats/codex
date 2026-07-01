@@ -7,7 +7,6 @@ the exec-only metadata and translates transformed sandbox commands back into
 ExecRequest for execution.
 */
 
-use crate::custom::exec::RunAsUser;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::exec::StdoutStream;
@@ -61,7 +60,6 @@ pub struct ExecRequest {
     pub network_sandbox_policy: NetworkSandboxPolicy,
     pub(crate) windows_sandbox_filesystem_overrides: Option<WindowsSandboxFilesystemOverrides>,
     pub arg0: Option<String>,
-    pub run_as: Option<RunAsUser>,
 }
 
 impl ExecRequest {
@@ -104,7 +102,6 @@ impl ExecRequest {
             network_sandbox_policy,
             windows_sandbox_filesystem_overrides: None,
             arg0,
-            run_as: None,
         }
     }
 
@@ -161,7 +158,6 @@ impl ExecRequest {
             network_sandbox_policy,
             windows_sandbox_filesystem_overrides: None,
             arg0,
-            run_as: None,
         }
     }
 }

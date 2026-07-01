@@ -80,7 +80,7 @@ rebase 前後のパッチ列の対応を見て、「意図しない差分増加/
 - `range-diff` が大きすぎて見づらい:
   - `git range-diff ... | rg -n \"[!<>]\"` で変化があるコミットだけに絞る。
 - `--config` などの CLI 変更でテストが落ちる:
-  - まず “どのバイナリの CLI か” を確認して、衝突するフラグ名は避ける（例: `codex` と `codex-exec` で `--config` の意味が異なる）。
+  - まず “どのバイナリの CLI か” を確認する。本家追従のため `--config` は `-c key=value` と同じ override として扱い、custom の config.toml ファイル指定は `--config-file` に分離する。
 
 ## よく直したパターン（症状 → 原因 → 対処）
 
@@ -107,7 +107,7 @@ rebase 前後のパッチ列の対応を見て、「意図しない差分増加/
 - 症状: `error: unexpected argument '--config' found` のように clap が弾く。
 - 原因:
   - “global flag” を後置できることを期待しているが、CLI 定義で `global = true` になっていない。
-  - 複数バイナリで同名フラグが既に別用途で使われており、共通 struct に追加できない（例: `codex` は `--config <FILE>`、`codex-exec` は `--config key=value` を期待、など）。
+  - 複数バイナリで同名フラグが既に別用途で使われている、または本家が同名フラグを追加した（例: 本家の `--config key=value` と custom の config.toml ファイル指定が衝突する、など）。
 - 対処:
   - テストが期待する “どのバイナリ” の CLI かを特定する（例: `codex` / `codex-exec` / `codex-cli`）。
   - 同名衝突がある場合は、バイナリ固有のトップレベル CLI に追加して吸収する（`TopCli` で parse → inner に merge 等）。

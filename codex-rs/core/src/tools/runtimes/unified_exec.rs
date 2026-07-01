@@ -5,7 +5,6 @@ Handles approval + sandbox orchestration for unified exec requests, delegating t
 the process manager to spawn PTYs once an ExecRequest is prepared.
 */
 use crate::command_canonicalization::canonicalize_command_for_approval;
-use crate::custom::exec::RunAsUser;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::guardian::GuardianApprovalRequest;
@@ -79,7 +78,6 @@ pub struct UnifiedExecRequest {
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
     pub exec_approval_requirement: ExecApprovalRequirement,
-    pub run_as: Option<RunAsUser>,
 }
 
 /// Cache key for approval decisions that can be reused across equivalent
@@ -388,7 +386,6 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
                 .env_for(command, options, managed_network)
                 .map_err(ToolError::Codex)?;
             exec_env.exec_server_env_config = req.exec_server_env_config.clone();
-            exec_env.run_as = req.run_as.clone();
             match zsh_fork_backend::maybe_prepare_unified_exec(
                 req,
                 attempt,
@@ -449,7 +446,6 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             .env_for(command, options, managed_network)
             .map_err(ToolError::Codex)?;
         exec_env.exec_server_env_config = req.exec_server_env_config.clone();
-        exec_env.run_as = req.run_as.clone();
         self.manager
             .open_session_with_exec_env(
                 req.process_id,
@@ -567,7 +563,6 @@ mod tests {
                 bypass_sandbox: false,
                 proposed_execpolicy_amendment: None,
             },
-            run_as: None,
         };
 
         assert_eq!(
@@ -667,7 +662,6 @@ mod tests {
             additional_permissions_preapproved: false,
             justification: None,
             exec_approval_requirement,
-            run_as: None,
         }
     }
 

@@ -115,7 +115,6 @@ impl ShellCommandHandler {
                 .windows_sandbox_private_desktop,
             justification: params.justification.clone(),
             arg0: None,
-            run_as: custom_exec::run_as_for_assistant_shell(turn_context),
         })
     }
 }

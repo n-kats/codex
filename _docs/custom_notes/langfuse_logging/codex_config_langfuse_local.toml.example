@@ -1,7 +1,7 @@
 # Example config for Langfuse OTEL debugging (sanitized).
 #
 # Usage (repo checkout):
-#   dotenv run codex-rs/target/debug/codex --config ./codex_config_langfuse_local.toml exec -- echo otel-smoke
+#   dotenv run codex-rs/target/debug/codex --config-file ./codex_config_langfuse_local.toml exec -- echo otel-smoke
 #
 # Notes:
 # - This file is safe to commit because it contains no secrets.

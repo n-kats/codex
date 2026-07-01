@@ -835,18 +835,6 @@
         "assistant_shell_environment_policy": {
           "$ref": "#/definitions/ShellEnvironmentPolicyToml"
         },
-        "exec": {
-          "allOf": [
-            {
-              "$ref": "#/definitions/CustomExecToml"
-            }
-          ],
-          "default": {
-            "worker_gid": null,
-            "worker_uid": null,
-            "worker_user": null
-          }
-        },
         "theme": {
           "allOf": [
             {
@@ -869,25 +857,6 @@
         },
         "user_shell_environment_policy": {
           "$ref": "#/definitions/ShellEnvironmentPolicyToml"
-        }
-      },
-      "type": "object"
-    },
-    "CustomExecToml": {
-      "additionalProperties": false,
-      "properties": {
-        "worker_gid": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "worker_uid": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "worker_user": {
-          "type": "string"
         }
       },
       "type": "object"
@@ -4699,11 +4668,6 @@
       ],
       "default": {
         "assistant_shell_environment_policy": null,
-        "exec": {
-          "worker_gid": null,
-          "worker_uid": null,
-          "worker_user": null
-        },
         "theme": {
           "diff": null
         },

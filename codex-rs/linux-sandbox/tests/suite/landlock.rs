@@ -181,7 +181,6 @@ async fn run_cmd_result_with_permission_profile_for_cwd(
         windows_sandbox_private_desktop: false,
         justification: None,
         arg0: None,
-        run_as: None,
     };
     let codex_linux_sandbox_exe = Some(codex_linux_sandbox_exe());
 
@@ -440,7 +439,6 @@ async fn assert_network_blocked(cmd: &[&str]) {
         windows_sandbox_private_desktop: false,
         justification: None,
         arg0: None,
-        run_as: None,
     };
 
     let codex_linux_sandbox_exe: Option<PathBuf> = Some(codex_linux_sandbox_exe());

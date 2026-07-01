@@ -111,7 +111,6 @@ fn exec_server_params_use_path_uri_and_env_policy_overlay_contract() {
         network_sandbox_policy,
         windows_sandbox_filesystem_overrides: None,
         arg0: None,
-        run_as: None,
     };
 
     let params =

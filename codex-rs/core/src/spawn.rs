@@ -1,8 +1,3 @@
-#[cfg(unix)]
-use crate::custom::exec::RunAsRetry;
-use crate::custom::exec::RunAsUser;
-#[cfg(unix)]
-use crate::custom::exec::run_as_sudo_command;
 use codex_network_proxy::NetworkProxy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::collections::HashMap;
@@ -97,7 +92,6 @@ pub(crate) struct SpawnChildRequest<'a> {
     pub network: Option<&'a NetworkProxy>,
     pub stdio_policy: StdioPolicy,
     pub env: HashMap<String, String>,
-    pub run_as: Option<RunAsUser>,
 }
 
 pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io::Result<Child> {
@@ -110,48 +104,22 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
         network,
         stdio_policy,
         mut env,
-        run_as,
     } = request;
 
     trace!(
         "spawn_child_async: {program:?} {args:?} {arg0:?} {cwd:?} {network_sandbox_policy:?} {stdio_policy:?} {env:?}"
     );
 
-    #[cfg(not(unix))]
-    let _ = &run_as;
-
     if let Some(network) = network {
         network.apply_to_env(&mut env);
     }
 
-    #[cfg(unix)]
-    let run_as_retry = run_as.clone().map(|run_as| {
-        RunAsRetry::new(
-            run_as,
-            arg0.map(String::from),
-            program.to_string_lossy().to_string(),
-            args.clone(),
-            cwd.clone().to_path_buf(),
-            env.clone(),
-        )
-    });
-
-    #[cfg(unix)]
-    let mut cmd = if let Some(run_as_retry) = run_as_retry {
-        run_as_sudo_command(run_as_retry)?
-    } else {
-        let mut cmd = Command::new(&program);
-        cmd.arg0(arg0.map_or_else(|| program.to_string_lossy().to_string(), String::from));
-        cmd.args(&args);
-        cmd.current_dir(&cwd);
-        cmd.env_clear();
-        cmd.envs(env);
-        cmd
-    };
-
-    #[cfg(not(unix))]
     let mut cmd = {
         let mut cmd = Command::new(&program);
+        #[cfg(unix)]
+        cmd.arg0(arg0.map_or_else(|| program.to_string_lossy().to_string(), String::from));
+        #[cfg(not(unix))]
+        let _ = &arg0;
         cmd.args(&args);
         cmd.current_dir(&cwd);
         cmd.env_clear();

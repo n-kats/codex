@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use super::MultitoolCli;
 use super::Subcommand;
 use super::loader_overrides_from_shared;
@@ -13,7 +15,7 @@ fn custom__codex_home_cli_flag__flag_is_global() {
         .expect("parse should succeed");
 
     assert_eq!(
-        cli.interactive.shared.clone().into_inner().codex_home,
+        cli.interactive.shared.into_inner().codex_home,
         Some("/tmp/codex-home".into())
     );
 }
@@ -24,7 +26,7 @@ fn custom__codex_memory_cli_flag__flag_is_global() {
         .expect("parse should succeed");
 
     assert_eq!(
-        cli.interactive.shared.clone().into_inner().codex_memory,
+        cli.interactive.shared.into_inner().codex_memory,
         Some("/tmp/codex-memory".into())
     );
 }
@@ -41,7 +43,7 @@ fn custom__agents_md_restore__flag_is_global() {
     .expect("parse should succeed");
 
     assert_eq!(
-        cli.interactive.shared.clone().into_inner().agents_md,
+        cli.interactive.shared.into_inner().agents_md,
         vec![
             PathBuf::from("docs/AGENTS.md"),
             PathBuf::from("docs/WORKFLOW.md"),
@@ -65,19 +67,20 @@ fn custom__agents_md_restore__flag_is_global_for_exec() {
 
 #[test]
 fn custom__config_toml_read_control__config_toml_file_flag_is_global() {
-    let cli = MultitoolCli::try_parse_from(["codex", "--config", "alt.toml"])
+    let cli = MultitoolCli::try_parse_from(["codex", "--config-file", "alt.toml"])
         .expect("parse should succeed");
 
     assert_eq!(
-        cli.interactive.shared.clone().into_inner().config_toml_file,
+        cli.interactive.shared.into_inner().config_toml_file,
         Some("alt.toml".into())
     );
 }
 
 #[test]
 fn custom__config_toml_read_control__config_toml_file_conflicts_with_no_config() {
-    let err = MultitoolCli::try_parse_from(["codex", "--config", "alt.toml", "--no-config"])
-        .expect_err("parse should fail");
+    let err =
+        MultitoolCli::try_parse_from(["codex", "--config-file", "alt.toml", "--no-config-file"])
+            .expect_err("parse should fail");
 
     assert!(err.to_string().contains("cannot be used with"));
 }

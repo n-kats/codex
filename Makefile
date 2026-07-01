@@ -14,7 +14,7 @@ SHELL := /bin/bash
 	lint-cli test-cli fix-cli \
 	clean clean-dry-run build-linux-sandbox test-core test-all test-almost all almost \
 	write-config-schema \
-	verify-all-custom verify-codex-home-cli-flag verify-additional-prompt-dirs-env verify-exec-command-default-login verify-linux-default-shell verify-command-exec-worker-user
+	verify-all-custom verify-codex-home-cli-flag verify-additional-prompt-dirs-env verify-exec-command-default-login verify-linux-default-shell
 
 .DEFAULT_GOAL := help
 
@@ -154,7 +154,6 @@ help:
 		"  make verify-additional-prompt-dirs-env # Verify CODEX_ADDITIONAL_PROMPT_DIRS customization" \
 		"  make verify-exec-command-default-login # Verify exec_command default login behavior" \
 		"  make verify-linux-default-shell # Verify Linux: zsh login shell is controllable (no user dotfiles)" \
-		"  make verify-command-exec-worker-user # Verify custom.exec.* worker-only command spawning" \
 		"" \
 		"  make run-tui          # Run codex TUI" \
 		"  make test-tui         # Run TUI tests" \
@@ -232,7 +231,7 @@ almost:
 
 # Custom verifications
 verify-all-custom:
-	$(call run_targets_continue_logged,verify_all_custom,verify-codex-home-cli-flag verify-additional-prompt-dirs-env verify-exec-command-default-login verify-linux-default-shell verify-command-exec-worker-user)
+	$(call run_targets_continue_logged,verify_all_custom,verify-codex-home-cli-flag verify-additional-prompt-dirs-env verify-exec-command-default-login verify-linux-default-shell)
 
 verify-codex-home-cli-flag:
 	$(call run_targets_continue_logged,verify_codex_home_cli_flag,fmt lint-arg0 test-arg0 lint-cli test-cli)
@@ -253,13 +252,10 @@ verify-linux-default-shell: cache-dir docker-build
 	$(call run_test_logged,verify_linux_sh_snapshot_sections,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell_snapshot::tests::linux_sh_snapshot_includes_sections)
 	$(call run_test_logged,verify_linux_snapshot_file_lifecycle,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib shell_snapshot::tests::try_new_creates_and_deletes_snapshot_file)
 
-verify-command-exec-worker-user: cache-dir docker-build
-	$(call run_test_logged,verify_command_exec_worker_user,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test -p codex-core --lib custom__exec_worker_user__ -- --list | grep -q custom__exec_worker_user__ && cargo test -p codex-core --lib custom__exec_worker_user__)
-
 # TUI helpers
 run-tui: cache-dir docker-build
 	@CODEX_MEMORIES_HOME="$(CODEX_MEMORIES_HOME)" \
-	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo run -p codex-cli --bin codex -- --config "$(ROOT_DIR_DOCKER)/$(RUN_TUI_CONFIG)")
+	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo run -p codex-cli --bin codex -- --config-file "$(ROOT_DIR_DOCKER)/$(RUN_TUI_CONFIG)")
 
 run-tui-test: docker-build
 	@$(MAKE) --no-print-directory run-tui

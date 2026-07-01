@@ -89,7 +89,7 @@
 
 - upstream の責務分離をまず採用し、custom は seam にだけ差し込む。
 - config / login / UI は upstream の流れを壊さず、custom 設定は正規化層で吸収する。
-- shell / exec / sandbox は `run_as` と `bwrap` を別軸として backend 合成する。
+- shell / exec / sandbox は upstream の責務分離を保ち、sandbox backend の合成に寄せる。
 - hybrid を温存せず、upstream 形に戻すか custom を seam に寄せて再実装する。
 
 ### 判断基準の補足
@@ -97,9 +97,6 @@
 - `bwrap` は sandbox の責務として扱う。
   - filesystem / network / namespace の制御は sandbox 層で完結させる。
   - UI / login / config の上位に sandbox backend の詳細を漏らさない。
-- `sudo` / `run_as` は実行ユーザーの責務として扱う。
-  - spawn / exec の境界で user switch を適用する。
-  - sandbox と同一の概念として扱わず、あとから合成する。
 - upstream にある流れを壊す custom 分岐は避ける。
   - まず upstream の責務配置を受け入れる。
   - custom はその seam にだけ追加する。
@@ -145,11 +142,10 @@
 
 ## rebase 前の注意
 
-- config の loader overrides は修正済みだが、`custom.user_shell.no_inject` と `custom.exec.worker_user` は本家との差分がまだ残っている疑いがある。
-- `!` の履歴保存/注入、worker-user の run-as は、rebase 時に優先して見直す。
+- config の loader overrides は修正済みだが、`custom.user_shell.no_inject` は本家との差分がまだ残っている疑いがある。
+- `!` の履歴保存/注入は、rebase 時に優先して見直す。
 - `AppServerSession` の bridge は hybrid のまま残っているため、approval/history の不整合が起きやすい。
-- `core/src/codex.rs` は turn_context の組み立てと配布が主で、`custom.exec.worker_user` や `custom.user_shell.no_inject` の適用場所ではない。
-- `custom.exec.worker_user` は `core/src/config/mod.rs` で正規化し、`core/src/spawn.rs` / `core/src/tools/runtimes/shell/unix_escalation.rs` の実行境界で効かせる。
+- `core/src/codex.rs` は turn_context の組み立てと配布が主で、`custom.user_shell.no_inject` の適用場所ではない。
 - `custom.user_shell.no_inject` は `core/src/tasks/user_shell.rs` の注入/履歴保存境界で効かせる。
-- `bwrap` と `sudo` は同一概念にせず、sandbox と run-as の別軸として合成する。
+- `bwrap` は sandbox の責務として扱い、UI / login / config の上位に sandbox backend の詳細を漏らさない。
 - `tui/src/app.rs` の `ThreadManager` 参照は runtime の thread lifecycle ではなく、models manager の取得と test-only cleanup に残っている。

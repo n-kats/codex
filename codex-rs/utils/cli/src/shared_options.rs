@@ -31,7 +31,7 @@ pub struct SharedCliOptions {
 
     /// Read user config from this file instead of `$CODEX_HOME/config.toml`.
     #[arg(
-        long = "config",
+        long = "config-file",
         alias = "config-toml-file",
         value_name = "FILE",
         global = true,
@@ -40,7 +40,7 @@ pub struct SharedCliOptions {
     pub config_toml_file: Option<PathBuf>,
 
     /// Skip user and project config layers for this invocation.
-    #[arg(long = "no-config", global = true, default_value_t = false)]
+    #[arg(long = "no-config-file", global = true, default_value_t = false)]
     pub no_config: bool,
 
     /// Optional image(s) to attach to the initial prompt.

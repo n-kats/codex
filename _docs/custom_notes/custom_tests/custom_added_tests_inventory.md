@@ -19,13 +19,12 @@
 
 | custom 機能 | 関連テスト/検証 |
 |---|---|
-| `config_toml_read_control` | `--config` / `--no-config` CLI parse、loader override、alternate config path、project config disable |
+| `config_toml_read_control` | `--config-file` / `--no-config-file` CLI parse、loader override、alternate config path、project config disable |
 | `codex_home_cli_flag` | `--codex-home` CLI parse、bootstrap env、Makefile debug `CODEX_HOME` |
 | `codex_memory_cli_flag` | `--codex-memory` CLI parse、bootstrap env、Makefile debug `CODEX_MEMORIES_HOME` |
 | `agents_md_and_custom_agents_restore` | `--agents-md` parse、thread metadata update、project doc path override、custom agents slash command、model-visible layout |
 | `additional_prompt_dirs` | prompt dir parse、missing dir ignore、later dir override、default prompt dir precedence |
 | `exec_command_default_login` / `shell_startup_files` | `--shell-startup-files` CLI parse、bootstrap env、clean/default parse、zsh `ZDOTDIR` isolation |
-| `command_exec_worker_user` | `custom.exec.*` config validation、uid/gid/user resolution、worker-user execution、apply_patch permission behavior、resume preservation |
 | `user_shell_environment_policy_split` | assistant shell env policy と user shell env policy の分離 |
 | `user_shell_no_inject` | `custom.user_shell.no_inject` config、startup warning、rollout 非記録 |
 | `custom_theme_diff_colors` | TOML deserialize、hex color parse、不正 hex rejection、snapshot |
@@ -40,13 +39,13 @@
 
 | パス | テスト | 内容 | 疑似コード |
 |---|---|---|---|
-| `codex-rs/cli/src/custom_tests.rs` | `custom__config_toml_read_control__config_toml_file_flag_is_global` | `codex exec --config alt.toml` が global 引数として解釈される。 | `parse cli; assert shared.config_toml_file == "alt.toml"` |
-| `codex-rs/cli/src/custom_tests.rs` | `custom__config_toml_read_control__config_toml_file_conflicts_with_no_config` | `--config` と `--no-config` を同時指定できない。 | `parse error; assert ArgumentConflict` |
-| `codex-rs/cli/src/custom_tests.rs` | `custom__config_toml_read_control__build_loader_overrides_no_config_disables_user_and_project` | `--no-config` で user/project config を無効化する。 | `build overrides; assert no_user_config && no_project_config` |
-| `codex-rs/cli/src/custom_tests.rs` | `custom__config_toml_read_control__build_loader_overrides_config_sets_user_config_path` | `--config` を user config path として絶対パス化する。 | `build overrides; assert config_toml_file == absolute(path)` |
-| `codex-rs/cli/src/custom_tests.rs` | `custom__config_toml_read_control__helpに表示される` | help に `--config` / `--no-config` などが出る。 | `render help; assert options present` |
-| `codex-rs/exec/src/custom_tests.rs` | `custom__config_toml_read_control__config_toml_file_flag_is_global` | `codex-exec resume --config alt.toml --last ...` が parse できる。 | `parse exec cli; assert config_toml_file` |
-| `codex-rs/exec/src/custom_tests.rs` | `custom__config_toml_read_control__config_toml_file_conflicts_with_no_config` | `codex-exec` でも `--config` と `--no-config` は conflict。 | `parse error; assert ArgumentConflict` |
+| `codex-rs/cli/src/custom_tests.rs` | `custom__config_toml_read_control__config_toml_file_flag_is_global` | `codex exec --config-file alt.toml` が global 引数として解釈される。 | `parse cli; assert shared.config_toml_file == "alt.toml"` |
+| `codex-rs/cli/src/custom_tests.rs` | `custom__config_toml_read_control__config_toml_file_conflicts_with_no_config` | `--config-file` と `--no-config-file` を同時指定できない。 | `parse error; assert ArgumentConflict` |
+| `codex-rs/cli/src/custom_tests.rs` | `custom__config_toml_read_control__build_loader_overrides_no_config_disables_user_and_project` | `--no-config-file` で user/project config を無効化する。 | `build overrides; assert no_user_config && no_project_config` |
+| `codex-rs/cli/src/custom_tests.rs` | `custom__config_toml_read_control__build_loader_overrides_config_sets_user_config_path` | `--config-file` を user config path として絶対パス化する。 | `build overrides; assert config_toml_file == absolute(path)` |
+| `codex-rs/cli/src/custom_tests.rs` | `custom__config_toml_read_control__helpに表示される` | help に `--config-file` / `--no-config-file` などが出る。 | `render help; assert options present` |
+| `codex-rs/exec/src/custom_tests.rs` | `custom__config_toml_read_control__config_toml_file_flag_is_global` | `codex-exec resume --config-file alt.toml --last ...` が parse できる。 | `parse exec cli; assert config_toml_file` |
+| `codex-rs/exec/src/custom_tests.rs` | `custom__config_toml_read_control__config_toml_file_conflicts_with_no_config` | `codex-exec` でも `--config-file` と `--no-config-file` は conflict。 | `parse error; assert ArgumentConflict` |
 | `codex-rs/core/src/config/config_loader_tests.rs` | `user_config_path_override_loads_alternate_file` | user config path override で別 config を読む。 | `load(user_config_path=alt); assert alt config used` |
 | `codex-rs/core/src/config/config_loader_tests.rs` | `disable_project_config_omits_project_layers` | project config disable で project layer を読まない。 | `load(no_project_config=true); assert project layers omitted` |
 | `codex-rs/tui/src/app/config_persistence.rs` | `rebuild_config_for_resume_or_fallback_preserves_user_config_path` | resume/fallback 用 rebuild で user config path を保持する。 | `rebuild config; assert user_config_path preserved` |
@@ -110,37 +109,6 @@
 | `codex-rs/core/src/shell_startup_files/custom_tests.rs` | `custom__シェル起動ファイル__cleanはzshのみ隔離する` | clean mode は zsh にだけ空 `ZDOTDIR` を注入する。 | `apply clean bash/zsh; assert only zsh has ZDOTDIR` |
 | `Makefile` | `verify-exec-command-default-login` | app-server exec、exec args、startup files、CLI flag をまとめて検証する。 | `cargo test selected exec/default-login tests` |
 | `Makefile` | `verify-linux-default-shell` | shell 検出と shell snapshot lifecycle 系を検証する。 | `cargo test selected shell tests` |
-
-## `command_exec_worker_user`
-
-現行の再実装では、設定解決テストは `core/src/config/config_tests.rs` ではなく
-`core/src/config/custom/mod.rs` に置く。理由は、custom 固有の設定解決を
-本家の巨大な config test ファイルへ混ぜないため。
-
-### 実装済み
-
-| パス | テスト | 内容 | 疑似コード |
-|---|---|---|---|
-| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__requires_uid_and_gid_together` | `worker_uid` / `worker_gid` 片方だけの指定を拒否する。 | `resolve custom config with only uid; assert InvalidInput` |
-| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__accepts_uid_gid_pair` | uid/gid ペアを `RunAsUser` に解決する。 | `resolve uid/gid; assert exec_run_as == RunAsUser` |
-| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__resolves_to_current_user_adds_startup_warning` | current user に解決されたら startup warning を出す。 | `resolve current uid/gid; assert warning` |
-| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__accepts_matching_user_and_uid_gid` | user と uid/gid が一致する場合に補助グループ付きで解決する。 | `resolve user+ids; assert uid/gid and supplementary_gids` |
-| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__rejects_mismatched_user_and_uid_gid` | user と uid/gid が不一致なら拒否する。 | `resolve mismatched ids; assert InvalidInput` |
-| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__resolves_worker_user_to_ids_and_groups` | `worker_user` のみ指定時に system user database から uid/gid/groups を解決する。 | `resolve worker_user; assert uid/gid and supplementary_gids` |
-| `codex-rs/core/src/config/custom/mod.rs` | `custom__exec_worker_user__rejects_inherit_all_shell_environment_policy` | run-as と `shell_environment_policy.inherit = "all"` の併用を拒否する。 | `resolve base inherit=all + worker; assert InvalidInput` |
-| `Makefile` | `verify-command-exec-worker-user` | worker 権限関連の custom unit tests をまとめて実行する。 | `cargo test custom__exec_worker_user__` |
-| `docker/Dockerfile` | worker user fixture | `assistant` user と passwordless sudo を用意する。 | `create assistant; allow ubuntu -> assistant sudo` |
-
-### 未実装 / 再実装候補
-
-| パス | テスト | 内容 | 疑似コード |
-|---|---|---|---|
-| `codex-rs/core/tests/suite/custom_exec_command_worker_user.rs` | `custom__exec_worker_user__exec_command_tty_false_runs_as_worker_user` | unified exec `exec_command` が worker uid で動く。 | `run id -u; assert worker uid` |
-| `codex-rs/core/tests/suite/custom_exec_command_worker_user.rs` | `custom__exec_worker_user__shell_runs_as_worker_user` | `shell` tool が worker uid で動く。 | `shell id -u; assert worker uid` |
-| `codex-rs/core/tests/suite/custom_exec_command_worker_user.rs` | `custom__exec_worker_user__sudo_fallback_preserves_worker_user` | direct `setuid` が使えない環境でも、許可された sudo fallback で worker uid を維持する。 | `force direct run_as failure or run without capability; assert sudo command runs as worker` |
-| `codex-rs/core/tests/suite/custom_exec_command_worker_user.rs` | `custom__exec_worker_user__apply_patch_respects_worker_user_permissions` | apply_patch が worker 権限で動き invoker 所有 `0600` を変更できない。 | `patch locked file; assert permission error` |
-| `codex-rs/core/tests/suite/custom_user_shell_cmd.rs` | `custom__exec_worker_user__user_shell_stays_invoker_owned_even_with_worker_user` | `!` user shell は worker ではなく invoker のまま動く。 | `RunUserShellCommand id -u; assert invoker uid` |
-| `codex-rs/core/tests/suite/resume.rs` | `resume_preserves_custom_exec_worker_user_for_apply_patch` | resume 後も worker user 設定が apply_patch に効く。 | `resume; apply_patch; assert worker behavior` |
 
 ## `user_shell_environment_policy_split`
 

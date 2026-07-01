@@ -590,7 +590,7 @@ async fn list_apps_emits_updates_and_returns_after_both_lists_load() -> Result<(
         codex_home.path(),
         ChatGptAuthFixture::new("chatgpt-token")
             .account_id("account-123")
-            .chatgpt_user_id("user-123")
+            .chatgpt_user_id("user-app-list-both-loads")
             .chatgpt_account_id("account-123"),
         AuthCredentialsStoreMode::File,
     )?;

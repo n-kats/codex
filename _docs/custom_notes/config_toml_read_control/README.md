@@ -1,4 +1,4 @@
-# config.toml 読み込み制御（`--config` / `--no-config`）
+# config.toml 読み込み制御（`--config-file` / `--no-config-file`）
 
 ## 目的
 
@@ -7,9 +7,9 @@
 
 ## 変更内容（何がどう変わるか）
 
-- `codex --config <FILE>`:
+- `codex --config-file <FILE>`:
   - ユーザー設定レイヤーの読み込み元を `<FILE>` に差し替える（相対パスは実行時のカレント基準）。
-- `codex --no-config`:
+- `codex --no-config-file`:
   - ユーザー設定レイヤーとプロジェクト設定レイヤーを読み込まない。
 
 ## 対象範囲
@@ -21,24 +21,24 @@
 
 ## 注意点（環境差・既知の制約）
 
-- `--no-config` は「ユーザー＋プロジェクト」を無視するだけで、システム設定（例: MDM/管理設定）と `-c key=value` は引き続き適用される想定。
-- `--config` と `--no-config` は同時指定不可（clap の `conflicts_with` で弾く）。
-- `--config` は互換のため `--config-toml-file` も受理する（alias）。
+- `--no-config-file` は「ユーザー＋プロジェクト」を無視するだけで、システム設定（例: MDM/管理設定）と `-c/--config key=value` は引き続き適用される想定。
+- `--config-file` と `--no-config-file` は同時指定不可（clap の `conflicts_with` で弾く）。
+- `--config-file` は互換のため `--config-toml-file` も受理する（alias）。
 
 ## 動作確認手順（手動・テスト）
 
 この環境（エージェント側）では `cargo` 等が無い前提のため、検証は手元環境で行う。
 
 - 手動（推奨）
-  - `codex --help` に `--config <FILE>` / `--no-config` が出ることを確認
-  - `codex --config sample_config.toml "hi"` が起動することを確認
-  - `codex --no-config "hi"` が起動することを確認
+  - `codex --help` に `--config-file <FILE>` / `--no-config-file` が出ることを確認
+  - `codex --config-file sample_config.toml "hi"` が起動することを確認
+  - `codex --no-config-file "hi"` が起動することを確認
 - Rust テスト（任意）
   - `codex-rs` で `cargo test -p codex-cli`（clap parse の単体テストを含む）
 
 ## つまずきと対処（警告や失敗の修正）
 
-- `error: unexpected argument '--config' found` が出る
+- `error: unexpected argument '--config-file' found` が出る
   - `codex-rs/cli` の clap 定義からフラグが消えている／`LoaderOverrides` が TUI 起動に伝播していない可能性が高い。
 
 ## 追記（2026-03-21）
@@ -50,7 +50,7 @@
 
 ## 追記（2026-03-21 再確認）
 
-- `new` / `resume` で config を再構成するときも、起動時に渡された `LoaderOverrides`（`--config` / `--no-config`）を保持する必要がある。
+- `new` / `resume` で config を再構成するときも、起動時に渡された `LoaderOverrides`（`--config-file` / `--no-config-file`）を保持する必要がある。
 - これを持ち回らないと、`resume` / `new` のたびに user config の参照先がデフォルトへ戻り、`custom.user_shell.no_inject` が false と判定される。
 - 回帰防止として `tui/src/custom_config_loader_tests.rs` に、`LoaderOverrides.user_config_path` と `disable_user_config` が標準 TUI の loader 経路で維持されることを確認するテストを追加した。
 
@@ -58,12 +58,12 @@
 
 - 本家へ戻した再実装では、custom ブランチにあった config 読み込み制御のテストを整理して、次の custom 専用テストを追加した。
   - `codex-rs/cli/src/custom_tests.rs`
-    - `--config` が root からグローバルに解釈されること
-    - `--config` と `--no-config` が衝突すること
+    - `--config-file` が root からグローバルに解釈されること
+    - `--config-file` と `--no-config-file` が衝突すること
     - `build_loader_overrides` が `disable_user_config` / `disable_project_config` / `user_config_path` を正しく組み立てること
   - `codex-rs/exec/src/custom_tests.rs`
-    - `codex-exec` の root CLI でも `--config` が解釈されること
-    - `--config` と `--no-config` が衝突すること
+    - `codex-exec` の root CLI でも `--config-file` が解釈されること
+    - `--config-file` と `--no-config-file` が衝突すること
   - `codex-rs/core/src/config_loader/tests.rs`
     - `LoaderOverrides.user_config_path` で任意の config.toml を読めること
     - `LoaderOverrides.disable_project_config` で project layer を抑止できること

@@ -303,9 +303,7 @@ fn parse_optional_hex_color(
     value: &Option<String>,
     warnings: &mut Vec<String>,
 ) -> Option<(u8, u8, u8)> {
-    let Some(value) = value.as_deref() else {
-        return None;
-    };
+    let value = value.as_deref()?;
     match parse_hex_color(value) {
         Some(rgb) => Some(rgb),
         None => {

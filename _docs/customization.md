@@ -11,28 +11,6 @@
 - 一時的なタスクリスト: `_worklist/`
 - よく使うコマンド: `Makefile`
 
-## セキュリティ運用（コマンド実行）
-
-この fork では、AI（モデル）が起動するコマンド実行（`shell` / `shell_command` / `exec_command`）を OS の worker ユーザー（例: `assistant`）に固定できる（`custom.exec.*`）。
-
-- 目的: invoker の `HOME` / `CODEX_HOME`（ログイン状態・キャッシュ等）に AI の実行プロセスが触れないようにする。
-- 注意: worker 化しても、プロセスに渡した環境変数は `env` / `printenv` で出せるため、環境変数の設計も重要。
-  - そのため本 fork では、`custom.exec.*` が有効な場合に `shell_environment_policy.inherit = "all"` をエラーにする（invoker 環境の全量継承を避ける）。
-
-推奨設定例（`config.toml`）:
-
-```toml
-[custom.exec]
-worker_user = "assistant"
-
-[shell_environment_policy]
-inherit = "core"
-ignore_default_excludes = false
-experimental_use_profile = false
-```
-
-詳細は `_docs/custom_notes/command_exec_worker_user/README.md` を参照。
-
 ## rebase/merge を楽にするコツ
 
 - 既存ファイルの大規模な整形（reformat）や並べ替えは避ける。

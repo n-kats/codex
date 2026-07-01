@@ -616,17 +616,20 @@ impl TurnRequestProcessor {
                     .map(|path| {
                         if path.is_absolute() {
                             AbsolutePathBuf::try_from(path)
+                                .map_err(|err| format!("invalid project doc path: {err}"))
                         } else {
-                            let base_cwd = project_doc_base_cwd
+                            project_doc_base_cwd
                                 .as_ref()
-                                .expect("relative project doc paths require a base cwd");
-                            AbsolutePathBuf::try_from(base_cwd.as_path().join(path))
+                                .map(|base_cwd| base_cwd.join(path))
+                                .ok_or_else(|| {
+                                    "relative project doc paths require a base cwd".to_string()
+                                })
                         }
                     })
                     .collect::<Result<Vec<_>, _>>()
             })
             .transpose()
-            .map_err(|err| invalid_request(format!("invalid project doc path: {err}")))?;
+            .map_err(invalid_request)?;
         if let Some(project_doc_paths) = &project_doc_paths {
             for path in project_doc_paths {
                 if !path.as_path().is_file() {

@@ -139,7 +139,6 @@
 - `_docs/custom_notes/update_check_custom_version_suffix/README.md`: TUI 更新チェックのバージョン比較（`x.y.z-custom-...` を正しく比較するための仕様・実装・テスト）。
 - `_docs/custom_notes/release_versioning/README.md`: `make release` の配布物バージョニング（`x.y.z-custom-yyyy-mm-dd` 形式の付与ルールとリリース手順）。
 - `_docs/custom_notes/exec_command_default_login/README.md`: `!`/shell 実行の起動ファイル読み込み制御（`CODEX_SHELL_STARTUP_FILES` と再現性、関連テスト）。
-- `_docs/custom_notes/command_exec_worker_user/README.md`: モデル起因のコマンド実行を worker ユーザーへ固定する方針（権限分離、supplementary groups、禁止組み合わせ、テスト）。
 - `_docs/custom_notes/user_shell_environment_policy_split/README.md`: `!`（UserShell）とモデル起動コマンドの環境変数ポリシー分離（`custom.user_shell_environment_policy` 等の設定意図と影響範囲）。
 - `_docs/custom_notes/linux_default_shell_prefers_bash_over_zsh/README.md`: Linux のデフォルトシェル検出（bash 優先）と、zsh/dotfiles 差による揺れを抑えるための注意点・テスト。
 - `_docs/custom_notes/shell_snapshot_redacted_exports/README.md`: Shell snapshot の秘匿対策（`exports` の出力を許可リスト化して漏えいを避ける設計とテスト）。
@@ -340,12 +339,11 @@ let request = mock.single_request();
 ## カスタム一覧
 
 - （機能追加）TUI の更新チェック: `x.y.z-custom-...` のようなカスタム版バージョン文字列でも更新判定できるようにする（詳細: `_docs/custom_notes/update_check_custom_version_suffix/README.md`）。
-- （機能追加）config.toml の読み込み制御: `--config <FILE>` でユーザー `config.toml` の読み込みパスを任意に指定でき、`--no-config` でユーザー＋プロジェクトの config を無視できる（システム config や `-c key=value` は引き続き適用される）。
+- （機能追加）config.toml の読み込み制御: `--config-file <FILE>` でユーザー `config.toml` の読み込みパスを任意に指定でき、`--no-config-file` でユーザー＋プロジェクトの config を無視できる（システム config や `-c/--config key=value` は引き続き適用される）。
 - （機能追加）Codex home の切り替え: `--codex-home PATH` で `CODEX_HOME`（デフォルト `~/.codex`）を上書きできるようにする（詳細: `_docs/custom_notes/codex_home_cli_flag/README.md`）。
 - （機能追加）Memories ルートの切り替え: `--codex-memory PATH` で `CODEX_MEMORIES_HOME`（既定は `$CODEX_HOME/memories`）を上書きできる（詳細: `_docs/custom_notes/codex_memory_cli_flag/README.md`）。
 - （機能追加）カスタムプロンプト探索パスの追加: `CODEX_ADDITIONAL_PROMPT_DIRS`（コンマ区切り、相対パスはカレントディレクトリ基準）でプロンプト探索ディレクトリを追加できるようにする（詳細: `_docs/custom_notes/additional_prompt_dirs/README.md`）。
 - （テスト）シェル初期化ファイルの制御: `CODEX_SHELL_STARTUP_FILES=clean`（または `codex --shell-startup-files=clean`）で、可能な範囲でユーザー dotfiles を読まずにシェルを起動できるようにする（現状は zsh を `ZDOTDIR` で隔離）（検証・再現性のための制御、詳細: `_docs/custom_notes/linux_default_shell_prefers_bash_over_zsh/README.md` / `_docs/custom_notes/exec_command_default_login/README.md`）。
-- （機能追加）コマンド実行の権限分離: モデルが実行する `shell` / `shell_command` / `exec_command` を worker ユーザー（例: `assistant`）に固定できる（設定は `custom.exec.*`。`custom.exec.worker_user` 指定時は supplementary groups も反映。安全のため `shell_environment_policy.inherit = "all"` との併用はエラー。`!` は invoker のまま。詳細: `_docs/custom_notes/command_exec_worker_user/README.md`）。
 - （機能追加）`!`（UserShell）のモデル汚染/履歴保存を抑制: `custom.user_shell.no_inject = true` で、`!` コマンドの内容/出力をモデルコンテキストへ inject せず、ローカルのセッション履歴にも保存しない（詳細: `_docs/custom_notes/user_shell_no_inject/README.md`）。
 - （上流不具合修正・追従）exec-server（elicitation）: execve-wrapper が `git` のような素のコマンド名を送っても `PATH` で実行ファイルを解決し、`EscalateRequest.file` を絶対パス化して扱う（elicitation の文言一致と `execv()` の確実な実行のため）。公式（openai/codex の main）側で同様の修正が入ったら差分を寄せて削除する。
   - （テスト観点）`codex-exec-server` の `suite::accept_elicitation::accept_elicitation_for_prompt_rule` が、elicitation 文言の不一致により auto-accept されず（結果として deny 扱いになり）失敗するため、この修正で通ることを確認する。
