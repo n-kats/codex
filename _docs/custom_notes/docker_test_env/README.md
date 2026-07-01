@@ -20,11 +20,13 @@
 - Docker イメージは `make docker-build` で作成する。
 - `scripts/docker_run.sh` は `bash` 経由で実行するため、実行権限は不要。
 - コンテナ内の実行ユーザーは `ubuntu`（ベースイメージの標準ユーザー）。
+- `scripts/docker_run.sh` は `--security-opt seccomp=unconfined` と `--security-opt apparmor=unconfined` を付けて、bwrap / user namespace 系の検証を通しやすくしている。
 - `CODEX_DOCKER_IMAGE_NAME` / `CODEX_DOCKER_PLATFORM` / `CODEX_DOCKER_CACHE_DIR` を必要に応じて設定する。
 - `.env` に `CODEX_DOCKER_TARGET_DIR` を設定すると、`target` を別ストレージに分離できる。
 - `scripts/docker_run.sh` はリポジトリ直下の `.env` を host 側で `source` する。
 - キャッシュは `/_cache/docker` 以下に保存される（`CARGO_HOME`/`RUSTUP_HOME`/`HOME` を分離）。
 - `codex-rs/exec-server/tests` は `dotslash` を使ってテスト用 bash を用意するため、Docker イメージに `dotslash` を含めている。
+- `codex-rs/linux-sandbox` / `codex-rs/core` の bwrap 系テストがコンテナ内でも前提を満たせるように、Docker イメージに `bubblewrap` を含めている。
 - `codex-rs/exec` / `codex-rs/linux-sandbox` の一部テストは `python3` コマンドを使うため、Docker イメージに `python3` を含めている。
 - `scripts/docker_run.sh` は Docker 実行前に、bind mount する `cargo` / `rustup` / `home` / `target` ディレクトリがコンテナ内 `ubuntu` ユーザーで書けるかを確認し、必要なら root で `chown` / `chmod` して補正する。
 
@@ -51,6 +53,7 @@ make test-core
     - したがって、`make` と MCP の差はネットワーク制限や skip ではなく、テスト実行時の `codex-linux-sandbox` バイナリ解決経路や配置差を疑う。
   - 対処:
     - Docker 側では `python3` を追加して、`codex-rs/exec` / `codex-rs/linux-sandbox` の Python 依存テスト前提を満たす。
+    - bwrap が見つからない / `bubblewrap` 系前提不足で落ちる場合は、Docker イメージに `bubblewrap` が入っているか確認する。
     - ただし `landlock` / `managed_proxy` の一斉失敗の本命は Docker イメージ不足ではない。`codex-rs/linux-sandbox/tests/suite/` 側で `codex-linux-sandbox` の解決方法を補強する。
     - 方針としては product code ではなく test code のみを最小変更し、`env!("CARGO_BIN_EXE_...")` 固定参照だけに依存しないようにする。
   - rebase 観点:

@@ -564,6 +564,7 @@ fn config_overrides_from_interactive(
         codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe.clone(),
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
         show_raw_agent_reasoning: interactive.oss.then_some(true),
+        project_doc_paths: interactive.shared.agents_md.clone(),
         additional_writable_roots: interactive.add_dir.clone(),
         ..Default::default()
     }

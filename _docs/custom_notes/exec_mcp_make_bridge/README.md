@@ -22,6 +22,7 @@
 - `_local/codex.sh` は compose 起動時だけ shell 環境の `CODEX_CACHE_DIR` を一時的に外して `.env` を優先させる。
 - 実行ログは `_tmp/*_test_result.txt` に保存する。`exec_mcp` の tool ログも `_tmp/exec_mcp` に揃える。
 - `exec_mcp` 用 Dockerfile に Rustup と nightly rustfmt を追加し、さらに Node.js を入れて artifact runtime テストが JS runtime を見つけられるようにした。
+- `exec_mcp` 用 Dockerfile に `bubblewrap` を追加し、MCP 側でも bwrap 系テストや sandbox 前提を満たせるようにした。
 - `server.py` は compose で `/app/server.py` に bind mount して起動する。
 
 ## 対象範囲（非対象も）
@@ -52,6 +53,7 @@ docker compose -f _local/mcp.compose.yml up -d --force-recreate
 
 - `cargo +nightly fmt` が見つからない: `exec_mcp` イメージを再 build して nightly toolchain を取り込む。
 - `no compatible JavaScript runtime found for artifact runtime ...` が出る: `exec_mcp` イメージに Node.js が入っているか確認する。
+- `bwrap: No permissions to create a new namespace ...` や `bwrap` not found が出る: `exec_mcp` イメージに `bubblewrap` が入っているか確認する。
 - `server.py` を変えたのに tool 一覧が更新されない: `docker compose -f _local/mcp.compose.yml up -d --force-recreate` でコンテナを作り直す。
 - `target` で権限エラーになる:
   - ホスト側 `CODEX_DOCKER_TARGET_DIR`（未指定なら `../_cache/docker/target`）がコンテナの実行ユーザーで書けることを確認する。

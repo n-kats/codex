@@ -284,6 +284,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     let SharedCliOptions {
         codex_home,
         codex_memory,
+        agents_md,
         config_toml_file,
         no_config,
         images,
@@ -469,6 +470,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         tools_web_search_request: None,
         ephemeral: ephemeral.then_some(true),
         bypass_hook_trust: bypass_hook_trust.then_some(true),
+        project_doc_paths: agents_md,
         additional_writable_roots: add_dir,
     };
 

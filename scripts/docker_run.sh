@@ -71,6 +71,8 @@ ensure_mount_writable "${host_target_dir}" "cargo target"
 docker_args=(
   --rm
   --user ubuntu
+  --security-opt seccomp=unconfined
+  --security-opt apparmor=unconfined
   -e "CODEX_HOME=${container_codex_home}"
   -e "CODEX_SHELL_STARTUP_FILES=${CODEX_SHELL_STARTUP_FILES:-clean}"
   -e "RUST_BACKTRACE=${RUST_BACKTRACE:-1}"

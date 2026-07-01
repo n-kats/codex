@@ -10,6 +10,7 @@
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 custom.user_shell.no_inject=true
+default_permissions = "test_config"
 [memories]
 generate_memories = false
 use_memories = false
@@ -24,7 +25,7 @@ submit = ["ctrl-enter", "ctrl-j"]
 insert_newline = "enter"
 
 [tui.model_availability_nux]
-"gpt-5.5" = 2
+"gpt-5.5" = 4
 
 [shell_environment_policy]
 # Required when enabling `[custom.exec]` in this fork.
@@ -41,3 +42,14 @@ del_line_bg = "#4a3f00"
 
 [projects."/workspace"]
 trust_level = "trusted"
+
+[permissions.test_config]
+extends = ":workspace"
+description = "Broad docker-internal access with explicit denials for the lab files."
+
+[permissions.test_config.filesystem]
+"/" = "read"
+"/workspace/_cache/codex_home_debug/auth.json" = "deny"
+"/workspace/_local/codex_homes/auth.json" = "deny"
+"/workspace/_custom_tests/not_allowed_dir" = "deny"
+"/workspace/_custom_tests/not_allowed_file" = "deny"

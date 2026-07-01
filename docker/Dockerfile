@@ -13,6 +13,7 @@ RUN apt-get update && \
     build-essential ca-certificates curl git pkg-config \
     cmake \
     clang libssl-dev libcap-dev libseccomp-dev musl-tools \
+    bubblewrap \
     python3 \
     xz-utils \
     bash coreutils findutils \

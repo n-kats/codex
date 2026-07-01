@@ -30,6 +30,7 @@ use core_test_support::wait_for_event_match;
 use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use regex_lite::escape;
+use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::time::Duration;
@@ -549,6 +550,44 @@ async fn user_shell_command_is_truncated_only_once() -> anyhow::Result<()> {
         truncation_headers, 1,
         "shell_command output should carry only one truncation header: {output}"
     );
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+#[tokio::test]
+#[allow(non_snake_case)]
+async fn custom__user_shell_environment_policy__bang_uses_custom_user_policy() -> anyhow::Result<()>
+{
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_pre_build_hook(|home| {
+        let config = r#"
+[shell_environment_policy]
+inherit = "none"
+set = { HOME = "/assistant-home" }
+
+[custom.user_shell_environment_policy]
+inherit = "none"
+set = { HOME = "/user-home" }
+"#;
+        fs::write(home.join("config.toml"), config).expect("write custom config");
+    });
+    let test = builder.build(&server).await?;
+
+    test.codex
+        .submit(Op::RunUserShellCommand {
+            command: r#"printf '%s' "$HOME""#.to_string(),
+        })
+        .await?;
+
+    let end_event = wait_for_event_match(&test.codex, |ev| match ev {
+        EventMsg::ExecCommandEnd(event) => Some(event.clone()),
+        _ => None,
+    })
+    .await;
+
+    assert_eq!(end_event.exit_code, 0);
+    assert_eq!(end_event.stdout, "/user-home");
 
     Ok(())
 }

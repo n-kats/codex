@@ -21,6 +21,7 @@ RUN apt-get update && \
     build-essential ca-certificates curl git pkg-config \
     cmake \
     clang libssl-dev libcap-dev libseccomp-dev musl-tools \
+    bubblewrap \
     python3 python3-pip python3-venv \
     xz-utils \
     bash coreutils findutils && \

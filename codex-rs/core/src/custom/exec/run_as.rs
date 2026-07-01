@@ -46,30 +46,6 @@ impl RunAsRetry {
     }
 }
 
-#[cfg(unix)]
-pub(crate) fn apply_unix_run_as(run_as: &RunAsUser) -> std::io::Result<()> {
-    unsafe {
-        if let Some(supplementary_gids) = &run_as.supplementary_gids {
-            let supplementary_gids = supplementary_gids
-                .iter()
-                .copied()
-                .map(|gid| gid as libc::gid_t)
-                .collect::<Vec<_>>();
-            if libc::setgroups(supplementary_gids.len(), supplementary_gids.as_ptr()) != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-        }
-        if libc::setgid(run_as.gid as libc::gid_t) != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        if libc::setuid(run_as.uid as libc::uid_t) != 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
 fn ensure_argv0_symlink(program: &str, arg0: &str) -> std::io::Result<PathBuf> {
     use std::os::unix::fs::symlink;
 
@@ -83,30 +59,35 @@ fn ensure_argv0_symlink(program: &str, arg0: &str) -> std::io::Result<PathBuf> {
 }
 
 #[cfg(unix)]
-pub(crate) fn run_as_sudo_fallback_command(
-    retry: RunAsRetry,
-    err: std::io::Error,
-) -> std::io::Result<Command> {
-    if unsafe { libc::geteuid() } == 0
-        || (err.kind() != std::io::ErrorKind::PermissionDenied
-            && err.raw_os_error() != Some(libc::EPERM))
-    {
-        return Err(err);
-    }
-
+pub(crate) fn run_as_sudo_command(retry: RunAsRetry) -> std::io::Result<Command> {
     let Some(sudo_program) = ["/usr/bin/sudo", "/bin/sudo"]
         .into_iter()
         .find(|path| std::path::Path::new(path).exists())
     else {
-        return Err(err);
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "sudo is not installed",
+        ));
     };
     let Some(env_program) = ["/usr/bin/env", "/bin/env"]
         .into_iter()
         .find(|path| std::path::Path::new(path).exists())
     else {
-        return Err(err);
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "env is not installed",
+        ));
     };
 
+    build_sudo_command(retry, sudo_program, env_program)
+}
+
+#[cfg(unix)]
+fn build_sudo_command(
+    retry: RunAsRetry,
+    sudo_program: &str,
+    env_program: &str,
+) -> std::io::Result<Command> {
     let uid = format!("#{}", retry.run_as.uid);
     let gid = format!("#{}", retry.run_as.gid);
     let program = if let Some(arg0) = retry.arg0.as_deref() {
@@ -139,4 +120,43 @@ pub(crate) fn run_as_sudo_fallback_command(
     sudo_cmd.current_dir(&retry.cwd);
     sudo_cmd.env_clear();
     Ok(sudo_cmd)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn run_as_sudo_command_builds_expected_command_line() {
+        let retry = RunAsRetry::new(
+            RunAsUser {
+                uid: 1234,
+                gid: 5678,
+                supplementary_gids: Some(vec![5678, 9012]),
+            },
+            Some("custom-arg0".to_string()),
+            "/bin/echo".to_string(),
+            vec!["hello".to_string(), "world".to_string()],
+            std::env::current_dir().expect("current dir"),
+            HashMap::from([
+                ("B".to_string(), "2".to_string()),
+                ("A".to_string(), "1".to_string()),
+            ]),
+        );
+
+        let command =
+            build_sudo_command(retry, "/tmp/sudo", "/tmp/env").expect("sudo command should build");
+        let debug = format!("{command:?}");
+        assert!(debug.contains("/tmp/sudo"), "{debug}");
+        assert!(debug.contains("/tmp/env"), "{debug}");
+        assert!(debug.contains("#1234"), "{debug}");
+        assert!(debug.contains("#5678"), "{debug}");
+        assert!(debug.contains("A=1"), "{debug}");
+        assert!(debug.contains("B=2"), "{debug}");
+        assert!(debug.contains("hello"), "{debug}");
+        assert!(debug.contains("world"), "{debug}");
+        assert!(debug.contains("/tmp/codex-run-as-argv0-"), "{debug}");
+        assert!(debug.contains("custom-arg0"), "{debug}");
+    }
 }

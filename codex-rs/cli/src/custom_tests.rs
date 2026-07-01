@@ -1,9 +1,11 @@
 use super::MultitoolCli;
+use super::Subcommand;
 use super::loader_overrides_from_shared;
 use clap::Parser;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::SharedCliOptions;
 use pretty_assertions::assert_eq;
+use std::path::PathBuf;
 
 #[test]
 fn custom__codex_home_cli_flag__flag_is_global() {
@@ -24,6 +26,40 @@ fn custom__codex_memory_cli_flag__flag_is_global() {
     assert_eq!(
         cli.interactive.shared.clone().into_inner().codex_memory,
         Some("/tmp/codex-memory".into())
+    );
+}
+
+#[test]
+fn custom__agents_md_restore__flag_is_global() {
+    let cli = MultitoolCli::try_parse_from([
+        "codex",
+        "--agents-md",
+        "docs/AGENTS.md",
+        "--agents-md",
+        "docs/WORKFLOW.md",
+    ])
+    .expect("parse should succeed");
+
+    assert_eq!(
+        cli.interactive.shared.clone().into_inner().agents_md,
+        vec![
+            PathBuf::from("docs/AGENTS.md"),
+            PathBuf::from("docs/WORKFLOW.md"),
+        ]
+    );
+}
+
+#[test]
+fn custom__agents_md_restore__flag_is_global_for_exec() {
+    let cli = MultitoolCli::try_parse_from(["codex", "exec", "--agents-md", "docs/AGENTS.md"])
+        .expect("parse should succeed");
+
+    let Some(Subcommand::Exec(exec)) = cli.subcommand else {
+        panic!("expected exec subcommand");
+    };
+    assert_eq!(
+        exec.shared.into_inner().agents_md,
+        vec![PathBuf::from("docs/AGENTS.md")]
     );
 }
 

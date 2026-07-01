@@ -18,6 +18,8 @@ use core_test_support::test_codex::TestCodexBuilder;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
+use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -55,6 +57,11 @@ async fn resume_until_initial_messages(
         drop(resumed);
         tokio::time::sleep(poll_interval).await;
     }
+}
+
+#[cfg(unix)]
+fn current_username() -> Option<String> {
+    env::var("USER").ok().filter(|value| !value.is_empty())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -141,6 +148,75 @@ async fn resume_includes_initial_messages_from_rollout_events() -> Result<()> {
         }
         other => panic!("unexpected initial messages after resume: {other:#?}"),
     }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resume_preserves_custom_exec_worker_user_for_exec_command() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let Some(worker_user) = current_username() else {
+        eprintln!("current user name unavailable, skipping worker-user resume test");
+        return Ok(());
+    };
+
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_pre_build_hook(move |home| {
+        let config = format!(
+            r#"
+[custom.exec]
+worker_user = "{worker_user}"
+
+[shell_environment_policy]
+inherit = "core"
+"#
+        );
+        fs::write(home.join("config.toml"), config).expect("write custom config");
+    });
+    let initial = builder.build(&server).await?;
+    let initial_codex = Arc::clone(&initial.codex);
+    let home = initial.home.clone();
+    let rollout_path = initial
+        .session_configured
+        .rollout_path
+        .clone()
+        .expect("rollout path");
+
+    let initial_sse = sse(vec![
+        ev_response_created("resp-initial"),
+        ev_assistant_message("msg-initial", "Initial turn complete"),
+        ev_completed("resp-initial"),
+    ]);
+    mount_sse_once(&server, initial_sse).await;
+
+    initial_codex
+        .submit(Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "prime resume state".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+            additional_context: Default::default(),
+            thread_settings: Default::default(),
+        })
+        .await?;
+    wait_for_event(&initial_codex, |event| {
+        matches!(event, EventMsg::TurnComplete(_))
+    })
+    .await;
+
+    let resumed = test_codex().resume(&server, home, rollout_path).await?;
+    assert!(
+        resumed
+            .config
+            .startup_warnings
+            .iter()
+            .any(|warning| warning.contains("custom.exec.* resolves to the current user")),
+        "expected resume to preserve the custom.exec worker-user warning"
+    );
 
     Ok(())
 }

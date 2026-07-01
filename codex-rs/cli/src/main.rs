@@ -2014,6 +2014,7 @@ async fn run_debug_prompt_input_command(
         show_raw_agent_reasoning: shared.oss.then_some(true),
         ephemeral: Some(true),
         bypass_hook_trust: shared.bypass_hook_trust.then_some(true),
+        project_doc_paths: shared.agents_md,
         additional_writable_roots: shared.add_dir,
         ..Default::default()
     };
@@ -3404,6 +3405,52 @@ mod tests {
     }
 
     #[test]
+    fn resume_preserves_root_agents_md_and_config_flags() {
+        let interactive = finalize_resume_from_args(
+            [
+                "codex",
+                "--agents-md",
+                "root/AGENTS.md",
+                "--config",
+                "root.toml",
+                "resume",
+                "sid",
+            ]
+            .as_ref(),
+        );
+
+        let shared = interactive.shared.clone().into_inner();
+        assert_eq!(shared.agents_md, vec![PathBuf::from("root/AGENTS.md")]);
+        assert_eq!(shared.config_toml_file, Some(PathBuf::from("root.toml")));
+        assert_eq!(interactive.resume_session_id.as_deref(), Some("sid"));
+    }
+
+    #[test]
+    fn resume_subcommand_agents_md_and_config_override_root_flags() {
+        let interactive = finalize_resume_from_args(
+            [
+                "codex",
+                "--agents-md",
+                "root/AGENTS.md",
+                "--config",
+                "root.toml",
+                "resume",
+                "sid",
+                "--agents-md",
+                "resume/AGENTS.md",
+                "--config",
+                "resume.toml",
+            ]
+            .as_ref(),
+        );
+
+        let shared = interactive.shared.clone().into_inner();
+        assert_eq!(shared.agents_md, vec![PathBuf::from("resume/AGENTS.md")]);
+        assert_eq!(shared.config_toml_file, Some(PathBuf::from("resume.toml")));
+        assert_eq!(interactive.resume_session_id.as_deref(), Some("sid"));
+    }
+
+    #[test]
     fn resume_merges_dangerously_bypass_flag() {
         let interactive = finalize_resume_from_args(
             [
@@ -3497,6 +3544,27 @@ mod tests {
         let interactive = finalize_fork_from_args(["codex", "fork", "--all"].as_ref());
         assert!(interactive.fork_picker);
         assert!(interactive.fork_show_all);
+    }
+
+    #[test]
+    fn fork_preserves_root_agents_md_and_config_flags() {
+        let interactive = finalize_fork_from_args(
+            [
+                "codex",
+                "--agents-md",
+                "root/AGENTS.md",
+                "--config",
+                "root.toml",
+                "fork",
+                "sid",
+            ]
+            .as_ref(),
+        );
+
+        let shared = interactive.shared.clone().into_inner();
+        assert_eq!(shared.agents_md, vec![PathBuf::from("root/AGENTS.md")]);
+        assert_eq!(shared.config_toml_file, Some(PathBuf::from("root.toml")));
+        assert_eq!(interactive.fork_session_id.as_deref(), Some("sid"));
     }
 
     #[test]

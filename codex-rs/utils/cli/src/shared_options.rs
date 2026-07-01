@@ -1,6 +1,7 @@
 //! Shared command-line flags used by both interactive and non-interactive Codex entry points.
 
 use crate::SandboxModeCliArg;
+use clap::ArgAction;
 use clap::Args;
 use codex_protocol::config_types::ProfileV2Name;
 use std::path::PathBuf;
@@ -14,6 +15,19 @@ pub struct SharedCliOptions {
     /// Override the Codex memories directory used for writable memory roots.
     #[arg(long = "codex-memory", value_name = "DIR", global = true)]
     pub codex_memory: Option<PathBuf>,
+
+    /// Use these project doc files instead of auto-discovering `AGENTS.md`.
+    ///
+    /// When provided, Codex reads these files in order and errors if any path
+    /// is missing.
+    #[arg(
+        long = "agents-md",
+        value_name = "FILE",
+        value_hint = clap::ValueHint::FilePath,
+        action = ArgAction::Append,
+        global = true
+    )]
+    pub agents_md: Vec<PathBuf>,
 
     /// Read user config from this file instead of `$CODEX_HOME/config.toml`.
     #[arg(
@@ -91,6 +105,7 @@ impl SharedCliOptions {
         let Self {
             codex_home,
             codex_memory,
+            agents_md,
             config_toml_file,
             no_config,
             images,
@@ -107,6 +122,7 @@ impl SharedCliOptions {
         let Self {
             codex_home: root_codex_home,
             codex_memory: root_codex_memory,
+            agents_md: root_agents_md,
             config_toml_file: root_config_toml_file,
             no_config: root_no_config,
             images: root_images,
@@ -126,6 +142,9 @@ impl SharedCliOptions {
         }
         if codex_memory.is_none() {
             codex_memory.clone_from(root_codex_memory);
+        }
+        if agents_md.is_empty() {
+            agents_md.clone_from(root_agents_md);
         }
         if config_toml_file.is_none() {
             config_toml_file.clone_from(root_config_toml_file);
@@ -176,6 +195,7 @@ impl SharedCliOptions {
         let Self {
             codex_home,
             codex_memory,
+            agents_md,
             config_toml_file,
             no_config,
             images,
@@ -195,6 +215,9 @@ impl SharedCliOptions {
         }
         if let Some(codex_memory) = codex_memory {
             self.codex_memory = Some(codex_memory);
+        }
+        if !agents_md.is_empty() {
+            self.agents_md = agents_md;
         }
         if let Some(config_toml_file) = config_toml_file {
             self.config_toml_file = Some(config_toml_file);

@@ -108,6 +108,7 @@ use codex_config::test_support::CloudConfigBundleFixture;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::path::Path;
+use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -4858,6 +4859,32 @@ async fn add_dir_override_extends_workspace_writable_roots() -> std::io::Result<
             other => panic!("expected workspace-write policy, got {other:?}"),
         }
     }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn agents_md_override_resolves_relative_paths_against_cwd() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let workspace = TempDir::new()?;
+
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml::default(),
+        ConfigOverrides {
+            cwd: Some(workspace.path().to_path_buf()),
+            project_doc_paths: vec![PathBuf::from("docs/AGENTS.md")],
+            ..Default::default()
+        },
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.project_doc_paths,
+        vec![AbsolutePathBuf::try_from(
+            workspace.path().join("docs/AGENTS.md")
+        )?]
+    );
 
     Ok(())
 }

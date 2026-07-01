@@ -843,6 +843,12 @@ pub struct Config {
     /// Additional filenames to try when looking for project-level docs.
     pub project_doc_fallback_filenames: Vec<String>,
 
+    /// Explicit project doc file paths to use instead of auto-discovery.
+    ///
+    /// When non-empty, Codex reads these files in order and skips
+    /// `AGENTS.md` path discovery.
+    pub project_doc_paths: Vec<AbsolutePathBuf>,
+
     /// Token budget applied when storing tool/function outputs in the context manager.
     pub tool_output_token_limit: Option<usize>,
 
@@ -2374,6 +2380,7 @@ pub struct ConfigOverrides {
     pub tools_web_search_request: Option<bool>,
     pub ephemeral: Option<bool>,
     pub bypass_hook_trust: Option<bool>,
+    pub project_doc_paths: Vec<PathBuf>,
     /// Additional directories that should be treated as writable roots for this session.
     pub additional_writable_roots: Vec<PathBuf>,
     /// Explicit absolute runtime workspace roots for this session. When set,
@@ -2613,6 +2620,26 @@ fn resolve_optional_prompt_text(
         Some(Some(value)) => Some(value.clone()),
         Some(None) | None => default,
     }
+}
+
+fn resolve_project_doc_paths(
+    paths: &[PathBuf],
+    cwd: &AbsolutePathBuf,
+) -> std::io::Result<Vec<AbsolutePathBuf>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    paths
+        .iter()
+        .map(|path| {
+            if path.is_absolute() {
+                AbsolutePathBuf::try_from(path.clone())
+            } else {
+                AbsolutePathBuf::try_from(cwd.as_path().join(path))
+            }
+        })
+        .collect()
 }
 
 fn code_mode_toml_config(features: Option<&FeaturesToml>) -> Option<&CodeModeConfigToml> {
@@ -2870,6 +2897,7 @@ impl Config {
             tools_web_search_request: override_tools_web_search_request,
             ephemeral,
             bypass_hook_trust,
+            project_doc_paths,
             additional_writable_roots,
             workspace_roots: workspace_roots_override,
         } = overrides;
@@ -2972,6 +3000,7 @@ impl Config {
                 }
             }
         }))?;
+        let project_doc_paths = resolve_project_doc_paths(&project_doc_paths, &resolved_cwd)?;
         let requested_additional_writable_roots: Vec<AbsolutePathBuf> = additional_writable_roots
             .into_iter()
             .map(|path| AbsolutePathBuf::resolve_path_against_base(path, resolved_cwd.as_path()))
@@ -3731,6 +3760,7 @@ impl Config {
                     }
                 })
                 .collect(),
+            project_doc_paths,
             tool_output_token_limit: cfg.tool_output_token_limit,
             agent_max_threads,
             agent_max_depth,

@@ -89,16 +89,14 @@
 - `custom.exec.worker_user` を使う場合、実行時には worker ユーザーの supplementary groups（補助グループ）も child process に設定する。
   - そのため「worker を共有グループに追加して `chmod 710` で“通過だけ”許可する」といった運用が成立する。
   - 一方、`custom.exec.worker_uid/gid` だけでユーザー名が分からない場合は supplementary groups を解決できない（= 設定しない）ため、必要なら primary GID を共有グループに合わせる（`worker_gid`）か、パス側の権限を運用で調整する。
-- ホスト（非 root）で `custom.exec.worker_user` を使う場合、Codex はまず child process 側で `setgroups/setgid/setuid` を試し、これが許可されない環境では `sudo -n -u "#UID" -g "#GID" -- env -i ...` にフォールバックする。
-  - `codex` 実体バイナリに file capability を付与（例: `setcap cap_setuid,cap_setgid=ep $(which codex)`）
-  - systemd の `AmbientCapabilities=` 等で起動時に capabilities を付与（ファイルに `setcap` したくない場合）
-  - `setcap` が使えない環境では、`sudoers` の許可でパスワードなし `sudo` を使えると worker-user 実行を維持できる。
-  - root で起動する（推奨しない）
+- ホスト（非 root）で `custom.exec.worker_user` を使う場合、Codex は `sudo -n -u "#UID" -g "#GID" -- env -i ...` で worker ユーザー実行する。
+  - `sudoers` の許可でパスワードなし `sudo` を使えることが前提になる。
+  - root で起動するのは推奨しないが、worker-user 実行の仕組み自体は `sudo` に一本化している。
 
-### 許可された fallback
+### 許可された実行経路
 
 - 詳細は `_docs/custom_notes/allowed_sudo_fallback.md` に記録する。
-- 要点: 許可する fallback は、worker user 実行を維持するための `sudo -n -u "#UID" -g "#GID" -- env -i ...` のみ。
+- 要点: worker user 実行は `sudo -n -u "#UID" -g "#GID" -- env -i ...` に一本化する。
 - worker 実行に失敗したコマンドを invoker 権限で自動再実行する fallback は許可しない。
 - `.env` 等の secrets は作業ツリー（AI が触るディレクトリ）に置かないことが最も確実。
   - シンボリックリンクで secrets を指す運用は、`chmod -R` 等の誤操作や参照境界が複雑化しやすい点に注意する。
@@ -113,7 +111,7 @@
 - `make test-core` で既存のコマンド実行系テストが通ること
 - `custom.exec.worker_uid/gid` を設定して、`shell` / `shell_command` / `exec_command`（unified exec）で spawn が worker UID/GID になること
   - 例: `id -u` / `id -g` を実行して期待値になること
-- `exec_command` は worker user 指定時に child process の `uid/gid` を落として実行し、`setuid/setgid` が許可されない環境では `sudo` にフォールバックする。
+- `exec_command` は worker user 指定時に `sudo -n -u "#UID" -g "#GID" -- env -i ...` で実行する。
   - 起動直後（turn 作成時）に `id -u` / `id -g` で worker の解決結果を確認し、満たせない場合は早めに Warning を出す（後から `exec_command` で落ちるのを避ける）
 - Docker bind mount あり/なしで worker 実行が機能すること（必要なら UID/GID をホスト側に合わせる）
 
@@ -140,8 +138,8 @@ include_only = [
 
 - worker ユーザー指定が「ツールごと」になっていると抜け道が生じやすいので、spawn 直前の共通箇所に集約する。
 - worker の `HOME` / `CODEX_HOME` を invoker と混ぜると、意図せずトークン/キャッシュが共有される。
-- `codex-rs/core/src/spawn.rs` と `codex-rs/utils/pty/src/pipe.rs` では、worker user 固有の処理を child process の `pre_exec` に寄せ、失敗時は `sudo` フォールバックへ切り替える形にしている。
-- `apply_patch` は `core/src/spawn.rs` の共通 `sudo` fallback helper を使い、`EPERM` / `PermissionDenied` 時の分岐を重複させないようにしている。
+- `codex-rs/core/src/spawn.rs` と `codex-rs/utils/pty/src/pipe.rs` では、worker user 固有の実行を `sudo` に寄せ、`pre_exec` は共通の process cleanup に限定している。
+- `apply_patch` を含む worker-user 経路は、`core/src/spawn.rs` の共通 `sudo` builder を使って同じ実行形に揃えている。
 
 ## 現在の実装メモ
 
@@ -151,7 +149,7 @@ include_only = [
   - 実行時の worker-user/run-as 実装は `codex-rs/core/src/custom/exec/run_as.rs` に置く。
   - 既存 upstream ファイル側は `run_as` を通すためのフィールド追加と、spawn 直前の helper 呼び出しだけにする。
 - `custom.exec.worker_user` / `worker_uid` / `worker_gid` は `core/src/config/custom/exec.rs` で解決し、`Permissions.custom.exec_run_as` として保持する。
-- `core/src/spawn.rs` の `SpawnChildRequest` に `run_as` を追加し、`setgroups` → `setgid` → `setuid` を spawn 直前で適用している。
+- `core/src/spawn.rs` の `SpawnChildRequest` に `run_as` を追加し、worker-user 実行時は `sudo` 経路を組み立てる。
 - `shell` / `shell_command` / `exec_command` / `unified_exec` の各経路で `run_as` を埋めるようにしている。
 - `shell_environment_policy.inherit = "all"` と `custom.exec` の併用は、`custom.exec` が設定された状態での env 漏えいを防ぐために `InvalidInput` にしている。
 - `custom.exec.worker_user` の supplementary groups は Unix で `getgrouplist` から解決し、`worker_user` が現在のログインユーザーでも実行ユーザーとしてのグループ境界を保つようにしている。

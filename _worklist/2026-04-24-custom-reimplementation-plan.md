@@ -19,8 +19,8 @@
    - 保存先の根本を固定する。
    - `config.toml`、ログ、memories の出力先が安定するようにする。
 
-3. `additional_prompt_dirs` / `agents_md_and_custom_agents_restore`
-   - プロンプト探索と project doc の復元を戻す。
+3. `agents_md_and_custom_agents_restore`
+   - project doc の復元を戻す。
    - 起動時の参照先を安定させる。
 
 4. `exec_command_default_login` / `linux_default_shell_prefers_bash_over_zsh`

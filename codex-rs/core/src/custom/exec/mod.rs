@@ -8,9 +8,7 @@ use std::collections::HashMap;
 pub(crate) use run_as::RunAsRetry;
 pub(crate) use run_as::RunAsUser;
 #[cfg(unix)]
-pub(crate) use run_as::apply_unix_run_as;
-#[cfg(unix)]
-pub(crate) use run_as::run_as_sudo_fallback_command;
+pub(crate) use run_as::run_as_sudo_command;
 
 pub(crate) fn assistant_shell_environment_policy(
     turn_context: &TurnContext,
