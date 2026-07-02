@@ -28,6 +28,7 @@ use codex_code_mode::host::MAX_FRAME_BYTES;
 use codex_protocol::ToolName;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use tempfile::TempDir;
 use tokio::sync::Semaphore;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -677,12 +678,9 @@ async fn oversized_initial_response_does_not_close_the_shared_host() {
 async fn child_process_loss_cleans_up_and_rebuilds_the_shared_host() {
     let host_program =
         codex_utils_cargo_bin::cargo_bin("codex-code-mode-host").expect("host binary");
-    let proxy_dir =
-        std::env::temp_dir().join(format!("codex-code-mode-host-loss-{}", std::process::id()));
-    let proxy_program = proxy_dir.join("host-proxy.sh");
-    let pid_path = proxy_dir.join("host.pid");
-    let _ = std::fs::remove_dir_all(&proxy_dir);
-    std::fs::create_dir_all(&proxy_dir).expect("create host proxy directory");
+    let proxy_dir = TempDir::new().expect("create host proxy directory");
+    let proxy_program = proxy_dir.path().join("host-proxy.sh");
+    let pid_path = proxy_dir.path().join("host.pid");
     std::fs::write(
         &proxy_program,
         format!(
@@ -869,6 +867,4 @@ async fn child_process_loss_cleans_up_and_rebuilds_the_shared_host() {
         events_a.try_recv(),
         Err(mpsc::error::TryRecvError::Empty)
     ));
-
-    std::fs::remove_dir_all(proxy_dir).expect("remove host proxy directory");
 }

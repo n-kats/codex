@@ -699,7 +699,7 @@ mod tests {
         let shutdown_token = CancellationToken::new();
         let client_tracker =
             ClientTracker::new(server_event_tx, transport_event_tx, &shutdown_token);
-        let handle_message = tokio::spawn(async move {
+        let mut handle_message = tokio::spawn(async move {
             let mut client_tracker = client_tracker;
             client_tracker
                 .handle_message(initialize_envelope_with_stream_id(

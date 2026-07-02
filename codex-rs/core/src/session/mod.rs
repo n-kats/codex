@@ -1499,16 +1499,6 @@ impl Session {
         let project_doc_paths_changed = updates.project_doc_paths.is_some();
         let (previous_config, new_config, permission_profile_changed, agents_md_reload) = {
             let mut state = self.state.lock().await;
-            let user_instructions = if project_doc_paths_changed {
-                state
-                    .session_configuration
-                    .loaded_agents_md
-                    .as_ref()
-                    .and_then(LoadedAgentsMd::user_instructions)
-                    .cloned()
-            } else {
-                None
-            };
             let updated = match state.session_configuration.apply(&updates) {
                 Ok(updated) => updated,
                 Err(err) => {
@@ -1530,18 +1520,12 @@ impl Session {
                     .turn_environments
                     .update_selections(updated.environment_selections());
             }
-            let agents_md_reload = project_doc_paths_changed.then(|| {
-                (
-                    updated.original_config_do_not_use.clone(),
-                    user_instructions,
-                )
-            });
             state.session_configuration = updated;
             (
                 previous_config,
                 new_config,
                 permission_profile_changed,
-                agents_md_reload,
+                project_doc_paths_changed,
             )
         };
         self.emit_config_changed_contributors(previous_config.as_ref(), new_config.as_ref());
@@ -1549,12 +1533,20 @@ impl Session {
             self.refresh_managed_network_proxy_for_current_permission_profile()
                 .await;
         }
-        if let Some((config, user_instructions)) = agents_md_reload {
+        if agents_md_reload {
             let environments = self.services.turn_environments.snapshot().await;
-            let loaded_agents_md =
-                load_project_instructions(config.as_ref(), user_instructions, &environments).await;
+            let config = {
+                let state = self.state.lock().await;
+                state
+                    .session_configuration
+                    .original_config_do_not_use
+                    .clone()
+            };
+            self.services
+                .agents_md_manager
+                .refresh(config.as_ref(), &environments)
+                .await;
             let mut state = self.state.lock().await;
-            state.session_configuration.loaded_agents_md = loaded_agents_md;
             state.set_reference_context_item(/*item*/ None);
         }
 

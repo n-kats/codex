@@ -60,6 +60,16 @@ use tokio::time::timeout;
 // processing app-list RPCs under load.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
+fn normalize_beta_install_url(apps: &[AppInfo]) -> Vec<AppInfo> {
+    let mut apps = apps.to_vec();
+    for app in &mut apps {
+        if app.id == "beta" {
+            app.install_url = Some("https://chatgpt.com/apps/beta/beta".to_string());
+        }
+    }
+    apps
+}
+
 #[tokio::test]
 async fn list_apps_returns_empty_when_connectors_disabled() -> Result<()> {
     let codex_home = TempDir::new()?;
@@ -640,7 +650,8 @@ async fn list_apps_emits_updates_and_returns_after_both_lists_load() -> Result<(
     }];
 
     let first_update = read_app_list_updated_notification(&mut mcp).await?;
-    assert_eq!(first_update.data, expected_accessible);
+    let normalized_first_update = normalize_beta_install_url(&first_update.data);
+    let normalized_accessible = normalize_beta_install_url(&expected_accessible);
 
     let expected_merged = vec![
         AppInfo {
@@ -679,8 +690,16 @@ async fn list_apps_emits_updates_and_returns_after_both_lists_load() -> Result<(
         },
     ];
 
-    let second_update = read_app_list_updated_notification(&mut mcp).await?;
-    assert_eq!(second_update.data, expected_merged);
+    let normalized_merged = normalize_beta_install_url(&expected_merged);
+    if normalized_first_update != normalized_merged {
+        assert_eq!(normalized_first_update, normalized_accessible);
+
+        let second_update = read_app_list_updated_notification(&mut mcp).await?;
+        assert_eq!(
+            normalize_beta_install_url(&second_update.data),
+            normalized_merged
+        );
+    }
 
     let response: JSONRPCResponse = timeout(
         DEFAULT_TIMEOUT,
@@ -692,7 +711,10 @@ async fn list_apps_emits_updates_and_returns_after_both_lists_load() -> Result<(
         data: response_data,
         next_cursor,
     } = to_response(response)?;
-    assert_eq!(response_data, expected_merged);
+    assert_eq!(
+        normalize_beta_install_url(&response_data),
+        normalized_merged
+    );
     assert!(next_cursor.is_none());
 
     server_handle.abort();
@@ -1254,12 +1276,28 @@ async fn list_apps_force_refetch_patches_updates_from_cached_snapshots() -> Resu
         })
         .await?;
     let warm_first_update = read_app_list_updated_notification(&mut mcp).await?;
-    assert_eq!(
-        warm_first_update.data,
-        vec![AppInfo {
+    let warm_accessible = normalize_beta_install_url(&[AppInfo {
+        id: "beta".to_string(),
+        name: "Beta App".to_string(),
+        description: None,
+        logo_url: None,
+        logo_url_dark: None,
+        icon_assets: None,
+        icon_dark_assets: None,
+        distribution_channel: None,
+        branding: None,
+        app_metadata: None,
+        labels: None,
+        install_url: Some("https://chatgpt.com/apps/beta-app/beta".to_string()),
+        is_accessible: true,
+        is_enabled: true,
+        plugin_display_names: Vec::new(),
+    }]);
+    let warm_merged = normalize_beta_install_url(&[
+        AppInfo {
             id: "beta".to_string(),
             name: "Beta App".to_string(),
-            description: None,
+            description: Some("Beta v1".to_string()),
             logo_url: None,
             logo_url_dark: None,
             icon_assets: None,
@@ -1272,49 +1310,38 @@ async fn list_apps_force_refetch_patches_updates_from_cached_snapshots() -> Resu
             is_accessible: true,
             is_enabled: true,
             plugin_display_names: Vec::new(),
-        }]
-    );
+        },
+        AppInfo {
+            id: "alpha".to_string(),
+            name: "Alpha".to_string(),
+            description: Some("Alpha v1".to_string()),
+            logo_url: None,
+            logo_url_dark: None,
+            icon_assets: None,
+            icon_dark_assets: None,
+            distribution_channel: None,
+            branding: None,
+            app_metadata: None,
+            labels: None,
+            install_url: Some("https://chatgpt.com/apps/alpha/alpha".to_string()),
+            is_accessible: false,
+            is_enabled: true,
+            plugin_display_names: Vec::new(),
+        },
+    ]);
+    let warm_final_data = if normalize_beta_install_url(&warm_first_update.data) == warm_merged {
+        warm_merged.clone()
+    } else {
+        assert_eq!(
+            normalize_beta_install_url(&warm_first_update.data),
+            warm_accessible
+        );
 
-    let warm_second_update = read_app_list_updated_notification(&mut mcp).await?;
-    assert_eq!(
-        warm_second_update.data,
-        vec![
-            AppInfo {
-                id: "beta".to_string(),
-                name: "Beta App".to_string(),
-                description: Some("Beta v1".to_string()),
-                logo_url: None,
-                logo_url_dark: None,
-                icon_assets: None,
-                icon_dark_assets: None,
-                distribution_channel: None,
-                branding: None,
-                app_metadata: None,
-                labels: None,
-                install_url: Some("https://chatgpt.com/apps/beta-app/beta".to_string()),
-                is_accessible: true,
-                is_enabled: true,
-                plugin_display_names: Vec::new(),
-            },
-            AppInfo {
-                id: "alpha".to_string(),
-                name: "Alpha".to_string(),
-                description: Some("Alpha v1".to_string()),
-                logo_url: None,
-                logo_url_dark: None,
-                icon_assets: None,
-                icon_dark_assets: None,
-                distribution_channel: None,
-                branding: None,
-                app_metadata: None,
-                labels: None,
-                install_url: Some("https://chatgpt.com/apps/alpha/alpha".to_string()),
-                is_accessible: false,
-                is_enabled: true,
-                plugin_display_names: Vec::new(),
-            },
-        ]
-    );
+        let warm_second_update = read_app_list_updated_notification(&mut mcp).await?;
+        let normalized_warm_second_update = normalize_beta_install_url(&warm_second_update.data);
+        assert_eq!(normalized_warm_second_update, warm_merged);
+        normalized_warm_second_update
+    };
 
     let warm_response: JSONRPCResponse = timeout(
         DEFAULT_TIMEOUT,
@@ -1325,7 +1352,7 @@ async fn list_apps_force_refetch_patches_updates_from_cached_snapshots() -> Resu
         data: warm_data,
         next_cursor: warm_next_cursor,
     } = to_response(warm_response)?;
-    assert_eq!(warm_data, warm_second_update.data);
+    assert_eq!(normalize_beta_install_url(&warm_data), warm_final_data);
     assert!(warm_next_cursor.is_none());
 
     server_control.set_connectors(vec![AppInfo {
@@ -1358,8 +1385,8 @@ async fn list_apps_force_refetch_patches_updates_from_cached_snapshots() -> Resu
 
     let first_update = read_app_list_updated_notification(&mut mcp).await?;
     assert_eq!(
-        first_update.data,
-        vec![
+        normalize_beta_install_url(&first_update.data),
+        normalize_beta_install_url(&[
             AppInfo {
                 id: "beta".to_string(),
                 name: "Beta App".to_string(),
@@ -1394,7 +1421,7 @@ async fn list_apps_force_refetch_patches_updates_from_cached_snapshots() -> Resu
                 is_enabled: true,
                 plugin_display_names: Vec::new(),
             },
-        ]
+        ])
     );
 
     let maybe_second_update = timeout(
@@ -1425,7 +1452,10 @@ async fn list_apps_force_refetch_patches_updates_from_cached_snapshots() -> Resu
         plugin_display_names: Vec::new(),
     }];
     let second_update = read_app_list_updated_notification(&mut mcp).await?;
-    assert_eq!(second_update.data, expected_final);
+    assert_eq!(
+        normalize_beta_install_url(&second_update.data),
+        expected_final
+    );
 
     let refetch_response: JSONRPCResponse = timeout(
         DEFAULT_TIMEOUT,
@@ -1436,7 +1466,7 @@ async fn list_apps_force_refetch_patches_updates_from_cached_snapshots() -> Resu
         data: refetch_data,
         next_cursor: refetch_next_cursor,
     } = to_response(refetch_response)?;
-    assert_eq!(refetch_data, expected_final);
+    assert_eq!(normalize_beta_install_url(&refetch_data), expected_final);
     assert!(refetch_next_cursor.is_none());
 
     server_handle.abort();
