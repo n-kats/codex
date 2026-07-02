@@ -23,7 +23,6 @@
 | `codex_home_cli_flag` | `--codex-home` CLI parse、bootstrap env、Makefile debug `CODEX_HOME` |
 | `codex_memory_cli_flag` | `--codex-memory` CLI parse、bootstrap env、Makefile debug `CODEX_MEMORIES_HOME` |
 | `agents_md_and_custom_agents_restore` | `--agents-md` parse、thread metadata update、project doc path override、custom agents slash command、model-visible layout |
-| `additional_prompt_dirs` | prompt dir parse、missing dir ignore、later dir override、default prompt dir precedence |
 | `exec_command_default_login` / `shell_startup_files` | `--shell-startup-files` CLI parse、bootstrap env、clean/default parse、zsh `ZDOTDIR` isolation |
 | `user_shell_environment_policy_split` | assistant shell env policy と user shell env policy の分離 |
 | `user_shell_no_inject` | `custom.user_shell.no_inject` config、startup warning、rollout 非記録 |
@@ -85,16 +84,6 @@
 | `codex-rs/tui/src/chatwidget/tests/slash_commands.rs` | `queued_slash_custom_agents_with_args_updates_project_doc_paths` | `/custom-agents ...` が project doc paths を更新する。 | `queue command; assert doc paths == args` |
 | `codex-rs/tui/src/chatwidget/tests/slash_commands.rs` | `queued_slash_custom_agents_clear_restores_auto_discovery` | `/custom-agents clear` が override を解除する。 | `set override; clear; assert auto discovery restored` |
 | `codex-rs/tui/src/chatwidget/tests/slash_commands.rs` | `queued_slash_custom_agents_emits_visible_log_with_resolved_path` | `/custom-agents` 実行時に解決済みパスを visible log に出す。 | `run command; assert visible log contains absolute path` |
-
-## `additional_prompt_dirs`
-
-| パス | テスト | 内容 | 疑似コード |
-|---|---|---|---|
-| `codex-rs/tui/src/custom_prompts.rs` | `parse_additional_prompt_dirs_resolves_relative_paths` | 追加 prompt dir の相対パスを cwd 基準で解決する。 | `parse dirs; assert cwd-relative paths` |
-| `codex-rs/tui/src/custom_prompts.rs` | `later_prompt_dirs_override_earlier_names` | 後の prompt dir が同名 prompt を上書きする。 | `discover [base, override]; assert override content` |
-| `codex-rs/tui/src/custom_prompts.rs` | `discover_custom_prompts_prefers_additional_dirs_over_default_dir` | additional dir が default prompts dir より優先される。 | `discover; assert additional shared wins` |
-| `codex-rs/tui/src/custom_prompts.rs` | `discover_custom_prompts_ignores_missing_additional_dirs` | 存在しない additional dir を無視する。 | `discover with missing dirs; assert default prompt remains` |
-| `Makefile` | `verify-additional-prompt-dirs-env` | additional prompt dirs の parse/discover 系を検証する。 | `cargo test selected prompt dir tests` |
 
 ## `exec_command_default_login` / `shell_startup_files`
 

@@ -28,6 +28,7 @@
 - `codex-rs/exec-server/tests` は `dotslash` を使ってテスト用 bash を用意するため、Docker イメージに `dotslash` を含めている。
 - `codex-rs/linux-sandbox` / `codex-rs/core` の bwrap 系テストがコンテナ内でも前提を満たせるように、Docker イメージに `bubblewrap` を含めている。
 - `codex-rs/exec` / `codex-rs/linux-sandbox` の一部テストは `python3` コマンドを使うため、Docker イメージに `python3` を含めている。
+- 非 release の `cargo build` / `cargo test` は `V8_FROM_SOURCE=1` を付けて、`rusty_v8` の prebuilt 404 に依存しない source-build 経路を使う。
 - `scripts/docker_run.sh` は Docker 実行前に、bind mount する `cargo` / `rustup` / `home` / `target` ディレクトリがコンテナ内 `ubuntu` ユーザーで書けるかを確認し、必要なら root で `chown` / `chmod` して補正する。
 
 ## 動作確認手順（手動・テスト・スナップショット）

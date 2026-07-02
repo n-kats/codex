@@ -1,5 +1,7 @@
 # CODEX_ADDITIONAL_PROMPT_DIRS（追加のカスタムプロンプト探索パス）
 
+> 旧 custom 機能の記録。現在の `custom2` では維持対象外。
+
 ## 目的
 
 - `/prompts:<name>` で参照するカスタムプロンプトを、`$CODEX_HOME/prompts/` 以外のディレクトリにも置けるようにする。
@@ -36,13 +38,3 @@
 1. `./prompts/hello.md` を作る（`prompts/` は任意のディレクトリ名でOK）。
 2. `CODEX_ADDITIONAL_PROMPT_DIRS=./prompts codex` を起動する。
 3. TUI で `/prompts:hello` が候補に出る/実行できることを確認する。
-
-## 関連ファイル
-
-- `codex-rs/tui/src/custom_prompts.rs`
-- `codex-rs/tui/src/bottom_pane/chat_composer.rs`
-- `codex-rs/tui/src/bottom_pane/command_popup.rs`
-- `codex-rs/tui/src/bottom_pane/prompt_args.rs`
-- `codex-rs/tui/src/bottom_pane/mod.rs`
-- `codex-rs/tui/src/chatwidget.rs`
-- `Makefile`

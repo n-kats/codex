@@ -11,6 +11,8 @@ approval_policy = "never"
 sandbox_mode = "danger-full-access"
 custom.user_shell.no_inject=true
 default_permissions = "test_config"
+
+project_doc_paths = ["/workspace/AGENTS.md"]
 [memories]
 generate_memories = false
 use_memories = false
@@ -27,18 +29,10 @@ insert_newline = "enter"
 [tui.model_availability_nux]
 "gpt-5.5" = 4
 
-[shell_environment_policy]
-# Required when enabling `[custom.exec]` in this fork.
-inherit = "core"
-
-[custom.exec]
-# Run model-triggered command execution as the dedicated OS user (uid 1500 in the docker image).
-worker_user = "assistant"
-
 [custom.theme.diff]
 # Optional: tweak TUI diff background colors while running `make run-tui`.
-add_line_bg = "#3a3a00"
-del_line_bg = "#4a3f00"
+add_line_bg = "#ccffcc"
+del_line_bg = "#cccccc"
 
 [projects."/workspace"]
 trust_level = "trusted"
@@ -48,8 +42,9 @@ extends = ":workspace"
 description = "Broad docker-internal access with explicit denials for the lab files."
 
 [permissions.test_config.filesystem]
-"/" = "read"
+"/workspace" = "write"
 "/workspace/_cache/codex_home_debug/auth.json" = "deny"
 "/workspace/_local/codex_homes/auth.json" = "deny"
 "/workspace/_custom_tests/not_allowed_dir" = "deny"
 "/workspace/_custom_tests/not_allowed_file" = "deny"
+

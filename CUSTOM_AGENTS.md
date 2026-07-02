@@ -135,7 +135,6 @@
 
 - `_docs/custom_notes/codex_home_cli_flag/README.md`: `--codex-home` / `CODEX_HOME` の扱い（ホーム切替・テスト用ホームを安定運用するための方針と注意点）。
 - `_docs/custom_notes/codex_memory_cli_flag/README.md`: `--codex-memory` / `CODEX_MEMORIES_HOME` の扱い（memories 成果物の保存先を分離し、sandbox 初期化エラーを避ける）。
-- `_docs/custom_notes/additional_prompt_dirs/README.md`: `CODEX_ADDITIONAL_PROMPT_DIRS` の仕様（追加プロンプト探索パス、相対パス基準、分離文字、関連テスト）。
 - `_docs/custom_notes/update_check_custom_version_suffix/README.md`: TUI 更新チェックのバージョン比較（`x.y.z-custom-...` を正しく比較するための仕様・実装・テスト）。
 - `_docs/custom_notes/release_versioning/README.md`: `make release` の配布物バージョニング（`x.y.z-custom-yyyy-mm-dd` 形式の付与ルールとリリース手順）。
 - `_docs/custom_notes/exec_command_default_login/README.md`: `!`/shell 実行の起動ファイル読み込み制御（`CODEX_SHELL_STARTUP_FILES` と再現性、関連テスト）。
@@ -342,7 +341,6 @@ let request = mock.single_request();
 - （機能追加）config.toml の読み込み制御: `--config-file <FILE>` でユーザー `config.toml` の読み込みパスを任意に指定でき、`--no-config-file` でユーザー＋プロジェクトの config を無視できる（システム config や `-c/--config key=value` は引き続き適用される）。
 - （機能追加）Codex home の切り替え: `--codex-home PATH` で `CODEX_HOME`（デフォルト `~/.codex`）を上書きできるようにする（詳細: `_docs/custom_notes/codex_home_cli_flag/README.md`）。
 - （機能追加）Memories ルートの切り替え: `--codex-memory PATH` で `CODEX_MEMORIES_HOME`（既定は `$CODEX_HOME/memories`）を上書きできる（詳細: `_docs/custom_notes/codex_memory_cli_flag/README.md`）。
-- （機能追加）カスタムプロンプト探索パスの追加: `CODEX_ADDITIONAL_PROMPT_DIRS`（コンマ区切り、相対パスはカレントディレクトリ基準）でプロンプト探索ディレクトリを追加できるようにする（詳細: `_docs/custom_notes/additional_prompt_dirs/README.md`）。
 - （テスト）シェル初期化ファイルの制御: `CODEX_SHELL_STARTUP_FILES=clean`（または `codex --shell-startup-files=clean`）で、可能な範囲でユーザー dotfiles を読まずにシェルを起動できるようにする（現状は zsh を `ZDOTDIR` で隔離）（検証・再現性のための制御、詳細: `_docs/custom_notes/linux_default_shell_prefers_bash_over_zsh/README.md` / `_docs/custom_notes/exec_command_default_login/README.md`）。
 - （機能追加）`!`（UserShell）のモデル汚染/履歴保存を抑制: `custom.user_shell.no_inject = true` で、`!` コマンドの内容/出力をモデルコンテキストへ inject せず、ローカルのセッション履歴にも保存しない（詳細: `_docs/custom_notes/user_shell_no_inject/README.md`）。
 - （上流不具合修正・追従）exec-server（elicitation）: execve-wrapper が `git` のような素のコマンド名を送っても `PATH` で実行ファイルを解決し、`EscalateRequest.file` を絶対パス化して扱う（elicitation の文言一致と `execv()` の確実な実行のため）。公式（openai/codex の main）側で同様の修正が入ったら差分を寄せて削除する。
