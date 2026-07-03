@@ -39,6 +39,7 @@ DOCKER_RUN := $(ROOT_DIR)/scripts/docker_run.sh
 RUN_TUI_CONFIG ?= sample_config.toml
 ALMOST_SKIP_TESTS_FILE := $(ROOT_DIR)/skip_test_list.txt
 SKIP_ALMOST_TESTS ?= $(strip $(shell awk 'NF && $$1 !~ /^#/ { print $$1 }' "$(ALMOST_SKIP_TESTS_FILE)"))
+RUST_TOOLCHAIN := $(shell awk -F'"' '/^channel = / { print $$2; exit }' "$(CODEX_RS_DIR)/rust-toolchain.toml")
 
 # Extra flags passed to `cargo test` (example: `make test-almost CARGO_TEST_FLAGS=--no-fail-fast`).
 CARGO_TEST_FLAGS ?=
@@ -262,7 +263,7 @@ verify-linux-default-shell: cache-dir docker-build
 # TUI helpers
 run-tui: cache-dir docker-build
 	@CODEX_MEMORIES_HOME="$(CODEX_MEMORIES_HOME)" \
-	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo run -p codex-cli --bin codex -- --config-file "$(ROOT_DIR_DOCKER)/$(RUN_TUI_CONFIG)")
+	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cargo +$(RUST_TOOLCHAIN) run --manifest-path "$(CODEX_RS_DIR_DOCKER)/Cargo.toml" -p codex-cli --bin codex -- --config-file "$(ROOT_DIR_DOCKER)/$(RUN_TUI_CONFIG)")
 
 run-tui-test: docker-build
 	@$(MAKE) --no-print-directory run-tui

@@ -14,6 +14,9 @@ RUN apt-get update && \
     cmake \
     clang libssl-dev libcap-dev libseccomp-dev musl-tools \
     bubblewrap \
+    jq \
+    fd-find \
+    ripgrep \
     python3 \
     xz-utils \
     bash coreutils findutils \

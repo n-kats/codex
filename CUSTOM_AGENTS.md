@@ -138,7 +138,6 @@
 - `_docs/custom_notes/update_check_custom_version_suffix/README.md`: TUI 更新チェックのバージョン比較（`x.y.z-custom-...` を正しく比較するための仕様・実装・テスト）。
 - `_docs/custom_notes/release_versioning/README.md`: `make release` の配布物バージョニング（`x.y.z-custom-yyyy-mm-dd` 形式の付与ルールとリリース手順）。
 - `_docs/custom_notes/exec_command_default_login/README.md`: `!`/shell 実行の起動ファイル読み込み制御（`CODEX_SHELL_STARTUP_FILES` と再現性、関連テスト）。
-- `_docs/custom_notes/user_shell_environment_policy_split/README.md`: `!`（UserShell）とモデル起動コマンドの環境変数ポリシー分離（`custom.user_shell_environment_policy` 等の設定意図と影響範囲）。
 - `_docs/custom_notes/linux_default_shell_prefers_bash_over_zsh/README.md`: Linux のデフォルトシェル検出（bash 優先）と、zsh/dotfiles 差による揺れを抑えるための注意点・テスト。
 - `_docs/custom_notes/shell_snapshot_redacted_exports/README.md`: Shell snapshot の秘匿対策（`exports` の出力を許可リスト化して漏えいを避ける設計とテスト）。
 - `_docs/custom_notes/test_output_redacts_host_env/README.md`: テスト失敗ログの秘匿対策（ホスト環境変数を全量出力しない、差分表示の安全性、関連テスト）。

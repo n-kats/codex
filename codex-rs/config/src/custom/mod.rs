@@ -1,7 +1,6 @@
 mod theme;
 mod user_shell;
 
-use crate::types::ShellEnvironmentPolicyToml;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
@@ -18,8 +17,4 @@ pub struct CustomConfigToml {
 
     #[serde(default)]
     pub theme: CustomThemeToml,
-
-    pub user_shell_environment_policy: Option<ShellEnvironmentPolicyToml>,
-
-    pub assistant_shell_environment_policy: Option<ShellEnvironmentPolicyToml>,
 }

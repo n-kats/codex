@@ -17,6 +17,27 @@ project_doc_paths = ["/workspace/AGENTS.md"]
 generate_memories = false
 use_memories = false
 
+[shell_environment_policy]
+inherit = "core"
+ignore_default_excludes = false
+experimental_use_profile = false
+include_only = [
+  "PATH",
+  "HOME",
+  "USER",
+  "SHELL",
+  "LANG",
+  "LC_ALL",
+  "UV_*",
+]
+
+[shell_environment_policy.set]
+HOME = "/home/ubuntu"
+USER = "ubuntu"
+UV_CACHE_DIR = "/workspace/_cache/codex_uv_cache"
+UV_PROJECT_ENVIRONMENT = "/workspace/_cache/codex_venv"
+UV_LINK_MODE = "copy"
+
 [features]
 unified_exec = true
 
@@ -47,4 +68,3 @@ description = "Broad docker-internal access with explicit denials for the lab fi
 "/workspace/_local/codex_homes/auth.json" = "deny"
 "/workspace/_custom_tests/not_allowed_dir" = "deny"
 "/workspace/_custom_tests/not_allowed_file" = "deny"
-

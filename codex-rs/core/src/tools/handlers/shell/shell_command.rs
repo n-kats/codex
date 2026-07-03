@@ -32,7 +32,6 @@ use super::super::shell_spec::create_shell_command_tool;
 use super::RunExecLikeArgs;
 use super::run_exec_like;
 use super::shell_command_payload_command;
-use crate::custom::exec as custom_exec;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ShellCommandBackend {
@@ -102,7 +101,7 @@ impl ShellCommandHandler {
         let command = Self::base_command(shell, &params.command, use_login_shell);
 
         let mut env = create_env(
-            custom_exec::assistant_shell_environment_policy(turn_context),
+            &turn_context.config.permissions.shell_environment_policy,
             Some(session.thread_id),
         );
         let active_permission_profile = turn_context.config.permissions.active_permission_profile();

@@ -14,7 +14,7 @@
 - （テスト）シェル初期化ファイル: `CODEX_SHELL_STARTUP_FILES=clean`（または `codex --shell-startup-files=clean`）でユーザー dotfiles を可能な範囲で無視して実行（現状は zsh を `ZDOTDIR` で隔離）
 - （機能追加）`!`（UserShell）の注入/ローカル記録を無効化: `custom.user_shell.no_inject=true`（詳細: `_docs/custom_notes/user_shell_no_inject/README.md`）
 - （上流不具合修正・追従）exec-server（elicitation）: execve-wrapper が `git` のような素のコマンド名を送っても `PATH` で実行ファイルを解決し、`EscalateRequest.file` を絶対パス化して扱う（公式が直ったら差分を寄せて削除予定）
-- （テスト）Shell snapshot: `exports` セクションは許可リストに限定し、ホスト環境変数の大量出力を避ける
+- （安全修正）Shell snapshot: `exports` セクションは許可リストに限定し、ホスト環境変数の大量出力と snapshot 経由の再露出を避ける
 - （テスト）テスト/ログの安全性: 失敗時の差分表示でホスト環境変数が全量出力されないようにする（`env` は値を丸ごと比較しない）
 - （テスト）tool parallelism: 並列ツールテストの判定を「時間」から「tool出力」へ変更し、Docker 等での不安定さを排除
 - （テスト）exec-server: `dotslash` を Docker イメージに同梱し、DotSlash 由来の bash を使えるようにする

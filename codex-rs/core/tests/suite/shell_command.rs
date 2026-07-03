@@ -14,7 +14,6 @@ use core_test_support::test_codex::TestCodexBuilder;
 use core_test_support::test_codex::TestCodexHarness;
 use core_test_support::test_codex::test_codex;
 use serde_json::json;
-use std::fs;
 use test_case::test_case;
 
 #[cfg(windows)]
@@ -305,42 +304,6 @@ async fn unicode_output_with_newlines(login: bool) -> anyhow::Result<()> {
 
     let output = harness.function_call_stdout(call_id).await;
     assert_shell_command_output(&output, "line1\\nnaïve café\\nline3")?;
-
-    Ok(())
-}
-
-#[cfg(not(windows))]
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shell_command_uses_custom_assistant_shell_environment_policy() -> anyhow::Result<()> {
-    let harness = shell_command_harness_with(|builder| {
-        builder.with_model("gpt-5.4").with_pre_build_hook(|home| {
-            let config = r#"
-[shell_environment_policy]
-inherit = "none"
-set = { HOME = "/assistant-home" }
-
-[custom.user_shell_environment_policy]
-inherit = "none"
-set = { HOME = "/user-home" }
-"#;
-            fs::write(home.join("config.toml"), config).expect("write custom config");
-        })
-    })
-    .await?;
-
-    let call_id = "shell-command-env-policy";
-    mount_shell_responses_with_timeout(
-        &harness,
-        call_id,
-        r#"printf '%s' "$HOME""#,
-        Some(false),
-        MEDIUM_TIMEOUT,
-    )
-    .await;
-    harness.submit("print HOME").await?;
-
-    let output = harness.function_call_stdout(call_id).await;
-    assert_shell_command_output(&output, "/assistant-home")?;
 
     Ok(())
 }

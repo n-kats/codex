@@ -108,10 +108,9 @@
 - `_docs/custom_notes/update_check_custom_version_suffix/README.md`: TUI 更新チェックのバージョン比較（`x.y.z-custom-...` を正しく比較するための仕様・実装・テスト）。
 - `_docs/custom_notes/release_versioning/README.md`: `make release` の配布物バージョニング（`x.y.z-custom-yyyy-mm-dd` 形式の付与ルールとリリース手順）。
 - `_docs/custom_notes/exec_command_default_login/README.md`: `!`/shell 実行の起動ファイル読み込み制御（`CODEX_SHELL_STARTUP_FILES` と再現性、関連テスト）。
-- `_docs/custom_notes/user_shell_environment_policy_split/README.md`: `!`（UserShell）とモデル起動コマンドの環境変数ポリシー分離（`custom.user_shell_environment_policy` 等の設定意図と影響範囲）。
 - `_docs/custom_notes/user_shell_no_inject/README.md`: `!`（UserShell）の注入/ローカル記録を無効化する（`custom.user_shell.no_inject=true`）。
 - `_docs/custom_notes/linux_default_shell_prefers_bash_over_zsh/README.md`: Linux のデフォルトシェル検出（bash 優先）と、zsh/dotfiles 差による揺れを抑えるための注意点・テスト。
-- `_docs/custom_notes/shell_snapshot_redacted_exports/README.md`: Shell snapshot の秘匿対策（`exports` の出力を許可リスト化して漏えいを避ける設計とテスト）。
+- `_docs/custom_notes/shell_snapshot_redacted_exports/README.md`: Shell snapshot の秘匿対策（`exports` の出力を許可リスト化し、snapshot 経由の再露出を避ける設計とテスト）。
 - `_docs/custom_notes/test_output_redacts_host_env/README.md`: テスト失敗ログの秘匿対策（ホスト環境変数を全量出力しない、差分表示の安全性、関連テスト）。
 - `_docs/custom_notes/langfuse_logging/README.md`: Langfuse/OTEL ロギング連携（既知不具合の修正点、可視化の追加点、設定・テストの観点）。
 - `_docs/custom_notes/agents_md_and_custom_agents_restore/README.md`: `--agents-md` と `/custom-agents` の復元（session 反映経路、`project_doc_paths` の復旧、関連テスト）。
@@ -148,7 +147,7 @@
 - （上流不具合修正・追従）exec-server（elicitation）: execve-wrapper が `git` のような素のコマンド名を送っても `PATH` で実行ファイルを解決し、`EscalateRequest.file` を絶対パス化して扱う（elicitation の文言一致と `execv()` の確実な実行のため）。公式（openai/codex の main）側で同様の修正が入ったら差分を寄せて削除する。
   - （テスト観点）`codex-exec-server` の `suite::accept_elicitation::accept_elicitation_for_prompt_rule` が、elicitation 文言の不一致により auto-accept されず（結果として deny 扱いになり）失敗するため、この修正で通ることを確認する。
     - 検証例: `cd codex-rs && cargo test -p codex-exec-server --test all suite::accept_elicitation::accept_elicitation_for_prompt_rule`
-- （テスト）Shell snapshot: `exports` セクションは許可リストに限定し、ホスト環境変数の大量出力（秘匿情報混入）を避ける（詳細: `_docs/custom_notes/shell_snapshot_redacted_exports/README.md`）。
+- （安全修正）Shell snapshot: `exports` セクションは許可リストに限定し、ホスト環境変数の大量出力（秘匿情報混入）と snapshot 経由の再露出を避ける（詳細: `_docs/custom_notes/shell_snapshot_redacted_exports/README.md`）。
 - （テスト）テスト/ログの安全性: 失敗時の差分表示でホスト環境変数が全量出力されないようにする（例: `env` は値を丸ごと比較せず、キー集合＋必要最小限のキーのみ値比較にする）（詳細: `_docs/custom_notes/test_output_redacts_host_env/README.md`）。
 - （テスト）tool parallelism: 並列ツールテストの判定を「時間」から「tool出力」へ変更し、Docker 等での不安定さを排除する（詳細: `_docs/custom_notes/tool_parallelism_test/README.md`）。
 - （テスト）exec-server: `dotslash` を Docker イメージに同梱し、exec-server テストで DotSlash 由来の bash を使えるようにする（詳細: `_docs/custom_notes/exec_server_tests_dotslash/README.md`）。

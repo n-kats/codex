@@ -4,7 +4,6 @@ use serde_json::Value as JsonValue;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-use crate::custom::exec as custom_exec;
 use crate::exec::ExecParams;
 use crate::exec_policy::ExecApprovalRequest;
 use crate::function_tool::FunctionCallError;
@@ -80,7 +79,12 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
 
     let fs = turn_environment.environment.get_filesystem();
 
-    let explicit_env_overrides = custom_exec::assistant_shell_environment_set(&turn);
+    let explicit_env_overrides = turn
+        .config
+        .permissions
+        .shell_environment_policy
+        .r#set
+        .clone();
     let exec_permission_approvals_enabled =
         session.features().enabled(Feature::ExecPermissionApprovals);
     let requested_additional_permissions = additional_permissions.clone();

@@ -8,6 +8,7 @@
 
 - `Makefile` のビルド/テスト/整形/検証/insta 系ターゲットは Docker で実行される。
 - `docker/Dockerfile` で Ubuntu 24.04 ベースのビルド環境を作る。
+- Docker イメージには `ripgrep`、`jq`、`fd-find` を入れて、`rg` 前提の確認や検索、JSON の目視確認、ファイル探索をコンテナ内でもそのまま使えるようにした。
 - ランナーは `scripts/docker_run.sh` で、`bash scripts/docker_run.sh "<command>"` で実行する。
 
 ## 対象範囲（非対象も）

@@ -24,7 +24,6 @@
 | `codex_memory_cli_flag` | `--codex-memory` CLI parse、bootstrap env、Makefile debug `CODEX_MEMORIES_HOME` |
 | `agents_md_and_custom_agents_restore` | `--agents-md` parse、thread metadata update、project doc path override、custom agents slash command、model-visible layout |
 | `exec_command_default_login` / `shell_startup_files` | `--shell-startup-files` CLI parse、bootstrap env、clean/default parse、zsh `ZDOTDIR` isolation |
-| `user_shell_environment_policy_split` | assistant shell env policy と user shell env policy の分離 |
 | `user_shell_no_inject` | `custom.user_shell.no_inject` config、startup warning、rollout 非記録 |
 | `custom_theme_diff_colors` | TOML deserialize、hex color parse、不正 hex rejection、snapshot |
 | `update_check_custom_version_suffix` | custom suffix 付き semver parse/compare |
@@ -98,14 +97,6 @@
 | `codex-rs/core/src/shell_startup_files/custom_tests.rs` | `custom__シェル起動ファイル__cleanはzshのみ隔離する` | clean mode は zsh にだけ空 `ZDOTDIR` を注入する。 | `apply clean bash/zsh; assert only zsh has ZDOTDIR` |
 | `Makefile` | `verify-exec-command-default-login` | app-server exec、exec args、startup files、CLI flag をまとめて検証する。 | `cargo test selected exec/default-login tests` |
 | `Makefile` | `verify-linux-default-shell` | shell 検出と shell snapshot lifecycle 系を検証する。 | `cargo test selected shell tests` |
-
-## `user_shell_environment_policy_split`
-
-| パス | テスト | 内容 | 疑似コード |
-|---|---|---|---|
-| `codex-rs/core/src/config/config_tests.rs` | `custom_user_shell_environment_policy_overrides_user_shell_env` | assistant shell と user shell の env policy を分離する。 | `load policies; assert assistant HOME != user HOME` |
-| `codex-rs/core/tests/suite/user_shell_cmd.rs` | `custom__user_shell_environment_policy__bang_uses_custom_user_policy` | `!` が `custom.user_shell_environment_policy` を使う。 | `RunUserShellCommand echo $HOME; assert user HOME` |
-| `codex-rs/core/tests/suite/shell_command.rs` | `shell_command_uses_custom_assistant_shell_environment_policy` | assistant 側 shell command が assistant shell policy を使う。 | `shell echo $HOME; assert assistant HOME` |
 
 ## `user_shell_no_inject`
 

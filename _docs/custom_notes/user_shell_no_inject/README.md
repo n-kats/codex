@@ -26,6 +26,7 @@ no_inject = true
 
 - 対象: `!`（UserShell）で実行したコマンドの記録（モデルコンテキストへの inject とローカルの会話履歴保存）
 - 非対象:
+  - `!` の実行環境変数制御（通常の `shell_environment_policy` を使う）
   - `!` の実行結果が UI に表示されること（`ExecCommand*` イベント）は止めない
   - 端末や OS が持つ履歴（shell history 等）は別問題
 
@@ -49,17 +50,16 @@ no_inject = true
 
 - `no_inject` 変更後に `config.schema.json` の更新が必要になる。
 - 既存のテストが `Config` の struct literal を持つ場合、新フィールド追加でコンパイルエラーになりうる。
+- `custom.exec.worker_user` 由来の assistant/user shell env policy 分離は削除済み。`custom` 配下の UserShell 実行制御は `no_inject` のみ。
 
 ## 現在の実装メモ
 
 - 2026-06-19 の再実装では、TOML 型を `codex-rs/config/src/custom/user_shell.rs`、設定解決を `codex-rs/core/src/config/custom/user_shell.rs`、実行時 helper を `codex-rs/core/src/custom/user_shell.rs` に分離した。
 - `core/src/tasks/user_shell.rs` は `custom_user_shell::no_inject(...)` を接続点として参照し、実装詳細を持たない。
-- `core/src/config/mod.rs` の `Config::user_shell_no_inject()` で `custom.user_shell.no_inject` を解決し、`Config` に保持した `custom` を参照している。
-- `core/src/tasks/user_shell.rs` の `persist_user_shell_output()` が `turn_context.user_shell_no_inject()` を最初に見て、`true` の場合はモデル注入とローカル履歴保存を止める。
+- `core/src/tasks/user_shell.rs` の `persist_user_shell_output()` が `custom_user_shell::no_inject(...)` を最初に見て、`true` の場合はモデル注入とローカル履歴保存を止める。
 - `ExecCommandBegin` / `ExecCommandEnd` は通常どおり流し、`no_inject` は保存だけを切り替える。
 - そのため、`!` の表示は維持しつつ、履歴混入だけを抑える方針を保っている。
 - 起動時 warning は `custom.user_shell.no_inject = false` を明示した場合だけ出す。未設定の既定 `false` では出さない。
-- 回帰テストとして、`core/src/config/config_tests.rs` に warning 解決テストを追加し、`core/tests/suite/custom_user_shell_cmd.rs` に `no_inject` の履歴非保存テストを追加した。
 
 ## 関連ファイル一覧
 

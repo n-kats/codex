@@ -860,9 +860,6 @@
     "CustomConfigToml": {
       "additionalProperties": false,
       "properties": {
-        "assistant_shell_environment_policy": {
-          "$ref": "#/definitions/ShellEnvironmentPolicyToml"
-        },
         "theme": {
           "allOf": [
             {
@@ -882,9 +879,6 @@
           "default": {
             "no_inject": null
           }
-        },
-        "user_shell_environment_policy": {
-          "$ref": "#/definitions/ShellEnvironmentPolicyToml"
         }
       },
       "type": "object"
@@ -4783,14 +4777,12 @@
         }
       ],
       "default": {
-        "assistant_shell_environment_policy": null,
         "theme": {
           "diff": null
         },
         "user_shell": {
           "no_inject": null
-        },
-        "user_shell_environment_policy": null
+        }
       },
       "description": "Custom fork-specific settings."
     },
