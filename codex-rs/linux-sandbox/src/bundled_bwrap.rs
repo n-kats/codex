@@ -98,6 +98,7 @@ fn legacy_candidates_for_exe(exe: &Path) -> Vec<PathBuf> {
     candidates.push(exe_dir.join("codex-resources").join("bwrap"));
     if let Some(package_target_dir) = exe_dir.parent() {
         candidates.push(package_target_dir.join("codex-resources").join("bwrap"));
+        candidates.push(package_target_dir.join("bwrap"));
     }
     candidates.push(exe_dir.join("bwrap"));
     if let Some(path) = bazel_bwrap::candidate() {
@@ -258,6 +259,21 @@ mod tests {
     fn finds_adjacent_dev_bwrap() {
         let temp_dir = tempdir().expect("temp dir");
         let exe = temp_dir.path().join("codex");
+        let expected_bwrap = temp_dir.path().join("bwrap");
+        write_executable(&exe);
+        write_executable(&expected_bwrap);
+
+        assert_eq!(
+            find_legacy_for_exe(&exe),
+            Some(AbsolutePathBuf::from_absolute_path(&expected_bwrap).expect("absolute"))
+        );
+    }
+
+    #[test]
+    fn finds_parent_dev_bwrap_for_cargo_test_binary() {
+        let temp_dir = tempdir().expect("temp dir");
+        let deps_dir = temp_dir.path().join("deps");
+        let exe = deps_dir.join("all-test-binary");
         let expected_bwrap = temp_dir.path().join("bwrap");
         write_executable(&exe);
         write_executable(&expected_bwrap);

@@ -3908,6 +3908,7 @@ dependencies = [
  "pretty_assertions",
  "regex-lite",
  "serde_json",
+ "serial_test",
  "tempfile",
  "tokio",
  "tracing",

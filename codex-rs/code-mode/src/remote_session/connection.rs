@@ -31,6 +31,7 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::warn;
@@ -133,19 +134,31 @@ impl Drop for CallerCancellation {
 
 impl Connection {
     pub(super) async fn spawn(host_program: &Path) -> Result<Self, ConnectionError> {
-        let mut command = Command::new(host_program);
-        #[cfg(unix)]
-        command.process_group(0);
-        let mut child = command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|error| ConnectionError::Spawn {
-                host_program: host_program.to_path_buf(),
-                error,
-            })?;
+        let mut retries = 0;
+        let mut child = loop {
+            let mut command = Command::new(host_program);
+            #[cfg(unix)]
+            command.process_group(0);
+            match command
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+            {
+                Ok(child) => break child,
+                Err(err) if err.kind() == std::io::ErrorKind::ExecutableFileBusy && retries < 2 => {
+                    retries += 1;
+                    sleep(Duration::from_millis(10)).await;
+                }
+                Err(error) => {
+                    return Err(ConnectionError::Spawn {
+                        host_program: host_program.to_path_buf(),
+                        error,
+                    });
+                }
+            }
+        };
 
         if let Some(stderr) = child.stderr.take() {
             tokio::spawn(async move {

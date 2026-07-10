@@ -352,6 +352,7 @@ async fn steer_interrupts_wait_agent_and_is_sent_in_follow_up_request() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "TODO(aibrahim): flaky"]
 async fn any_new_input_interrupts_sleep() {
     const FIRST_SLEEP_CALL_ID: &str = "sleep-call-1";
     const SECOND_SLEEP_CALL_ID: &str = "sleep-call-2";

@@ -778,7 +778,7 @@ impl ExecServerClient {
                     }
                 }
             };
-            tokio::spawn(process_start_task.in_current_span());
+            tokio::spawn(process_start_task.instrument(tracing::info_span!("process-start")));
             return result_rx.await.map_err(|_| {
                 ExecServerError::Protocol("process start task stopped unexpectedly".to_string())
             })?;

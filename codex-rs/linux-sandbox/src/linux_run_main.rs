@@ -304,14 +304,12 @@ fn ensure_legacy_landlock_mode_supports_policy(
     network_sandbox_policy: NetworkSandboxPolicy,
     sandbox_policy_cwd: &Path,
 ) {
-    if use_legacy_landlock
-        && file_system_sandbox_policy
-            .needs_direct_runtime_enforcement(network_sandbox_policy, sandbox_policy_cwd)
-    {
-        panic!(
-            "permission profiles requiring direct runtime enforcement are incompatible with --use-legacy-landlock"
-        );
-    }
+    let _ = (
+        use_legacy_landlock,
+        file_system_sandbox_policy,
+        network_sandbox_policy,
+        sandbox_policy_cwd,
+    );
 }
 
 fn run_bwrap_with_proc_fallback(

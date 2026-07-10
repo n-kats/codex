@@ -39,6 +39,7 @@ const ROOT_MODEL: &str = "test-multi-agent-root";
 const ROOT_PROMPT: &str = "spawn a child";
 const MULTI_AGENT_V2_NAMESPACE: &str = "collaboration";
 const UNSUPPORTED_CODE_MODE_WARNING: &str = "does not advertise Code Mode support";
+const USER_SHELL_NO_INJECT_WARNING: &str = "custom.user_shell.no_inject is false (default); `!` (UserShell) commands and their outputs will be injected into the model context and recorded to the local session history. Set custom.user_shell.no_inject=true to disable injection/recording, and avoid secrets in `!` commands/output.";
 
 struct RemoteModelResponse {
     body: Value,
@@ -147,7 +148,9 @@ async fn response_for_remote_model(
     let mut warnings = Vec::new();
     loop {
         match wait_for_event(&test.codex, |_| true).await {
-            EventMsg::Warning(warning) => warnings.push(warning.message),
+            EventMsg::Warning(warning) if warning.message != USER_SHELL_NO_INJECT_WARNING => {
+                warnings.push(warning.message)
+            }
             EventMsg::TurnComplete(_) => break,
             _ => {}
         }

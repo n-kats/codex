@@ -335,6 +335,29 @@ mod tests {
     }
 
     #[test]
+    fn custom_agents_is_visible_in_default_popup() {
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        popup.on_composer_text_change("/".to_string());
+
+        let items = popup.filtered_items();
+        assert!(
+            items.contains(&CommandItem::Builtin(SlashCommand::CustomAgents)),
+            "expected /custom-agents to appear in the default popup list"
+        );
+    }
+
+    #[test]
+    fn custom_agents_is_selected_for_prefix() {
+        let mut popup = CommandPopup::new(CommandPopupFlags::default(), Vec::new());
+        popup.on_composer_text_change("/cu".to_string());
+
+        assert_eq!(
+            popup.selected_item(),
+            Some(CommandItem::Builtin(SlashCommand::CustomAgents))
+        );
+    }
+
+    #[test]
     fn service_tier_command_uses_catalog_name_and_description() {
         let mut popup = CommandPopup::new(
             CommandPopupFlags {

@@ -58,6 +58,7 @@ pub(crate) enum AppCommand {
         service_tier: Option<Option<String>>,
         collaboration_mode: Option<CollaborationMode>,
         personality: Option<Personality>,
+        project_doc_paths: Option<Vec<PathBuf>>,
     },
     ExecApproval {
         id: String,
@@ -175,6 +176,7 @@ impl AppCommand {
         service_tier: Option<Option<String>>,
         collaboration_mode: Option<CollaborationMode>,
         personality: Option<Personality>,
+        project_doc_paths: Option<Vec<PathBuf>>,
     ) -> Self {
         Self::OverrideTurnContext {
             cwd,
@@ -189,6 +191,7 @@ impl AppCommand {
             service_tier,
             collaboration_mode,
             personality,
+            project_doc_paths,
         }
     }
 

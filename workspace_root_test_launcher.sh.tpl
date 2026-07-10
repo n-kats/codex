@@ -30,10 +30,21 @@ resolve_runfile() {
 
   if [[ -n "${manifest}" && -f "${manifest}" ]]; then
     local resolved=""
-    resolved="$(awk -v key="${logical_path}" '$1 == key { $1 = ""; sub(/^ /, ""); print; exit }' "${manifest}")"
-    if [[ -z "${resolved}" ]]; then
-      resolved="$(awk -v key="${workspace_logical_path}" '$1 == key { $1 = ""; sub(/^ /, ""); print; exit }' "${manifest}")"
-    fi
+    local prefix
+    while IFS= read -r line; do
+      case "${line}" in
+        "${logical_path}"\ *)
+          prefix="${logical_path} "
+          resolved="${line#"$prefix"}"
+          break
+          ;;
+        "${workspace_logical_path}"\ *)
+          prefix="${workspace_logical_path} "
+          resolved="${line#"$prefix"}"
+          break
+          ;;
+      esac
+    done < "${manifest}"
     if [[ -n "${resolved}" ]]; then
       printf '%s\n' "${resolved}"
       return 0

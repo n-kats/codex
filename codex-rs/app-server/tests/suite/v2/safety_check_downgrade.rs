@@ -19,6 +19,7 @@ use codex_app_server_protocol::TurnModerationMetadataNotification;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::UserInput;
+use codex_app_server_protocol::WarningNotification;
 use core_test_support::responses;
 use core_test_support::skip_if_no_network;
 use pretty_assertions::assert_eq;
@@ -467,6 +468,13 @@ async fn collect_model_verification_notifications_and_validate_no_warning_item(
                 verification = Some(payload);
             }
             "warning" => {
+                let params = notification
+                    .params
+                    .ok_or_else(|| anyhow::anyhow!("warning notifications must include params"))?;
+                let warning: WarningNotification = serde_json::from_value(params)?;
+                if warning.message == USER_SHELL_NO_INJECT_WARNING {
+                    continue;
+                }
                 anyhow::bail!("verification-only response must not emit warning");
             }
             "model/rerouted" => {
@@ -542,6 +550,8 @@ fn warning_text_from_item(item: &ThreadItem) -> Option<&str> {
         _ => None,
     })
 }
+
+const USER_SHELL_NO_INJECT_WARNING: &str = "custom.user_shell.no_inject is false (default); `!` (UserShell) commands and their outputs will be injected into the model context and recorded to the local session history. Set custom.user_shell.no_inject=true to disable injection/recording, and avoid secrets in `!` commands/output.";
 
 fn is_warning_user_message_item(item: &ThreadItem) -> bool {
     warning_text_from_item(item).is_some()

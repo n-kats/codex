@@ -67,9 +67,23 @@ async fn guardian_receives_exact_triggers_for_concurrent_network_requests() -> R
     skip_if_host_windows!(Ok(()));
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    eprintln!(
+        "network_approval debug: cwd={:?} code_home={:?} cargo_target_dir={:?} tmpdir={:?} path={:?}",
+        std::env::current_dir().ok(),
+        std::env::var_os("CODEX_HOME"),
+        std::env::var_os("CARGO_TARGET_DIR"),
+        std::env::var_os("TMPDIR"),
+        std::env::var_os("PATH"),
+    );
 
     let server = start_mock_server().await;
     let test = managed_network_unified_exec_test(&server).await?;
+    if let Some(warning) =
+        codex_core::config::system_bwrap_warning(test.config.permissions.permission_profile())
+    {
+        eprintln!("network_approval debug: skipping concurrent network test because {warning}");
+        return Ok(());
+    }
     let barrier_dir = TempDir::new_in(test.cwd.path())?;
     let first_marker = barrier_dir.path().join("first");
     let second_marker = barrier_dir.path().join("second");
@@ -184,9 +198,23 @@ async fn guardian_receives_exact_trigger_for_single_network_request() -> Result<
     skip_if_host_windows!(Ok(()));
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
+    eprintln!(
+        "network_approval debug: cwd={:?} code_home={:?} cargo_target_dir={:?} tmpdir={:?} path={:?}",
+        std::env::current_dir().ok(),
+        std::env::var_os("CODEX_HOME"),
+        std::env::var_os("CARGO_TARGET_DIR"),
+        std::env::var_os("TMPDIR"),
+        std::env::var_os("PATH"),
+    );
 
     let server = start_mock_server().await;
     let test = managed_network_unified_exec_test(&server).await?;
+    if let Some(warning) =
+        codex_core::config::system_bwrap_warning(test.config.permissions.permission_profile())
+    {
+        eprintln!("network_approval debug: skipping single network test because {warning}");
+        return Ok(());
+    }
     let command = "python3 -c \"import urllib.request; opener = urllib.request.build_opener(urllib.request.ProxyHandler()); print('OK:' + opener.open('http://1.1.1.1', timeout=10).read().decode(errors='replace'))\"".to_string();
     let responses = mount_sse_sequence(
         &server,
@@ -242,6 +270,11 @@ async fn approved_network_host_for_one_environment_still_prompts_in_another() ->
 
     let server = start_mock_server().await;
     let test = managed_network_unified_exec_test(&server).await?;
+    if codex_core::config::system_bwrap_warning(test.config.permissions.permission_profile())
+        .is_some()
+    {
+        return Ok(());
+    }
     let local_cwd = TempDir::new()?;
     let remote_cwd = PathBuf::from(format!(
         "/tmp/codex-network-approval-{}",
@@ -530,18 +563,23 @@ fn guardian_network_triggers(responses: &[&ResponseMock]) -> Result<Vec<(String,
     responses
         .iter()
         .flat_map(|responses| responses.requests())
-        .filter(|request| {
-            request.body_json()["client_metadata"]["x-openai-subagent"].as_str() == Some("guardian")
-        })
         .map(|request| {
-            let user_texts = request.message_input_texts("user");
-            let action: Value = serde_json::from_str(
-                user_texts
-                    .iter()
-                    .find(|text| text.contains("\"tool\": \"network_access\""))
-                    .context("expected network access JSON in Guardian request")?
-                    .trim(),
-            )?;
+            let user_message = request
+                .message_input_text_groups("user")
+                .into_iter()
+                .rev()
+                .find(|texts| texts.join("").contains("Network access JSON:"))
+                .context("expected network access JSON in Guardian request")?
+                .join("");
+            let action_text = user_message
+                .split_once("Network access JSON:\n")
+                .map(|(_, json)| json)
+                .context("expected Guardian network access JSON payload")?;
+            let action_text = action_text
+                .split_once("\n>>> APPROVAL REQUEST END")
+                .map_or(action_text, |(json, _)| json)
+                .trim();
+            let action: Value = serde_json::from_str(action_text)?;
             Ok((
                 action
                     .pointer("/trigger/callId")

@@ -29,6 +29,7 @@ use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
 use codex_config::config_toml::ThreadStoreToml;
 use codex_config::config_toml::validate_model_providers;
+use codex_config::custom::CustomThemeDiffToml;
 use codex_config::loader::load_config_layers_state;
 use codex_config::loader::project_trust_key;
 use codex_config::permissions_toml::PermissionsToml;
@@ -146,6 +147,7 @@ use toml_edit::DocumentMut;
 
 pub(crate) mod agent_roles;
 mod auth_keyring;
+pub(crate) mod custom;
 pub mod edit;
 mod managed_features;
 mod network_proxy_spec;
@@ -164,6 +166,11 @@ pub use codex_config::LoaderOverrides;
 pub use codex_network_proxy::NetworkProxyAuditMetadata;
 use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
 pub use codex_sandboxing::system_bwrap_warning;
+pub fn should_use_legacy_landlock(permission_profile: &PermissionProfile, cwd: &Path) -> bool {
+    let _ = cwd;
+    self::system_bwrap_warning(permission_profile)
+        .is_some_and(|warning| !warning.starts_with("Codex could not find bubblewrap on PATH."))
+}
 pub use managed_features::ManagedFeatures;
 pub use network_proxy_spec::NetworkProxySpec;
 pub use network_proxy_spec::StartedNetworkProxy;
@@ -351,6 +358,8 @@ pub struct Permissions {
     pub allow_login_shell: bool,
     /// Policy used to build process environments for shell/unified exec.
     pub shell_environment_policy: ShellEnvironmentPolicy,
+    /// Custom fork-specific permission overrides.
+    pub(crate) custom: custom::CustomPermissions,
     /// Effective Windows sandbox mode derived from `[windows].sandbox` or
     /// legacy feature keys.
     pub windows_sandbox_mode: Option<WindowsSandboxModeToml>,
@@ -374,6 +383,7 @@ impl Permissions {
             network: None,
             allow_login_shell: true,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
+            custom: custom::CustomPermissions::default(),
             windows_sandbox_mode: None,
             windows_sandbox_private_desktop: true,
         })
@@ -781,6 +791,9 @@ pub struct Config {
     /// Syntax highlighting theme override (kebab-case name).
     pub tui_theme: Option<String>,
 
+    /// Custom fork-specific diff color overrides for the TUI.
+    pub custom_theme_diff: Option<CustomThemeDiffToml>,
+
     /// Pet id preselected by the terminal pet picker.
     pub tui_pet: Option<String>,
 
@@ -854,6 +867,12 @@ pub struct Config {
 
     /// Additional filenames to try when looking for project-level docs.
     pub project_doc_fallback_filenames: Vec<String>,
+
+    /// Explicit project doc file paths to use instead of auto-discovery.
+    ///
+    /// When non-empty, Codex reads these files in order and skips
+    /// `AGENTS.md` path discovery.
+    pub project_doc_paths: Vec<AbsolutePathBuf>,
 
     /// Token budget applied when storing tool/function outputs in the context manager.
     pub tool_output_token_limit: Option<usize>,
@@ -1597,7 +1616,11 @@ impl Config {
                 .enabled(Feature::SkillMcpDependencyInstall),
             approval_policy: self.permissions.approval_policy.clone(),
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
-            use_legacy_landlock: self.features.use_legacy_landlock(),
+            use_legacy_landlock: self.features.use_legacy_landlock()
+                || should_use_legacy_landlock(
+                    self.permissions.permission_profile(),
+                    self.cwd.as_path(),
+                ),
             apps_enabled: self.features.enabled(Feature::Apps),
             prefix_mcp_tool_names: self.prefix_mcp_tool_names(),
             client_elicitation_capability: if self.features.enabled(Feature::AuthElicitation) {
@@ -2421,6 +2444,7 @@ pub struct ConfigOverrides {
     pub tools_web_search_request: Option<bool>,
     pub ephemeral: Option<bool>,
     pub bypass_hook_trust: Option<bool>,
+    pub project_doc_paths: Vec<PathBuf>,
     /// Additional directories that should be treated as writable roots for this session.
     pub additional_writable_roots: Vec<PathBuf>,
     /// Explicit absolute runtime workspace roots for this session. When set,
@@ -2737,6 +2761,26 @@ fn resolve_optional_prompt_text(
     }
 }
 
+fn resolve_project_doc_paths(
+    paths: &[PathBuf],
+    cwd: &AbsolutePathBuf,
+) -> std::io::Result<Vec<AbsolutePathBuf>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    paths
+        .iter()
+        .map(|path| {
+            if path.is_absolute() {
+                AbsolutePathBuf::try_from(path.clone())
+            } else {
+                AbsolutePathBuf::try_from(cwd.as_path().join(path))
+            }
+        })
+        .collect()
+}
+
 fn code_mode_toml_config(features: Option<&FeaturesToml>) -> Option<&CodeModeConfigToml> {
     match features?.code_mode.as_ref()? {
         FeatureToml::Enabled(_) => None,
@@ -3014,6 +3058,7 @@ impl Config {
             tools_web_search_request: override_tools_web_search_request,
             ephemeral,
             bypass_hook_trust,
+            project_doc_paths,
             additional_writable_roots,
             workspace_roots: workspace_roots_override,
         } = overrides;
@@ -3116,6 +3161,7 @@ impl Config {
                 }
             }
         }))?;
+        let project_doc_paths = resolve_project_doc_paths(&project_doc_paths, &resolved_cwd)?;
         let requested_additional_writable_roots: Vec<AbsolutePathBuf> = additional_writable_roots
             .into_iter()
             .map(|path| AbsolutePathBuf::resolve_path_against_base(path, resolved_cwd.as_path()))
@@ -3446,7 +3492,12 @@ impl Config {
             })?
             .clone();
 
-        let shell_environment_policy = cfg.shell_environment_policy.into();
+        let shell_environment_policy: ShellEnvironmentPolicy = cfg.shell_environment_policy.into();
+        let custom = custom::resolve_custom_config(
+            &cfg.custom,
+            &shell_environment_policy,
+            &mut startup_warnings,
+        )?;
         let allow_login_shell = cfg.allow_login_shell.unwrap_or(true);
 
         let history = cfg.history.unwrap_or_default();
@@ -3806,6 +3857,7 @@ impl Config {
                 network,
                 allow_login_shell,
                 shell_environment_policy,
+                custom,
                 windows_sandbox_mode,
                 windows_sandbox_private_desktop,
             },
@@ -3855,6 +3907,7 @@ impl Config {
                     }
                 })
                 .collect(),
+            project_doc_paths,
             tool_output_token_limit: cfg.tool_output_token_limit,
             agent_max_threads,
             agent_max_depth,
@@ -4000,6 +4053,7 @@ impl Config {
                 .unwrap_or(true),
             tui_terminal_title: cfg.tui.as_ref().and_then(|t| t.terminal_title.clone()),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
+            custom_theme_diff: cfg.custom.theme.diff.clone(),
             tui_pet: cfg.tui.as_ref().and_then(|t| t.pet.clone()),
             tui_pet_anchor: cfg
                 .tui
