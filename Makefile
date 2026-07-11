@@ -12,7 +12,7 @@ SHELL := /bin/bash
 	update-fixtures \
 	lint-arg0 test-arg0 fix-arg0 \
 	lint-cli test-cli fix-cli \
-	clean clean-dry-run build-linux-sandbox test-core test-all test-almost all almost \
+	clean clean-dry-run build-linux-sandbox test-core test-all test-normal test-almost test-flaky all almost \
 	write-config-schema \
 	verify-all-custom verify-codex-home-cli-flag verify-additional-prompt-dirs-env verify-exec-command-default-login verify-linux-default-shell
 
@@ -38,10 +38,12 @@ CODEX_DOCKER_CACHE_DIR ?= $(CACHE_DIR)/docker
 DOCKER_RUN := $(ROOT_DIR)/scripts/docker_run.sh
 RUN_TUI_CONFIG ?= sample_config.toml
 ALMOST_SKIP_TESTS_FILE := $(ROOT_DIR)/skip_test_list.txt
-SKIP_ALMOST_TESTS ?= $(strip $(shell awk 'NF && $$1 !~ /^#/ { print $$1 }' "$(ALMOST_SKIP_TESTS_FILE)"))
+FLAKY_TESTS_FILE := $(ROOT_DIR)/flaky_test_list.txt
+SKIP_ALMOST_TESTS ?= $(strip $(shell awk 'NF && $$1 !~ /^#/ { print $$1 }' "$(ALMOST_SKIP_TESTS_FILE)") $(shell awk 'NF && $$1 !~ /^#/ { print $$1 }' "$(FLAKY_TESTS_FILE)"))
+FLAKY_TESTS ?= $(strip $(shell awk 'NF && $$1 !~ /^#/ { print $$1 }' "$(FLAKY_TESTS_FILE)"))
 RUST_TOOLCHAIN := $(shell awk -F'"' '/^channel = / { print $$2; exit }' "$(CODEX_RS_DIR)/rust-toolchain.toml")
 
-# Extra flags passed to `cargo test` (example: `make test-almost CARGO_TEST_FLAGS=--no-fail-fast`).
+# Extra flags passed to `cargo test` (example: `make test-normal CARGO_TEST_FLAGS=--no-fail-fast`).
 CARGO_TEST_FLAGS ?=
 
 # Speed-first overrides for non-release Rust targets (disable: `make CARGO_FAST_BUILD=0 ...`).
@@ -161,7 +163,7 @@ help:
 		"  (Docker target dir: set CODEX_DOCKER_TARGET_DIR in .env)" \
 		"  (Test targets also tee logs to $$PWD/_tmp/*_test_result.txt)" \
 		"  (Test targets default CODEX_SHELL_STARTUP_FILES=clean; override with 'make CODEX_SHELL_STARTUP_FILES=default ...')" \
-		"  (Pass extra cargo flags with CARGO_TEST_FLAGS=...; example: 'make test-almost CARGO_TEST_FLAGS=--no-fail-fast')" \
+		"  (Pass extra cargo flags with CARGO_TEST_FLAGS=...; example: 'make test-normal CARGO_TEST_FLAGS=--no-fail-fast')" \
 		"  (Non-release Rust builds are speed-first by default; disable with 'make CARGO_FAST_BUILD=0 ...')" \
 		"" \
 		"  make fetch            # git fetch --all + fork-origin tags + custom/main distance" \
@@ -184,10 +186,11 @@ help:
 		"  make list-custom-tests# List custom__ test names from Rust sources" \
 		"  make test-core        # Run codex-core tests (builds linux sandbox first on Linux)" \
 		"  make test-all         # Run full Rust test suite (all features)" \
-		"  make test-almost      # Run tests skipping known flaky cases (default features)" \
+		"  make test-normal      # Run tests skipping flaky cases (default features)" \
+		"  make test-flaky       # Run flaky tests only" \
 		"  make update-fixtures  # Regenerate config schema + accept snapshots" \
 		"  make all              # Run format + test-all" \
-		"  make almost           # Run format + test-almost" \
+		"  make almost           # Run format + build + test-normal + test-flaky" \
 		"  make clean            # Remove Rust build artifacts (mounted CARGO_TARGET_DIR + codex-rs/target)" \
 		"  make clean-dry-run    # Print what clean would remove"
 
@@ -232,9 +235,7 @@ fix-cli: cache-dir docker-build
 build-linux-sandbox: cache-dir docker-build
 	@# Some test suites expect `codex-linux-sandbox` and its bundled bwrap to exist as standalone binaries.
 	@# `cargo test -p codex-core` does not necessarily build them, so build them explicitly on Linux.
-	@if [ "$$(uname -s)" = "Linux" ]; then \
-		$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo build -p codex-linux-sandbox -p codex-bwrap); \
-	fi
+	$(call run_docker,$(CARGO_NON_RELEASE_EXPORTS) bash scripts/build_linux_sandbox.sh)
 
 test-core: build-linux-sandbox docker-build
 	$(call run_test_logged,test_core,$(CARGO_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test $(CARGO_TEST_FLAGS) -p codex-core)
@@ -245,12 +246,17 @@ test-all: build-linux-sandbox docker-build
 all:
 	$(call run_targets_continue_logged,all,fmt test-all)
 
-test-almost: build-linux-sandbox docker-build
+test-normal: build-linux-sandbox docker-build
 	@# `--all-features` tends to blow up the build matrix and `target/` size; keep `test-all` for that.
-	$(call run_test_logged,test_almost,$(CARGO_TEST_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && cargo test $(CARGO_TEST_FLAGS) -- $(foreach test,$(SKIP_ALMOST_TESTS),--skip $(test)))
+	$(call run_test_logged,test_normal,$(CARGO_TEST_NON_RELEASE_EXPORTS) bash ../scripts/run_normal_tests.sh)
+
+test-almost: test-normal
+
+test-flaky: build-linux-sandbox docker-build
+	$(call run_test_logged,test_flaky,$(CARGO_TEST_NON_RELEASE_EXPORTS) cd "$(CODEX_RS_DIR_DOCKER)" && bash ../scripts/run_flaky_tests.sh)
 
 almost:
-	$(call run_targets_continue_logged,almost,fmt test-almost)
+	$(call run_targets_continue_logged,almost,fmt build test-normal test-flaky)
 
 # Custom verifications
 verify-all-custom:
