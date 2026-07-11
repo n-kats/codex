@@ -24,6 +24,7 @@ use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::managed_network_requirements_loader;
 use core_test_support::responses::ResponseMock;
+use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
@@ -67,21 +68,12 @@ async fn guardian_receives_exact_triggers_for_concurrent_network_requests() -> R
     skip_if_host_windows!(Ok(()));
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
-    eprintln!(
-        "network_approval debug: cwd={:?} code_home={:?} cargo_target_dir={:?} tmpdir={:?} path={:?}",
-        std::env::current_dir().ok(),
-        std::env::var_os("CODEX_HOME"),
-        std::env::var_os("CARGO_TARGET_DIR"),
-        std::env::var_os("TMPDIR"),
-        std::env::var_os("PATH"),
-    );
 
     let server = start_mock_server().await;
     let test = managed_network_unified_exec_test(&server).await?;
-    if let Some(warning) =
-        codex_core::config::system_bwrap_warning(test.config.permissions.permission_profile())
+    if codex_core::config::system_bwrap_warning(test.config.permissions.permission_profile())
+        .is_some()
     {
-        eprintln!("network_approval debug: skipping concurrent network test because {warning}");
         return Ok(());
     }
     let barrier_dir = TempDir::new_in(test.cwd.path())?;
@@ -198,21 +190,12 @@ async fn guardian_receives_exact_trigger_for_single_network_request() -> Result<
     skip_if_host_windows!(Ok(()));
     skip_if_no_network!(Ok(()));
     skip_if_sandbox!(Ok(()));
-    eprintln!(
-        "network_approval debug: cwd={:?} code_home={:?} cargo_target_dir={:?} tmpdir={:?} path={:?}",
-        std::env::current_dir().ok(),
-        std::env::var_os("CODEX_HOME"),
-        std::env::var_os("CARGO_TARGET_DIR"),
-        std::env::var_os("TMPDIR"),
-        std::env::var_os("PATH"),
-    );
 
     let server = start_mock_server().await;
     let test = managed_network_unified_exec_test(&server).await?;
-    if let Some(warning) =
-        codex_core::config::system_bwrap_warning(test.config.permissions.permission_profile())
+    if codex_core::config::system_bwrap_warning(test.config.permissions.permission_profile())
+        .is_some()
     {
-        eprintln!("network_approval debug: skipping single network test because {warning}");
         return Ok(());
     }
     let command = "python3 -c \"import urllib.request; opener = urllib.request.build_opener(urllib.request.ProxyHandler()); print('OK:' + opener.open('http://1.1.1.1', timeout=10).read().decode(errors='replace'))\"".to_string();
@@ -563,18 +546,29 @@ fn guardian_network_triggers(responses: &[&ResponseMock]) -> Result<Vec<(String,
     responses
         .iter()
         .flat_map(|responses| responses.requests())
+        .filter(is_guardian_response_request)
         .map(|request| {
             let user_message = request
                 .message_input_text_groups("user")
                 .into_iter()
                 .rev()
                 .find(|texts| texts.join("").contains("Network access JSON:"))
-                .context("expected network access JSON in Guardian request")?
+                .with_context(|| {
+                    format!(
+                        "expected network access JSON in Guardian request\n{}",
+                        guardian_request_debug_summary(&request)
+                    )
+                })?
                 .join("");
             let action_text = user_message
                 .split_once("Network access JSON:\n")
                 .map(|(_, json)| json)
-                .context("expected Guardian network access JSON payload")?;
+                .with_context(|| {
+                    format!(
+                        "expected Guardian network access JSON payload\n{}",
+                        guardian_request_debug_summary(&request)
+                    )
+                })?;
             let action_text = action_text
                 .split_once("\n>>> APPROVAL REQUEST END")
                 .map_or(action_text, |(json, _)| json)
@@ -594,6 +588,42 @@ fn guardian_network_triggers(responses: &[&ResponseMock]) -> Result<Vec<(String,
             ))
         })
         .collect()
+}
+
+fn is_guardian_response_request(request: &ResponsesRequest) -> bool {
+    request
+        .body_json()
+        .pointer("/client_metadata/x-openai-subagent")
+        .and_then(Value::as_str)
+        == Some("guardian")
+}
+
+fn guardian_request_debug_summary(request: &ResponsesRequest) -> String {
+    let mut summary = vec![format!("path={}", request.path())];
+    if let Some(subagent) = request.header("x-openai-subagent") {
+        summary.push(format!("x-openai-subagent={subagent}"));
+    }
+    let body = request.body_json();
+    if let Some(input) = body.get("input").and_then(Value::as_array) {
+        let user_messages = input
+            .iter()
+            .filter(|item| item.get("role").and_then(Value::as_str) == Some("user"))
+            .map(|item| {
+                item.get("content")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter(|span| span.get("type").and_then(Value::as_str) == Some("input_text"))
+                    .filter_map(|span| span.get("text").and_then(Value::as_str))
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .collect::<Vec<_>>();
+        if !user_messages.is_empty() {
+            summary.push(format!("user_messages=\n{}", user_messages.join("\n---\n")));
+        }
+    }
+    summary.join("\n")
 }
 
 async fn expect_network_approval(

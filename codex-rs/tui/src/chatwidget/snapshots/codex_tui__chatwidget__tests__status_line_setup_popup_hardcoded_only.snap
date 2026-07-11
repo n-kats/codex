@@ -1,6 +1,5 @@
 ---
 source: tui/src/chatwidget/tests/status_surface_previews.rs
-assertion_line: 177
 expression: status_line_popup_snapshot(&mut chat)
 ---
   Configure Status Line

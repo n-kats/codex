@@ -1,6 +1,5 @@
 ---
 source: tui/src/chatwidget/tests/status_surface_previews.rs
-assertion_line: 149
 expression: snapshot
 ---
 status line: my-project · feat/awesome-feature · thread title · Read Only · Ask for approval

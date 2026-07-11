@@ -78,6 +78,7 @@ docker_args=(
   -e "TERM=${TERM:-xterm-256color}"
   -e "COLORTERM=${COLORTERM:-}"
   -e "RUST_BACKTRACE=${RUST_BACKTRACE:-1}"
+  -e "RUST_LOG=${RUST_LOG:-}"
   -e "CARGO_TARGET_DIR=${container_target_dir}"
   -e "CARGO_HOME=/home/ubuntu/.cargo"
   -e "RUSTUP_HOME=/home/ubuntu/.rustup"
