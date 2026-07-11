@@ -545,6 +545,7 @@ fn guardian_network_triggers(responses: &[&ResponseMock]) -> Result<Vec<(String,
     responses
         .iter()
         .flat_map(|responses| responses.requests())
+        .filter(is_guardian_response_request)
         .map(|request| {
             let user_message = request
                 .message_input_text_groups("user")
@@ -576,6 +577,14 @@ fn guardian_network_triggers(responses: &[&ResponseMock]) -> Result<Vec<(String,
             ))
         })
         .collect()
+}
+
+fn is_guardian_response_request(request: &core_test_support::responses::ResponsesRequest) -> bool {
+    request
+        .body_json()
+        .pointer("/client_metadata/x-openai-subagent")
+        .and_then(Value::as_str)
+        == Some("guardian")
 }
 
 async fn expect_network_approval(
