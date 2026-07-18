@@ -40,6 +40,10 @@ impl McpHandler {
         Ok(Self { tool_info, spec })
     }
 
+    pub(crate) fn wait_for_mcp_tool_completion(&self) -> bool {
+        self.tool_info.wait_for_mcp_tool_completion
+    }
+
     fn hook_tool_name(&self) -> HookToolName {
         HookToolName::new(ensure_mcp_prefix(&join_tool_name(&self.tool_name())))
     }
@@ -164,6 +168,10 @@ impl McpHandler {
 }
 
 impl CoreToolRuntime for McpHandler {
+    fn waits_for_mcp_tool_completion(&self) -> bool {
+        self.wait_for_mcp_tool_completion()
+    }
+
     fn telemetry_tags<'a>(
         &'a self,
         _invocation: &'a ToolInvocation,
@@ -534,6 +542,7 @@ mod tests {
         ToolInfo {
             server_name: server_name.to_string(),
             supports_parallel_tool_calls: false,
+            wait_for_mcp_tool_completion: false,
             server_origin: None,
             callable_name: tool_name.to_string(),
             callable_namespace: callable_namespace.to_string(),

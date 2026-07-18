@@ -884,9 +884,10 @@ impl ExecServerClient {
                     }
                 }
             };
+            let process_start_span = tracing::debug_span!("exec_server.process_start");
             tokio::spawn(
                 process_start_task
-                    .in_current_span()
+                    .instrument(process_start_span)
                     .with_current_subscriber(),
             );
             return result_rx.await.map_err(|_| {
@@ -1953,11 +1954,15 @@ mod tests {
 
     #[cfg(unix)]
     fn process_exists(pid: u32) -> bool {
-        Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .status()
-            .is_ok_and(|status| status.success())
+        Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
+            .output()
+            .is_ok_and(|output| {
+                output.status.success()
+                    && !String::from_utf8_lossy(&output.stdout)
+                        .trim_start()
+                        .starts_with('Z')
+            })
     }
 
     #[cfg(unix)]

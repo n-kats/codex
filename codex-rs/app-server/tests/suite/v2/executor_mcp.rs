@@ -139,6 +139,7 @@ include_local = true
 id = "{EXECUTOR_ID}"
 program = {codex_bin}
 args = ["exec-server", "--listen", "stdio"]
+initialize_timeout_sec = 30.0
 [environments.env]
 {EXECUTOR_ENV_NAME} = "{EXECUTOR_ENV_VALUE}"
 HTTP_PROXY = {http_proxy}

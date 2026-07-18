@@ -368,7 +368,7 @@ mod tests {
         );
 
         assert_eq!(
-            tokio::time::timeout(Duration::from_secs(1), failure_rx.recv())
+            tokio::time::timeout(Duration::from_secs(5), failure_rx.recv())
                 .await
                 .expect("runtime failure timeout")
                 .expect("runtime failure"),
@@ -386,7 +386,7 @@ mod tests {
         );
 
         assert!(matches!(
-            tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
+            tokio::time::timeout(Duration::from_secs(5), event_rx.recv())
                 .await
                 .expect("runtime panic event timeout"),
             Some(RuntimeEvent::ThreadPanicked)

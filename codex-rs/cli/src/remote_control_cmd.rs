@@ -65,6 +65,7 @@ pub(crate) async fn run(
     command: RemoteControlCommand,
     arg0_paths: Arg0DispatchPaths,
     root_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     match command.subcommand {
         None => {
@@ -72,7 +73,13 @@ pub(crate) async fn run(
                 command.json,
                 "Starting app-server with remote control enabled...",
             )?;
-            run_foreground_remote_control(command.json, arg0_paths, root_config_overrides).await?;
+            run_foreground_remote_control(
+                command.json,
+                arg0_paths,
+                root_config_overrides,
+                loader_overrides,
+            )
+            .await?;
         }
         Some(RemoteControlSubcommand::Start) => {
             print_remote_control_progress(
@@ -111,6 +118,7 @@ async fn run_foreground_remote_control(
     json: bool,
     arg0_paths: Arg0DispatchPaths,
     root_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     let socket_dir = tempfile::Builder::new()
         .prefix("codex-rc-")
@@ -132,7 +140,7 @@ async fn run_foreground_remote_control(
     let mut app_server_task = tokio::spawn(codex_app_server::run_main_with_transport_options(
         arg0_paths,
         root_config_overrides,
-        LoaderOverrides::default(),
+        loader_overrides,
         /*strict_config*/ false,
         /*default_analytics_enabled*/ false,
         transport,

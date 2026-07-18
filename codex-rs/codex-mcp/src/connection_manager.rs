@@ -964,6 +964,9 @@ impl McpConnectionManager {
         };
 
         tool.supports_parallel_tool_calls = metadata.supports_parallel_tool_calls;
+        tool.wait_for_mcp_tool_completion = metadata
+            .wait_for_mcp_tool_completion
+            .contains(&tool.tool.name.to_string());
         tool.server_origin = metadata
             .origin
             .as_ref()

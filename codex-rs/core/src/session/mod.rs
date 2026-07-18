@@ -1442,7 +1442,8 @@ impl Session {
         updates: SessionSettingsUpdate,
     ) -> ConstraintResult<()> {
         let notify_config_contributors = !self.services.extensions.config_contributors().is_empty();
-        let (previous_config, new_config, permission_profile_changed) = {
+        let project_doc_paths_changed = updates.project_doc_paths.is_some();
+        let (previous_config, new_config, permission_profile_changed, agents_md_reload) = {
             let mut state = self.state.lock().await;
             let updated = match state.session_configuration.apply(&updates) {
                 Ok(updated) => updated,
@@ -1466,12 +1467,33 @@ impl Session {
                     .update_selections(updated.environment_selections());
             }
             state.session_configuration = updated;
-            (previous_config, new_config, permission_profile_changed)
+            (
+                previous_config,
+                new_config,
+                permission_profile_changed,
+                project_doc_paths_changed,
+            )
         };
         self.emit_config_changed_contributors(previous_config.as_ref(), new_config.as_ref());
         if permission_profile_changed {
             self.refresh_managed_network_proxy_for_current_permission_profile()
                 .await;
+        }
+        if agents_md_reload {
+            let environments = self.services.turn_environments.snapshot().await;
+            let config = {
+                let state = self.state.lock().await;
+                state
+                    .session_configuration
+                    .original_config_do_not_use
+                    .clone()
+            };
+            self.services
+                .agents_md_manager
+                .refresh(config.as_ref(), &environments)
+                .await;
+            let mut state = self.state.lock().await;
+            state.set_reference_context_item(/*item*/ None);
         }
 
         Ok(())

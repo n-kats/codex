@@ -55,6 +55,7 @@ fn create_test_tool(server_name: &str, tool_name: &str) -> ToolInfo {
     ToolInfo {
         server_name: server_name.to_string(),
         supports_parallel_tool_calls: false,
+        wait_for_mcp_tool_completion: false,
         server_origin: None,
         callable_name: tool_name.to_string(),
         callable_namespace: server_name.to_string(),
@@ -1461,6 +1462,7 @@ async fn list_all_tools_adds_server_metadata_to_tools() {
             supports_parallel_tool_calls: true,
             default_tools_approval_mode: None,
             tool_approval_modes: HashMap::new(),
+            wait_for_mcp_tool_completion: std::collections::HashSet::new(),
         },
     );
     manager
@@ -1488,6 +1490,7 @@ fn server_metadata_preserves_tool_approval_policy() {
         "search".to_string(),
         McpServerToolConfig {
             approval_mode: Some(AppToolApproval::Approve),
+            wait_for_mcp_tool_completion: false,
         },
     );
     let metadata = McpServerMetadata::from(&EffectiveMcpServer::configured(config));

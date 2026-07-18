@@ -312,7 +312,12 @@ impl CommandExecRequestProcessor {
         let outgoing = self.outgoing.clone();
         let request_for_task = request.clone();
         let started_network_proxy_for_task = started_network_proxy;
-        let use_legacy_landlock = self.config.features.use_legacy_landlock();
+        let use_legacy_landlock = self.config.features.use_legacy_landlock()
+            || codex_core::config::should_use_legacy_landlock(
+                &effective_permission_profile,
+                sandbox_cwd.as_path(),
+            )
+            || started_network_proxy_for_task.is_some();
         let size = match size.map(crate::command_exec::terminal_size_from_protocol) {
             Some(Ok(size)) => Some(size),
             Some(Err(error)) => return Err(error),

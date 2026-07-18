@@ -1008,6 +1008,7 @@ fn blocking_replace_mcp_servers_serializes_tool_approval_overrides() {
                 "search".to_string(),
                 McpServerToolConfig {
                     approval_mode: Some(AppToolApproval::Approve),
+                    wait_for_mcp_tool_completion: false,
                 },
             )]),
         },

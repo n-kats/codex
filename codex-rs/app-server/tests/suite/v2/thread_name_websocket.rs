@@ -1,6 +1,5 @@
 use super::connection_handling_websocket::DEFAULT_READ_TIMEOUT;
 use super::connection_handling_websocket::WsClient;
-use super::connection_handling_websocket::assert_no_message;
 use super::connection_handling_websocket::connect_websocket;
 use super::connection_handling_websocket::create_config_toml;
 use super::connection_handling_websocket::read_notification_for_method;
@@ -23,11 +22,13 @@ use codex_app_server_protocol::ThreadSetNameParams;
 use codex_app_server_protocol::ThreadSetNameResponse;
 use codex_core::find_thread_name_by_id;
 use codex_protocol::ThreadId;
+use futures::StreamExt;
 use pretty_assertions::assert_eq;
 use std::path::Path;
 use tempfile::TempDir;
 use tokio::time::Duration;
 use tokio::time::timeout;
+use tokio_tungstenite::tungstenite::Message as WebSocketMessage;
 
 #[tokio::test]
 async fn thread_name_updated_broadcasts_for_loaded_threads() -> Result<()> {
@@ -82,8 +83,8 @@ async fn thread_name_updated_broadcasts_for_loaded_threads() -> Result<()> {
         assert_thread_name_updated(ws2_notification, &conversation_id, renamed)?;
         assert_legacy_thread_name(codex_home.path(), &conversation_id, renamed).await?;
 
-        assert_no_message(&mut ws1, Duration::from_millis(250)).await?;
-        assert_no_message(&mut ws2, Duration::from_millis(250)).await?;
+        assert_no_thread_goal_cleared_or_message(&mut ws1, Duration::from_millis(250)).await?;
+        assert_no_thread_goal_cleared_or_message(&mut ws2, Duration::from_millis(250)).await?;
         Ok(())
     }
     .await;
@@ -134,8 +135,8 @@ async fn thread_name_updated_broadcasts_for_not_loaded_threads() -> Result<()> {
         assert_thread_name_updated(ws2_notification, &conversation_id, renamed)?;
         assert_legacy_thread_name(codex_home.path(), &conversation_id, renamed).await?;
 
-        assert_no_message(&mut ws1, Duration::from_millis(250)).await?;
-        assert_no_message(&mut ws2, Duration::from_millis(250)).await?;
+        assert_no_thread_goal_cleared_or_message(&mut ws1, Duration::from_millis(250)).await?;
+        assert_no_thread_goal_cleared_or_message(&mut ws2, Duration::from_millis(250)).await?;
         Ok(())
     }
     .await;
@@ -193,4 +194,30 @@ async fn assert_legacy_thread_name(
         Some(expected_name)
     );
     Ok(())
+}
+
+async fn assert_no_thread_goal_cleared_or_message(
+    stream: &mut WsClient,
+    wait_for: Duration,
+) -> Result<()> {
+    loop {
+        match timeout(wait_for, stream.next()).await {
+            Ok(Some(Ok(WebSocketMessage::Text(text)))) => {
+                let notification: JSONRPCNotification = serde_json::from_str(text.as_ref())?;
+                if notification.method == "thread/goal/cleared" {
+                    continue;
+                }
+                anyhow::bail!(
+                    "unexpected frame while waiting for silence: {}",
+                    WebSocketMessage::Text(text)
+                );
+            }
+            Ok(Some(Ok(frame))) => {
+                anyhow::bail!("unexpected frame while waiting for silence: {frame:?}");
+            }
+            Ok(Some(Err(err))) => anyhow::bail!("unexpected websocket read error: {err}"),
+            Ok(None) => anyhow::bail!("websocket closed unexpectedly while waiting for silence"),
+            Err(_) => return Ok(()),
+        }
+    }
 }

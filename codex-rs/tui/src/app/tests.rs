@@ -2214,6 +2214,7 @@ default_permissions = "locked-down"
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         }
     );
     let cell = match app_event_rx.try_recv() {
@@ -2308,6 +2309,7 @@ async fn update_feature_flags_enabling_guardian_selects_auto_review() -> Result<
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
     );
     let cell = match app_event_rx.try_recv() {
@@ -2403,6 +2405,7 @@ async fn update_feature_flags_disabling_guardian_clears_review_policy_and_restor
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
     );
     let cell = match app_event_rx.try_recv() {
@@ -2484,6 +2487,7 @@ async fn update_feature_flags_enabling_guardian_overrides_explicit_manual_review
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
     );
 
@@ -2544,6 +2548,7 @@ async fn update_feature_flags_disabling_guardian_clears_manual_review_policy_wit
             service_tier: None,
             collaboration_mode: None,
             personality: None,
+            project_doc_paths: None,
         })
     );
     assert!(
@@ -6768,6 +6773,7 @@ async fn override_turn_context_sends_thread_settings_update() {
             Some(Some(service_tier.clone())),
             Some(collaboration_mode.clone()),
             Some(Personality::Pragmatic),
+            /*project_doc_paths*/ None,
         );
 
         let handled = app

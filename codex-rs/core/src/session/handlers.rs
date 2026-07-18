@@ -135,6 +135,7 @@ async fn thread_settings_update(
         service_tier,
         collaboration_mode,
         personality,
+        project_doc_paths,
     } = thread_settings;
     let collaboration_mode = match collaboration_mode {
         Some(collaboration_mode) => collaboration_mode,
@@ -161,6 +162,7 @@ async fn thread_settings_update(
         reasoning_summary: summary,
         service_tier,
         personality,
+        project_doc_paths,
         ..Default::default()
     }
 }

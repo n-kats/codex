@@ -778,6 +778,7 @@ fn codex_apps_tool_info_from_listed_tool(
     ToolInfo {
         server_name: server_name.to_owned(),
         supports_parallel_tool_calls: false,
+        wait_for_mcp_tool_completion: false,
         server_origin: None,
         callable_name,
         callable_namespace,
@@ -802,6 +803,7 @@ fn regular_mcp_tool_info_from_listed_tool(
     ToolInfo {
         server_name: server_name.to_owned(),
         supports_parallel_tool_calls: false,
+        wait_for_mcp_tool_completion: false,
         server_origin: None,
         callable_name: tool_def.name.to_string(),
         callable_namespace: server_name.to_string(),
@@ -1209,6 +1211,7 @@ mod tests {
         let expected = ToolInfo {
             server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
             supports_parallel_tool_calls: false,
+            wait_for_mcp_tool_completion: false,
             server_origin: None,
             callable_name: "capture_file_upload".to_string(),
             callable_namespace: "codex_apps__gmail".to_string(),

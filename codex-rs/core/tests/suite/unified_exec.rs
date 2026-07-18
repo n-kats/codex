@@ -2808,7 +2808,7 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
 
     let first_call_id = "uexec-timeout";
     let first_args = serde_json::json!({
-        "cmd": "sleep 0.5; echo ready",
+        "cmd": "sleep 2; echo ready",
         "yield_time_ms": 10,
     });
 
@@ -2816,7 +2816,7 @@ async fn unified_exec_timeout_and_followup_poll() -> Result<()> {
     let second_args = serde_json::json!({
         "chars": "",
         "session_id": 1000,
-        "yield_time_ms": 800,
+        "yield_time_ms": 2_000,
     });
 
     let responses = vec![

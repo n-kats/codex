@@ -1,7 +1,10 @@
 use super::*;
 use codex_app_server_protocol::ImageGenerationItem;
 use codex_app_server_protocol::PluginAvailability;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
+use std::fs;
+use tempfile::TempDir;
 
 pub(super) async fn test_config() -> Config {
     // Start from the built-in defaults so tests do not inherit host/system config.
@@ -21,6 +24,16 @@ pub(super) async fn test_config() -> Config {
     config.config_layer_stack = ConfigLayerStack::default();
     config.startup_warnings.clear();
     config
+}
+
+pub(super) fn set_test_cwd(chat: &mut ChatWidget, dir_name: &str) -> TempDir {
+    let tempdir = TempDir::new().expect("tempdir");
+    let cwd = tempdir.path().join(dir_name);
+    fs::create_dir_all(&cwd).expect("create test cwd");
+    let cwd = AbsolutePathBuf::from_absolute_path_checked(&cwd).expect("absolute cwd");
+    chat.config.cwd = cwd.clone();
+    chat.current_cwd = Some(cwd.to_path_buf());
+    tempdir
 }
 
 pub(super) fn test_project_path() -> PathBuf {

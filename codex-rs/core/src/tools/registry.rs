@@ -62,6 +62,10 @@ pub(crate) trait CoreToolRuntime: ToolExecutor<ToolInvocation> {
         false
     }
 
+    fn waits_for_mcp_tool_completion(&self) -> bool {
+        false
+    }
+
     fn telemetry_tags<'a>(
         &'a self,
         _invocation: &'a ToolInvocation,
@@ -289,6 +293,10 @@ impl CoreToolRuntime for ExposureOverride {
         self.handler.waits_for_runtime_cancellation()
     }
 
+    fn waits_for_mcp_tool_completion(&self) -> bool {
+        self.handler.waits_for_mcp_tool_completion()
+    }
+
     fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
         self.handler.pre_tool_use_payload(invocation)
     }
@@ -392,6 +400,19 @@ impl ToolRegistry {
         Some(tool.waits_for_runtime_cancellation())
     }
 
+    pub(crate) fn waits_for_mcp_tool_completion(&self, name: &ToolName) -> Option<bool> {
+        self.tool(name)
+            .map(|tool| tool.waits_for_mcp_tool_completion())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn dispatch_any(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<AnyToolResult, FunctionCallError> {
+        self.dispatch_any_with_terminal_outcome(invocation, /*terminal_outcome_reached*/ None)
+            .await
+    }
     #[expect(
         clippy::await_holding_invalid_type,
         reason = "tool dispatch must keep active-turn accounting atomic"

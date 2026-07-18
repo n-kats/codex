@@ -655,11 +655,7 @@ async fn turn_start_emits_thread_scoped_warning_notification_for_trimmed_skills(
     )
     .await??;
 
-    let notification = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_notification_message("warning"),
-    )
-    .await??;
+    let notification = wait_for_warning_notification(&mut mcp).await?;
     let params = notification.params.expect("warning params");
     let warning: WarningNotification =
         serde_json::from_value(params).expect("deserialize warning notification");
@@ -692,6 +688,27 @@ async fn turn_start_emits_thread_scoped_warning_notification_for_trimmed_skills(
     );
 
     Ok(())
+}
+
+async fn wait_for_warning_notification(mcp: &mut TestAppServer) -> Result<JSONRPCNotification> {
+    loop {
+        let notification = timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_notification_message("warning"),
+        )
+        .await??;
+        let params = notification.params.as_ref();
+        if params
+            .and_then(|params| params.get("message"))
+            .and_then(serde_json::Value::as_str)
+            == Some(
+                "custom.user_shell.no_inject is false (default); `!` (UserShell) commands and their outputs will be injected into the model context and recorded to the local session history. Set custom.user_shell.no_inject=true to disable injection/recording, and avoid secrets in `!` commands/output.",
+            )
+        {
+            continue;
+        }
+        return Ok(notification);
+    }
 }
 
 #[tokio::test]
