@@ -71,6 +71,7 @@ ensure_mount_writable "${host_target_dir}" "cargo target"
 docker_args=(
   --rm
   --user ubuntu
+  --cap-add NET_ADMIN
   --security-opt seccomp=unconfined
   --security-opt apparmor=unconfined
   -e "CODEX_HOME=${container_codex_home}"

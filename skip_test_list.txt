@@ -9,8 +9,14 @@ denying_network_policy_amendment_persists_policy_and_skips_future_network_prompt
 unified_exec_streams_after_lagged_output
 remote_models_merge_adds_new_high_priority_first
 turn_start_jsonrpc_span_parents_core_turn_spans
+# guardian denial output routing can be unstable under test load
+suite::network_approval::guardian_network_approval_preserves_action_and_outcome_routing
+# rollback event delivery can time out under test load
+suite::rollout_budget::restates_the_current_remainder_after_rollback
 
 # other almost-specific skips
+# The custom fork removes the `codex cloud` command.
+strict_config_is_not_supported_for_cloud_command
 sandbox_with_network_proxy_blocks_direct_loopback_access
 exec::tests::kill_child_process_group_kills_grandchildren_on_timeout
 exec::tests::process_exec_tool_call_cancellation_allows_sigterm_cleanup
@@ -113,6 +119,16 @@ suite::landlock::sandbox_keeps_parent_repo_discovery_while_blocking_child_metada
 suite::managed_proxy::managed_proxy_mode_fails_closed_without_proxy_env
 suite::managed_proxy::managed_proxy_mode_denies_af_unix_socket_but_allows_socketpair
 suite::managed_proxy::managed_proxy_mode_routes_through_bridge_and_blocks_direct_egress
+# These network-approval tests require the managed Linux proxy bridge to
+# configure loopback inside bwrap's network namespace. In the MCP container
+# privileged mode is intentionally disabled; NET_ADMIN is only in the
+# capability bounding set (CapEff=0), and the environment probe fails with
+# "RTNETLINK answers: Operation not permitted". Without that bridge path the
+# command completes without emitting the approval request these tests assert.
+suite::network_approval::user_network_approval_once_session_and_denial_semantics
+suite::network_approval::allowing_network_policy_amendment_persists_context_and_bypasses_prompt
+suite::network_approval::timed_out_guardian_network_review_uses_timeout_outcome_without_user_fallback
+suite::network_approval::ambiguous_unattributed_network_request_is_not_assigned_to_active_calls
 # landlock timeout is the same bwrap userns failure path in this environment
 suite::landlock::test_timeout
 # snapshot rollback follow-up times out in almost

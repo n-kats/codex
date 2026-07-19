@@ -14,6 +14,7 @@ RUN apt-get update && \
     cmake \
     clang libssl-dev libcap-dev libseccomp-dev musl-tools \
     bubblewrap \
+    iproute2 \
     jq \
     fd-find \
     ripgrep \

@@ -61,9 +61,12 @@ CARGO_FAST_LTO ?= off
 CARGO_FAST_INCREMENTAL ?= false
 CARGO_FAST_OPT_LEVEL ?= 0
 CARGO_TEST_FAST_DEBUG ?= 0
+# Override with `make CARGO_BUILD_JOBS=8 ...` when more memory is available.
+CARGO_BUILD_JOBS ?= 4
 
 ifeq ($(CARGO_FAST_BUILD),1)
 CARGO_NON_RELEASE_EXPORTS := \
+	export CARGO_BUILD_JOBS=$(CARGO_BUILD_JOBS); \
 	export CARGO_PROFILE_DEV_DEBUG=$(CARGO_FAST_DEBUG); \
 	export CARGO_PROFILE_TEST_DEBUG=$(CARGO_FAST_DEBUG); \
 	export CARGO_PROFILE_DEV_CODEGEN_UNITS=$(CARGO_FAST_CODEGEN_UNITS); \
@@ -76,11 +79,12 @@ CARGO_NON_RELEASE_EXPORTS := \
 	export CARGO_PROFILE_TEST_OPT_LEVEL=$(CARGO_FAST_OPT_LEVEL); \
 	export V8_FROM_SOURCE=$(V8_FROM_SOURCE); \
 else
-CARGO_NON_RELEASE_EXPORTS := export V8_FROM_SOURCE=$(V8_FROM_SOURCE);
+CARGO_NON_RELEASE_EXPORTS := export CARGO_BUILD_JOBS=$(CARGO_BUILD_JOBS); export V8_FROM_SOURCE=$(V8_FROM_SOURCE);
 endif
 
 ifeq ($(CARGO_FAST_BUILD),1)
 CARGO_TEST_NON_RELEASE_EXPORTS := \
+	export CARGO_BUILD_JOBS=$(CARGO_BUILD_JOBS); \
 	export CARGO_PROFILE_DEV_DEBUG=$(CARGO_TEST_FAST_DEBUG); \
 	export CARGO_PROFILE_TEST_DEBUG=$(CARGO_TEST_FAST_DEBUG); \
 	export CARGO_PROFILE_DEV_CODEGEN_UNITS=$(CARGO_FAST_CODEGEN_UNITS); \
@@ -93,7 +97,7 @@ CARGO_TEST_NON_RELEASE_EXPORTS := \
 	export CARGO_PROFILE_TEST_OPT_LEVEL=$(CARGO_FAST_OPT_LEVEL); \
 	export V8_FROM_SOURCE=$(V8_FROM_SOURCE); \
 else
-CARGO_TEST_NON_RELEASE_EXPORTS := export V8_FROM_SOURCE=$(V8_FROM_SOURCE);
+CARGO_TEST_NON_RELEASE_EXPORTS := export CARGO_BUILD_JOBS=$(CARGO_BUILD_JOBS); export V8_FROM_SOURCE=$(V8_FROM_SOURCE);
 endif
 
 cache-dir:
@@ -161,7 +165,7 @@ define run_targets_continue_logged
 	log_file="$(TEST_LOG_DIR)/$(1)_test_result.txt"; \
 	printf "%s\n" "log: $$log_file"; \
 	trap 'rc=$$?; if [ $$rc -ne 0 ]; then printf "\n%s\n" "===== TEST SUMMARY: FAILED ====="; grep -E "test result: FAILED|^failures:|^    (suite::|[[:alnum:]_].*::)|bwrap: loopback:|error: test failed|make: \\*\\*\\*" "$$log_file" | tail -40 || true; printf "\n%s\n" "Full log: $$log_file"; fi' EXIT; \
-	/bin/bash -lc 'set -o pipefail; LOG_FILE="'"$$log_file"'"; : > "$$LOG_FILE"; status=0; for target in $(2); do printf "%s\n" "==> $$target ($$(date -Is))" | tee -a "$$LOG_FILE"; LOG_APPEND=1 $(MAKE) --no-print-directory "$$target" LOG_FILE="$$LOG_FILE" 2>&1 | tee -a "$$LOG_FILE"; rc=$${PIPESTATUS[0]}; if [ $$rc -ne 0 ]; then status=$$rc; fi; done; exit $$status'
+	/bin/bash -lc 'LOG_FILE="'"$$log_file"'"; : > "$$LOG_FILE"; status=0; for target in $(2); do printf "%s\n" "==> $$target ($$(date -Is))" | tee -a "$$LOG_FILE"; LOG_APPEND=1 $(MAKE) --no-print-directory "$$target" LOG_FILE="$$LOG_FILE" 2>&1; rc=$$?; if [ $$rc -ne 0 ]; then status=$$rc; fi; done; exit $$status'
 endef
 
 help:
@@ -174,6 +178,7 @@ help:
 		"  (Test targets default CODEX_SHELL_STARTUP_FILES=clean; override with 'make CODEX_SHELL_STARTUP_FILES=default ...')" \
 		"  (Pass extra cargo flags with CARGO_TEST_FLAGS=...; example: 'make test-normal CARGO_TEST_FLAGS=--no-fail-fast')" \
 		"  (Non-release Rust builds are speed-first by default; disable with 'make CARGO_FAST_BUILD=0 ...')" \
+		"  (Rust build concurrency defaults to 4; override with 'make CARGO_BUILD_JOBS=8 ...')" \
 		"" \
 		"  make fetch            # git fetch --all + fork-origin tags + custom/main distance" \
 		"  make docker-build     # Build the Docker image for build/test" \

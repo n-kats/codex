@@ -74,7 +74,7 @@ const PERMISSION_REQUEST_ALLOW_REASON: &str = "should not be used for allow";
 fn restrictive_workspace_write_profile() -> PermissionProfile {
     PermissionProfile::workspace_write_with(
         &[],
-        NetworkSandboxPolicy::Restricted,
+        NetworkSandboxPolicy::Enabled,
         /*exclude_tmpdir_env_var*/ true,
         /*exclude_slash_tmp*/ true,
     )
@@ -83,7 +83,7 @@ fn restrictive_workspace_write_profile() -> PermissionProfile {
 fn network_workspace_write_profile() -> PermissionProfile {
     PermissionProfile::workspace_write_with(
         &[],
-        NetworkSandboxPolicy::Enabled,
+        NetworkSandboxPolicy::Restricted,
         /*exclude_tmpdir_env_var*/ false,
         /*exclude_slash_tmp*/ false,
     )

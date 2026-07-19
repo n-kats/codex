@@ -73,3 +73,8 @@ docker compose -f _local/mcp.compose.yml up -d --force-recreate
 - `_local/prepare_mcp_docker_env.sh`
 - `scripts/docker_run.sh`
 - `Makefile`
+
+The MCP compose target directory is `/workspace/_tmp/codex_build/codex_cache`. The
+`EXEC_MCP_EXPECTED_CARGO_TARGET_DEV` value from `.env` is required. The host-side
+preparation script and MCP server compare the resolved target filesystem device
+before creating directories or starting Cargo.

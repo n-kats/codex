@@ -8,6 +8,7 @@
 
 - `Makefile` で `CARGO_PROFILE_{dev,test}_*` を `export` し、非 release を速度優先にした。
 - デフォルト値: `debug=1`, `codegen-units=16`, `lto=off`, `incremental=false`, `opt-level=0`
+- `CARGO_BUILD_JOBS` をDocker内のCargoへ渡せる。既定値は `4`、メモリに余裕がある場合は `make CARGO_BUILD_JOBS=8 ...` で上書きできる。
 
 ## 対象範囲（非対象も）
 

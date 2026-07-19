@@ -9,6 +9,7 @@ import pwd
 import platform
 import signal
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -550,6 +551,27 @@ def _codex_exec_env(root_dir: Path) -> dict[str, str]:
         env_name="CARGO_TARGET_DIR",
     )
 
+    expected_target_dev = env.get("EXEC_MCP_EXPECTED_CARGO_TARGET_DEV", "").strip()
+    if not expected_target_dev:
+        raise RuntimeError(
+            "EXEC_MCP_EXPECTED_CARGO_TARGET_DEV must be set to validate CARGO_TARGET_DIR"
+        )
+    if not target_dir.is_symlink():
+        raise RuntimeError(
+            f"CARGO_TARGET_DIR must be a symlink to the validated external filesystem: {target_dir}"
+        )
+    try:
+        actual_target_dev = str(target_dir.stat().st_dev)
+    except OSError as exc:
+        raise RuntimeError(
+            f"could not determine filesystem device for CARGO_TARGET_DIR={target_dir}"
+        ) from exc
+    if actual_target_dev != expected_target_dev:
+        raise RuntimeError(
+            f"CARGO_TARGET_DIR={target_dir} is on filesystem device "
+            f"{actual_target_dev!r}, expected {expected_target_dev!r}"
+        )
+
     for path in (cache_dir, cargo_home, rustup_home, home_dir, codex_home, target_dir):
         path.mkdir(parents=True, exist_ok=True)
 
@@ -563,6 +585,7 @@ def _codex_exec_env(root_dir: Path) -> dict[str, str]:
     env["USER"] = env.get("USER", "ubuntu")
     env["USERNAME"] = env.get("USERNAME", env["USER"])
     env["LOGNAME"] = env.get("LOGNAME", env["USER"])
+    env["CARGO_BUILD_JOBS"] = env.get("CARGO_BUILD_JOBS", "4")
     env["CARGO_PROFILE_DEV_DEBUG"] = env.get("CARGO_PROFILE_DEV_DEBUG", "1")
     env["CARGO_PROFILE_TEST_DEBUG"] = env.get("CARGO_PROFILE_TEST_DEBUG", "1")
     env["CARGO_PROFILE_DEV_CODEGEN_UNITS"] = env.get(
@@ -672,6 +695,135 @@ def _codex_env_report(root_dir: Path) -> dict[str, Any]:
             "home": _dir_usage_snapshot(home_dir),
             "target_dir": _dir_usage_snapshot(target_dir),
         },
+    }
+
+
+def _environment_probe(argv: list[str], *, timeout_sec: int = 5) -> dict[str, Any]:
+    try:
+        result = subprocess.run(
+            argv,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        return {"argv": argv, "ok": False, "error": type(exc).__name__}
+    return {
+        "argv": argv,
+        "ok": result.returncode == 0,
+        "returncode": result.returncode,
+        "stdout": result.stdout.strip()[-4000:],
+        "stderr": result.stderr.strip()[-4000:],
+    }
+
+
+def _test_environment_report(root_dir: Path) -> dict[str, Any]:
+    env = os.environ
+    target_dir = _validated_exec_path(
+        root_dir,
+        env.get("CARGO_TARGET_DIR") or env.get("CODEX_DOCKER_TARGET_DIR"),
+        DEFAULT_TARGET_DIR,
+        env_name="CARGO_TARGET_DIR",
+    )
+    status: dict[str, str] = {}
+    try:
+        for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+            key, separator, value = line.partition(":")
+            if separator and key in {"CapEff", "CapBnd", "NoNewPrivs", "Seccomp"}:
+                status[key] = value.strip()
+    except OSError as exc:
+        status["error"] = str(exc)
+
+    namespaces = {}
+    for name in ("mnt", "net", "user", "pid"):
+        try:
+            namespaces[name] = os.readlink(f"/proc/self/ns/{name}")
+        except OSError as exc:
+            namespaces[name] = f"error: {exc}"
+
+    proxy_names = (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+    )
+    binaries = {
+        name: shutil.which(name)
+        for name in ("bwrap", "ip", "cargo", "rustc", "findmnt", "stat")
+    }
+    probes = []
+    if binaries["bwrap"] and binaries["ip"]:
+        probes.append(
+            _environment_probe(
+                [
+                    binaries["bwrap"],
+                    "--unshare-net",
+                    "--ro-bind",
+                    "/",
+                    "/",
+                    "--dev",
+                    "/dev",
+                    "--proc",
+                    "/proc",
+                    binaries["ip"],
+                    "link",
+                    "set",
+                    "lo",
+                    "up",
+                ]
+            )
+        )
+    for command in ((binaries["bwrap"], "--version"), (binaries["ip"], "-o", "link")):
+        if command[0]:
+            probes.append(_environment_probe(list(command)))
+
+    target_snapshot = _path_snapshot(target_dir)
+    target_dev = None
+    try:
+        target_dev = target_dir.stat().st_dev
+    except OSError:
+        pass
+    return {
+        "identity": {
+            "uid": os.getuid(),
+            "gid": os.getgid(),
+            "user": env.get("USER"),
+            "uname": platform.uname()._asdict(),
+        },
+        "test_environment": {
+            name: env.get(name)
+            for name in (
+                "CODEX_TEST_ENVIRONMENT",
+                "CODEX_SANDBOX",
+                "CODEX_SANDBOX_NETWORK_DISABLED",
+                "CARGO_BUILD_JOBS",
+                "CARGO_TARGET_DIR",
+                "EXEC_MCP_EXPECTED_CARGO_TARGET_DEV",
+            )
+        },
+        "test_environment_presence": {
+            name: bool(env.get(name))
+            for name in (
+                "CODEX_TEST_REMOTE_EXEC_SERVER_URL",
+                "CODEX_TEST_REMOTE_ENV",
+                "CODEX_TEST_REMOTE_ENV_CONTAINER_NAME",
+            )
+        },
+        "proxy_environment": {name: bool(env.get(name)) for name in proxy_names},
+        "security": {"status": status, "namespaces": namespaces},
+        "binaries": binaries,
+        "target": {
+            "path": str(target_dir),
+            "snapshot": target_snapshot,
+            "st_dev": target_dev,
+            "expected_st_dev": env.get("EXEC_MCP_EXPECTED_CARGO_TARGET_DEV"),
+        },
+        "probes": probes,
     }
 
 
@@ -1023,7 +1175,9 @@ async def run_cargo_check() -> dict[str, Any]:
 def check_env() -> dict[str, Any]:
     """Rust/compose のビルド環境として解決されるパス情報を返します。"""
     root_dir = _root_dir()
-    return _codex_env_report(root_dir)
+    report = _codex_env_report(root_dir)
+    report["test_environment"] = _test_environment_report(root_dir)
+    return report
 
 
 @mcp.tool

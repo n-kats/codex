@@ -253,6 +253,7 @@ async fn run_safety_retry(
             r#"
 model = "{CURRENT_MODEL}"
 model_provider = "{MODEL_PROVIDER_ID}"
+custom.user_shell.no_inject = true
 
 [model_providers.{MODEL_PROVIDER_ID}]
 name = "Safety retry test"

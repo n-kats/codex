@@ -22,6 +22,7 @@ RUN apt-get update && \
     cmake \
     clang libssl-dev libcap-dev libseccomp-dev musl-tools \
     bubblewrap \
+    iproute2 \
     python3 python3-pip python3-venv \
     xz-utils \
     bash coreutils findutils && \

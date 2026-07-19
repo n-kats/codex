@@ -13,6 +13,7 @@
   - `cargo +nightly fmt`
   - Linux では `codex-linux-sandbox` と bundled bwrap の事前ビルド
 - `cargo test -- --skip ...` に `skip_test_list.txt` と `flaky_test_list.txt` の同じ除外リストを適用
+- Cargo の同時ビルド数 `CARGO_BUILD_JOBS` は `make almost` と同じく既定値 `4` とし、環境変数で上書きできる。
 
 ## 対象範囲（非対象も）
 
