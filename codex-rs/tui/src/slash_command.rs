@@ -205,7 +205,6 @@ impl SlashCommand {
             | SlashCommand::Import
             | SlashCommand::Review
             | SlashCommand::Plan
-            | SlashCommand::CustomAgents
             | SlashCommand::Clear
             | SlashCommand::Logout
             | SlashCommand::MemoryDrop
@@ -213,6 +212,7 @@ impl SlashCommand {
             SlashCommand::Diff
             | SlashCommand::Resume
             | SlashCommand::Model
+            | SlashCommand::CustomAgents
             | SlashCommand::Personality
             | SlashCommand::Permissions
             | SlashCommand::Copy
@@ -299,6 +299,7 @@ mod tests {
         assert!(SlashCommand::Raw.available_in_side_conversation());
         assert!(SlashCommand::Raw.supports_inline_args());
         assert!(SlashCommand::App.available_during_task());
+        assert!(SlashCommand::CustomAgents.available_during_task());
     }
 
     #[test]

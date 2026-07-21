@@ -51,7 +51,7 @@ insert_newline = "enter"
 
 [tui.model_availability_nux]
 "gpt-5.5" = 4
-"gpt-5.6-sol" = 2
+"gpt-5.6-sol" = 4
 
 [custom.theme.diff]
 # Optional: tweak TUI diff background colors while running `make run-tui`.
