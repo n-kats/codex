@@ -185,6 +185,11 @@ pub(super) async fn try_run_zsh_fork(
     let sandbox_policy_cwd = sandbox_policy_cwd
         .to_abs_path()
         .map_err(|err| ToolError::Rejected(err.to_string()))?;
+    let use_legacy_landlock = ctx.turn.config.features.use_legacy_landlock()
+        || crate::config::should_use_legacy_landlock(
+            &ctx.turn.permission_profile(),
+            sandbox_policy_cwd.as_path(),
+        );
     let command_executor = CoreShellCommandExecutor {
         command,
         cwd: sandbox_cwd,
@@ -200,7 +205,7 @@ pub(super) async fn try_run_zsh_fork(
         sandbox_policy_cwd,
         windows_sandbox_workspace_roots,
         codex_linux_sandbox_exe: ctx.turn.config.codex_linux_sandbox_exe.clone(),
-        use_legacy_landlock: ctx.turn.config.features.use_legacy_landlock(),
+        use_legacy_landlock,
     };
     let main_execve_wrapper_exe = ctx
         .session
@@ -298,6 +303,11 @@ pub(crate) async fn prepare_unified_exec_zsh_fork(
         .windows_sandbox_policy_cwd
         .to_abs_path()
         .map_err(|err| ToolError::Rejected(err.to_string()))?;
+    let use_legacy_landlock = ctx.turn.config.features.use_legacy_landlock()
+        || crate::config::should_use_legacy_landlock(
+            &ctx.turn.permission_profile(),
+            sandbox_policy_cwd.as_path(),
+        );
     let command_executor = CoreShellCommandExecutor {
         command: exec_request.command.clone(),
         cwd,
@@ -313,7 +323,7 @@ pub(crate) async fn prepare_unified_exec_zsh_fork(
         sandbox_policy_cwd,
         windows_sandbox_workspace_roots: exec_request.windows_sandbox_workspace_roots.clone(),
         codex_linux_sandbox_exe: ctx.turn.config.codex_linux_sandbox_exe.clone(),
-        use_legacy_landlock: ctx.turn.config.features.use_legacy_landlock(),
+        use_legacy_landlock,
     };
     let escalation_policy = CoreShellActionProvider {
         policy: Arc::clone(&exec_policy),

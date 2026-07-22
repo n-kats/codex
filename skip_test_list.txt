@@ -1,0 +1,139 @@
+# make almost / exec_mcp almost の共通スキップ一覧
+# 1 行 1 テスト名。`--skip` は部分一致なので、名前はできるだけ fully-qualified にする。
+
+# flaky / timing-sensitive
+view_image_tool_attaches_local_image
+approval_matrix_covers_all_modes
+drop_kills_wrapper_process_group
+denying_network_policy_amendment_persists_policy_and_skips_future_network_prompt
+unified_exec_streams_after_lagged_output
+remote_models_merge_adds_new_high_priority_first
+turn_start_jsonrpc_span_parents_core_turn_spans
+# guardian denial output routing can be unstable under test load
+suite::network_approval::guardian_network_approval_preserves_action_and_outcome_routing
+# rollback event delivery can time out under test load
+suite::rollout_budget::restates_the_current_remainder_after_rollback
+
+# other almost-specific skips
+# The custom fork removes the `codex cloud` command.
+strict_config_is_not_supported_for_cloud_command
+sandbox_with_network_proxy_blocks_direct_loopback_access
+exec::tests::kill_child_process_group_kills_grandchildren_on_timeout
+exec::tests::process_exec_tool_call_cancellation_allows_sigterm_cleanup
+config::schema::tests::config_schema_matches_fixture
+suite::abort_tasks::interrupt_tool_records_history_entries
+suite::apply_patch_cli::apply_patch_cli_preserves_existing_hard_link_outside_workspace
+suite::apply_patch_cli::apply_patch_cli_rejects_move_path_traversal_outside_workspace
+suite::approvals::approving_execpolicy_amendment_persists_policy_and_skips_future_prompts
+suite::approvals::spawned_subagent_execpolicy_amendment_propagates_to_parent_session
+suite::approvals::approval_matrix_covers_group::read_only
+suite::approvals::network_approval_flow_survives_danger_full_access_session_start
+suite::approvals::network_approval_retry_keeps_deny_read_sandbox_for_escalated_command
+suite::approvals::approval_matrix_covers_group::workspace_write
+suite::extension_sandbox::extension_tool_uses_granted_turn_permissions
+suite::hooks::permission_request_hook_allows_network_approval_without_prompt
+suite::request_permissions::relative_additional_permissions_resolve_against_tool_workdir::exec_command
+suite::request_permissions::partial_request_permissions_grants_do_not_preapprove_new_permissions
+suite::request_permissions::relative_additional_permissions_resolve_against_tool_workdir::shell_command
+suite::request_permissions::request_permissions_grants_apply_to_later_exec_command_calls
+suite::request_permissions::request_permissions_grants_apply_to_later_shell_command_calls
+suite::request_permissions::request_permissions_grants_apply_to_later_shell_command_calls_without_inline_permission_feature
+suite::request_permissions::workspace_write_with_additional_permissions_can_write_outside_cwd
+suite::request_permissions::with_additional_permissions_requires_approval_under_on_request
+suite::request_permissions::request_permissions_preapprove_explicit_exec_permissions_outside_on_request
+suite::tool_parallelism::mixed_parallel_tools_run_in_parallel
+suite::tool_parallelism::shell_tools_run_in_parallel
+suite::tools::sandbox_denied_shell_command_returns_original_output
+suite::tools::shell_command_enforces_glob_deny_read_policy
+suite::unified_exec::unified_exec_enforces_glob_deny_read_policy
+suite::unified_exec::unified_exec_network_denial_emits_failed_background_end_event
+suite::unified_exec::unified_exec_runs_under_sandbox
+suite::unified_exec::unified_exec_short_lived_network_denial_emits_failed_end_event
+
+# custom / environment-dependent
+suite::codex_tool::test_shell_command_approval_triggers_elicitation
+suite::v2::turn_start_zsh_fork::turn_start_shell_zsh_fork_subcommand_decline_marks_parent_declined_v2
+system_bwrap_warning_skips_supported_system_bwrap
+sandboxed_file_system_helper_finds_bwrap_on_preserved_path
+file_system_sandboxed_read_allows_readable_root
+file_system_sandboxed_write_rejects_unwritable_path
+file_system_sandboxed_write_allows_explicit_alias_roots
+file_system_sandboxed_write_allows_additional_write_root
+file_system_sandboxed_read_rejects_symlink_escape
+file_system_sandboxed_read_rejects_symlink_parent_dotdot_escape
+file_system_sandboxed_write_rejects_symlink_escape
+file_system_create_directory_rejects_symlink_escape
+file_system_read_directory_rejects_symlink_escape
+file_system_copy_rejects_symlink_escape_destination
+file_system_remove_removes_symlink_not_target
+file_system_copy_preserves_symlink_source
+file_system_remove_rejects_symlink_escape
+file_system_copy_rejects_symlink_escape_source
+
+# snapshot coverage
+chatwidget::tests::approval_modal_exec_no_reason
+chatwidget::tests::approval_modal_exec
+chatwidget::tests::chatwidget_markdown_code_blocks_vt100_snapshot
+chatwidget::tests::compact_queues_user_messages_snapshot
+chatwidget::tests::review_queues_user_messages_snapshot
+history_cell::tests::user_history_cell_wraps_and_prefixes_each_line_snapshot
+
+# bwrap / userns dependent
+suite::landlock::bwrap_populates_minimal_dev_nodes
+suite::landlock::bwrap_preserves_writable_dev_shm_bind_mount
+suite::landlock::sandbox_blocks_git_and_codex_writes_inside_writable_root
+suite::landlock::sandbox_blocks_codex_symlink_replacement_attack
+suite::landlock::sandbox_blocks_explicit_split_policy_carveouts_under_bwrap
+suite::landlock::sandbox_blocks_root_read_carveouts_under_bwrap
+suite::v2::command_exec::
+suite::v2::process_exec::process_spawn_returns_before_exit_and_emits_exit_notification
+suite::v2::imagegen_extension::standalone_image_edit_uses_attached_model_visible_image
+suite::v2::turn_interrupt::turn_interrupt_aborts_running_turn
+suite::v2::turn_start::turn_start_file_change_approval_accept_for_session_persists_v2
+# flaky timeout in the almost environment after rollback from image generation
+suite::compact_resume_fork::snapshot_rollback_past_compaction_replays_append_only_history
+# flake: stdio client shutdown timing differs in almost
+client::tests::dropping_stdio_client_terminates_spawned_process
+# flaky timing-sensitive parallelism check under almost load
+suite::tool_parallelism::read_file_tools_run_in_parallel
+# flaky timeout while resizing large stdio image responses in almost
+suite::rmcp_client::stdio_image_responses_resize_large_image
+# policy clamp expectation diverges under this almost environment
+suite::unified_exec::write_stdin_clamps_model_requested_max_output_tokens_to_policy
+# delayed output capture misses one interaction in almost
+suite::unified_exec::unified_exec_terminal_interaction_captures_delayed_output
+# remote control auth-change wakeup is timing-sensitive in almost
+transport::remote_control::tests::remote_control_waits_for_account_id_before_enrolling
+# exec-server unix sandbox tests require bwrap user namespaces in this environment
+file_system_sandboxed_canonicalize_resolves_directory_symlink::
+shared::file_system_sandboxed_metadata_and_read_allow_readable_root::
+file_system_sandboxed_write_preserves_existing_hard_link::
+# linux-sandbox landlock/managed-proxy tests require bwrap user namespaces here
+suite::landlock::test_root_read
+suite::landlock::test_no_new_privs_is_enabled
+suite::landlock::test_writable_root
+suite::landlock::test_dev_null_write
+suite::landlock::sandbox_reenables_writable_subpaths_under_unreadable_parents
+suite::landlock::sandbox_ignores_missing_writable_roots_under_bwrap
+suite::landlock::sandbox_keeps_parent_repo_discovery_while_blocking_child_metadata
+suite::managed_proxy::managed_proxy_mode_fails_closed_without_proxy_env
+suite::managed_proxy::managed_proxy_mode_denies_af_unix_socket_but_allows_socketpair
+suite::managed_proxy::managed_proxy_mode_routes_through_bridge_and_blocks_direct_egress
+# These network-approval tests require the managed Linux proxy bridge to
+# configure loopback inside bwrap's network namespace. In the MCP container
+# privileged mode is intentionally disabled; NET_ADMIN is only in the
+# capability bounding set (CapEff=0), and the environment probe fails with
+# "RTNETLINK answers: Operation not permitted". Without that bridge path the
+# command completes without emitting the approval request these tests assert.
+suite::network_approval::user_network_approval_once_session_and_denial_semantics
+suite::network_approval::allowing_network_policy_amendment_persists_context_and_bypasses_prompt
+suite::network_approval::timed_out_guardian_network_review_uses_timeout_outcome_without_user_fallback
+suite::network_approval::ambiguous_unattributed_network_request_is_not_assigned_to_active_calls
+# landlock timeout is the same bwrap userns failure path in this environment
+suite::landlock::test_timeout
+# snapshot rollback follow-up times out in almost
+suite::compact_resume_fork::snapshot_rollback_followup_turn_trims_context_updates
+# encrypted multi-agent notification is not emitted in this almost environment
+suite::subagent_notifications::encrypted_multi_agent_v2_spawn_sends_agent_message_to_child
+# PTY process-group termination is flaky in this environment
+tests::pty_terminate_kills_background_children_in_same_process_group

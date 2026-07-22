@@ -42,12 +42,14 @@ async fn replace_mcp_servers_serializes_per_tool_approval_overrides() -> anyhow:
                     "search".to_string(),
                     McpServerToolConfig {
                         approval_mode: Some(AppToolApproval::Approve),
+                        wait_for_mcp_tool_completion: false,
                     },
                 ),
                 (
                     "read".to_string(),
                     McpServerToolConfig {
                         approval_mode: Some(AppToolApproval::Prompt),
+                        wait_for_mcp_tool_completion: false,
                     },
                 ),
             ]),

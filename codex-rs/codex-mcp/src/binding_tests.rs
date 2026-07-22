@@ -57,6 +57,7 @@ async fn test_step(
     let tool = ToolInfo {
         server_name: SERVER_NAME.to_string(),
         supports_parallel_tool_calls: false,
+        wait_for_mcp_tool_completion: false,
         server_origin: None,
         callable_name: TOOL_NAME.to_string(),
         callable_namespace: SERVER_NAME.to_string(),
@@ -118,6 +119,7 @@ async fn test_step(
                 "https://{label}.example"
             ))),
             supports_parallel_tool_calls: false,
+            wait_for_mcp_tool_completion: std::collections::HashSet::new(),
             default_tools_approval_mode: Some(approval_mode),
             tool_approval_modes: HashMap::new(),
         },

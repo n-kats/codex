@@ -246,6 +246,7 @@ async fn run_safety_retry(
     let (server, _completions) = start_streaming_sse_server(response_sequences).await;
 
     let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.config.startup_warnings.clear();
     let codex_home = tempdir()?;
     std::fs::write(
         codex_home.path().join("config.toml"),
@@ -253,6 +254,7 @@ async fn run_safety_retry(
             r#"
 model = "{CURRENT_MODEL}"
 model_provider = "{MODEL_PROVIDER_ID}"
+custom.user_shell.no_inject = true
 
 [model_providers.{MODEL_PROVIDER_ID}]
 name = "Safety retry test"

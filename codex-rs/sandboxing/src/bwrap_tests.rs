@@ -7,6 +7,7 @@ use std::time::Instant;
 use tempfile::tempdir;
 
 #[test]
+#[serial_test::serial]
 fn system_bwrap_warning_reports_missing_system_bwrap() {
     assert_eq!(
         system_bwrap_warning_for_path(/*system_bwrap_path*/ None),
@@ -15,6 +16,7 @@ fn system_bwrap_warning_reports_missing_system_bwrap() {
 }
 
 #[test]
+#[serial_test::serial]
 fn system_bwrap_warning_reports_user_namespace_failures() {
     for failure in USER_NAMESPACE_FAILURES {
         let fake_bwrap = write_fake_bwrap(&format!(
@@ -34,6 +36,7 @@ exit 1
 }
 
 #[test]
+#[serial_test::serial]
 fn system_bwrap_warning_skips_unrelated_bwrap_failures() {
     let fake_bwrap = write_fake_bwrap(
         r#"#!/bin/sh
@@ -47,6 +50,7 @@ exit 1
 }
 
 #[test]
+#[serial_test::serial]
 fn system_bwrap_probe_times_out_without_reporting_a_warning() {
     let fake_bwrap = write_fake_bwrap(
         r#"#!/bin/sh
@@ -65,6 +69,7 @@ exit 0
 }
 
 #[test]
+#[serial_test::serial]
 fn system_bwrap_probe_does_not_wait_for_descendants_holding_stderr_open() {
     let fake_bwrap = write_fake_bwrap(
         r#"#!/bin/sh
@@ -164,10 +169,17 @@ fn root_cwd_does_not_hide_system_bwrap_candidates() {
 }
 
 fn write_fake_bwrap(contents: &str) -> tempfile::TempPath {
-    write_fake_bwrap_in(
-        &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        contents,
-    )
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use tempfile::NamedTempFile;
+
+    let temp_file = NamedTempFile::new().expect("temp file");
+    // Linux rejects exec-ing a file that is still open for writing.
+    let path = temp_file.into_temp_path();
+    fs::write(&path, contents).expect("write fake bwrap");
+    let permissions = fs::Permissions::from_mode(0o755);
+    fs::set_permissions(&path, permissions).expect("chmod fake bwrap");
+    path
 }
 
 fn write_fake_bwrap_in(dir: &Path, contents: &str) -> tempfile::TempPath {
@@ -175,12 +187,11 @@ fn write_fake_bwrap_in(dir: &Path, contents: &str) -> tempfile::TempPath {
     use std::os::unix::fs::PermissionsExt;
     use tempfile::NamedTempFile;
 
-    // Bazel can mount the OS temp directory `noexec`, so prefer the current
-    // working directory for fake executables and fall back to the default temp
-    // dir outside that environment.
-    let temp_file = NamedTempFile::new_in(dir)
-        .ok()
-        .unwrap_or_else(|| NamedTempFile::new().expect("temp file"));
+    let temp_file = if dir.as_os_str().is_empty() {
+        NamedTempFile::new().expect("temp file")
+    } else {
+        NamedTempFile::new_in(dir).expect("temp file")
+    };
     // Linux rejects exec-ing a file that is still open for writing.
     let path = temp_file.into_temp_path();
     fs::write(&path, contents).expect("write fake bwrap");

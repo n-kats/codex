@@ -329,6 +329,7 @@ mod tests {
         ToolInfo {
             server_name: server_name.to_string(),
             supports_parallel_tool_calls: false,
+            wait_for_mcp_tool_completion: false,
             server_origin: None,
             callable_name: tool_name.to_string(),
             callable_namespace: format!("mcp__{server_name}"),

@@ -76,7 +76,11 @@ impl McpRuntimeSnapshot {
                 .enabled(Feature::SkillMcpDependencyInstall),
             approval_policy: config.permissions.approval_policy.clone(),
             codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
-            use_legacy_landlock: config.features.use_legacy_landlock(),
+            use_legacy_landlock: config.features.use_legacy_landlock()
+                || crate::config::should_use_legacy_landlock(
+                    config.permissions.permission_profile(),
+                    config.cwd.as_path(),
+                ),
             apps_enabled: config.features.enabled(Feature::Apps),
             prefix_mcp_tool_names: config.prefix_mcp_tool_names(),
             client_elicitation_capability: ElicitationCapability::default(),

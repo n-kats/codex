@@ -2051,6 +2051,8 @@ async fn try_run_sampling_request(
         match event {
             ResponseEvent::Created => {}
             ResponseEvent::OutputItemDone(mut item) => {
+                let wait_for_mcp_tool_completion =
+                    tool_runtime.waits_for_mcp_tool_completion(&item);
                 if turn_context.item_ids_enabled() {
                     assign_missing_streamed_response_item_id(&mut item, active_item.as_ref());
                 }
@@ -2134,6 +2136,12 @@ async fn try_run_sampling_request(
                     };
                 if let Some(tool_future) = output_result.tool_future {
                     in_flight.push_back(tool_future);
+                    if wait_for_mcp_tool_completion {
+                        break Ok(SamplingRequestResult {
+                            needs_follow_up: true,
+                            last_agent_message,
+                        });
+                    }
                 }
                 if let Some(agent_message) = output_result.last_agent_message {
                     last_agent_message = Some(agent_message);

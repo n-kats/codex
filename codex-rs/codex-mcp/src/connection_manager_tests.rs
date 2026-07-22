@@ -69,6 +69,7 @@ fn create_test_tool(server_name: &str, tool_name: &str) -> ToolInfo {
     ToolInfo {
         server_name: server_name.to_string(),
         supports_parallel_tool_calls: false,
+        wait_for_mcp_tool_completion: false,
         server_origin: None,
         callable_name: tool_name.to_string(),
         callable_namespace: server_name.to_string(),
@@ -294,6 +295,7 @@ async fn create_test_manager_with_ready_apps_client(
             pollutes_memory: false,
             origin: None,
             supports_parallel_tool_calls: false,
+            wait_for_mcp_tool_completion: std::collections::HashSet::new(),
             default_tools_approval_mode: None,
             tool_approval_modes: HashMap::new(),
         },
@@ -950,6 +952,7 @@ async fn capture_binding_uses_the_ready_clients_own_tools() {
             pollutes_memory: false,
             origin: None,
             supports_parallel_tool_calls: false,
+            wait_for_mcp_tool_completion: std::collections::HashSet::new(),
             default_tools_approval_mode: None,
             tool_approval_modes: HashMap::new(),
         },
@@ -1303,6 +1306,7 @@ async fn capture_binding_waits_for_fresh_startup_even_with_cached_tools() {
             pollutes_memory: false,
             origin: None,
             supports_parallel_tool_calls: false,
+            wait_for_mcp_tool_completion: std::collections::HashSet::new(),
             default_tools_approval_mode: None,
             tool_approval_modes: HashMap::new(),
         },
@@ -1650,6 +1654,7 @@ async fn list_all_tools_reconnects_failed_codex_apps_startup_and_reuses_client()
             pollutes_memory: false,
             origin: None,
             supports_parallel_tool_calls: false,
+            wait_for_mcp_tool_completion: std::collections::HashSet::new(),
             default_tools_approval_mode: None,
             tool_approval_modes: HashMap::new(),
         },
@@ -1841,6 +1846,7 @@ async fn tool_lists_do_not_block_and_share_codex_apps_startup_reconnect() {
             pollutes_memory: false,
             origin: None,
             supports_parallel_tool_calls: false,
+            wait_for_mcp_tool_completion: std::collections::HashSet::new(),
             default_tools_approval_mode: None,
             tool_approval_modes: HashMap::new(),
         },
@@ -1946,6 +1952,7 @@ async fn list_all_tools_adds_server_metadata_to_tools() {
             supports_parallel_tool_calls: true,
             default_tools_approval_mode: None,
             tool_approval_modes: HashMap::new(),
+            wait_for_mcp_tool_completion: std::collections::HashSet::new(),
         },
     );
     manager
@@ -1973,6 +1980,7 @@ fn server_metadata_preserves_tool_approval_policy() {
         "search".to_string(),
         McpServerToolConfig {
             approval_mode: Some(AppToolApproval::Approve),
+            wait_for_mcp_tool_completion: false,
         },
     );
     let metadata = McpServerMetadata::from(&EffectiveMcpServer::configured(config));

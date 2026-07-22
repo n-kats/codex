@@ -48,6 +48,7 @@ pub struct LoaderOverrides {
     pub system_requirements_path: Option<PathBuf>,
     pub ignore_managed_requirements: bool,
     pub ignore_user_config: bool,
+    pub ignore_project_config: bool,
     pub ignore_user_and_project_exec_policy_rules: bool,
     //TODO(gt): Add a macos_ prefix to this field and remove the target_os check.
     #[cfg(target_os = "macos")]
@@ -69,6 +70,7 @@ impl LoaderOverrides {
             system_requirements_path: Some(base.join("requirements.toml")),
             ignore_managed_requirements: false,
             ignore_user_config: false,
+            ignore_project_config: false,
             ignore_user_and_project_exec_policy_rules: false,
             #[cfg(target_os = "macos")]
             managed_preferences_base64: Some(String::new()),
