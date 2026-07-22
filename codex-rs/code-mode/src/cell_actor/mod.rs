@@ -222,7 +222,9 @@ async fn run_cell<H: CellHost>(
                 }
                 observer = Some(Observer { mode, response_tx });
                 yield_timer = observer.as_ref().and_then(observer_timer);
-                if runtime_paused && matches!(mode, ObserveMode::YieldAfter(_)) {
+                if runtime_paused
+                    && matches!(mode, ObserveMode::YieldAfter(_) | ObserveMode::UntilCompletion)
+                {
                     pending_frontier_ready = false;
                     pending_tool_call_ids.clear();
                 }
@@ -567,6 +569,7 @@ fn finish_termination(
 fn observer_timer(observer: &Observer) -> Option<std::pin::Pin<Box<tokio::time::Sleep>>> {
     match observer.mode {
         ObserveMode::YieldAfter(duration) => Some(Box::pin(tokio::time::sleep(duration))),
+        ObserveMode::UntilCompletion => None,
         ObserveMode::PendingFrontier => None,
     }
 }
@@ -579,7 +582,9 @@ fn resume_for_observation(
 ) {
     if *runtime_paused {
         let control = match mode {
-            ObserveMode::YieldAfter(_) => RuntimeControlCommand::Continue,
+            ObserveMode::YieldAfter(_) | ObserveMode::UntilCompletion => {
+                RuntimeControlCommand::Continue
+            }
             ObserveMode::PendingFrontier => RuntimeControlCommand::Resume,
         };
         let _ = runtime_control_tx.send(control);

@@ -14,6 +14,7 @@ use super::WaitOutcome;
 use super::WaitRequest;
 use super::WaitToPendingOutcome;
 use super::WaitToPendingRequest;
+use super::execute_observe_mode;
 use super::yield_timeout;
 use crate::CodeModeToolKind;
 use crate::ExecuteRequest;
@@ -36,6 +37,18 @@ fn yield_timeout_adds_grace_only_at_ten_seconds() {
         yield_timeout(/*yield_time_ms*/ 10_000),
         Duration::from_secs(11)
     );
+}
+
+#[test]
+fn max_yield_time_waits_until_code_mode_completion() {
+    assert_eq!(
+        execute_observe_mode(u64::MAX),
+        super::runtime::ObserveMode::UntilCompletion
+    );
+    assert!(matches!(
+        execute_observe_mode(10_000),
+        super::runtime::ObserveMode::YieldAfter(_)
+    ));
 }
 
 #[tokio::test(start_paused = true)]

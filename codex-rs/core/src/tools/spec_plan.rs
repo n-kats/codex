@@ -439,6 +439,7 @@ fn build_code_mode_executors(
     let mut code_mode_nested_tool_specs = Vec::new();
     let mut exec_prompt_tool_specs = Vec::new();
     let mut deferred_exec_prompt_tool_specs = Vec::new();
+    let mut contains_waiting_mcp_tool = false;
     let deferred_tools_guidance_enabled = search_tool_enabled(turn_context);
     for executor in executors {
         let exposure = executor.exposure();
@@ -455,6 +456,7 @@ fn build_code_mode_executors(
         }
 
         let spec = executor.spec();
+        contains_waiting_mcp_tool |= executor.waits_for_mcp_tool_completion();
 
         if exposure == ToolExposure::Deferred {
             if deferred_tools_guidance_enabled {
@@ -487,6 +489,7 @@ fn build_code_mode_executors(
                 tool_mode == ToolMode::CodeModeOnly,
             ),
             code_mode_nested_tool_specs,
+            contains_waiting_mcp_tool,
         )),
         Arc::new(CodeModeWaitHandler),
     ]
