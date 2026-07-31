@@ -477,6 +477,10 @@ pub struct ThreadSettingsOverrides {
     /// Updated Windows sandbox mode for tool execution.
     pub windows_sandbox_level: Option<WindowsSandboxLevel>,
 
+    /// Updated AGENTS.md project doc paths. An empty vector restores automatic
+    /// project doc discovery.
+    pub project_doc_paths: Option<Vec<AbsolutePathBuf>>,
+
     /// Updated model slug. When set, the model info is derived automatically.
     pub model: Option<String>,
 

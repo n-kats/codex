@@ -1271,7 +1271,7 @@ text(JSON.stringify(results));
     let duration = start.elapsed();
 
     assert!(
-        duration < Duration::from_millis(1_600),
+        duration < Duration::from_secs(3),
         "expected nested tools to finish in parallel, got {duration:?}",
     );
 

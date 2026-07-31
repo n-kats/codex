@@ -131,6 +131,7 @@ pub async fn load_config_layers_state(
     let active_user_profile = overrides.user_config_profile.clone();
     let ignore_managed_requirements = overrides.ignore_managed_requirements;
     let ignore_user_config = overrides.ignore_user_config;
+    let ignore_project_config = overrides.ignore_project_config;
     let ignore_user_and_project_exec_policy_rules =
         overrides.ignore_user_and_project_exec_policy_rules;
     let mut requirements_layers = Vec::new();
@@ -293,7 +294,9 @@ pub async fn load_config_layers_state(
     }
 
     let mut startup_warnings = None;
-    if let Some(cwd) = cwd {
+    if let Some(cwd) = cwd
+        && !ignore_project_config
+    {
         let mut merged_so_far = TomlValue::Table(toml::map::Map::new());
         for layer in &layers {
             merge_toml_values(&mut merged_so_far, &layer.config);

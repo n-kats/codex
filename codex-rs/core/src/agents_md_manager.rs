@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::environment_selection::TurnEnvironmentSnapshot;
 use codex_extension_api::UserInstructions;
 use codex_protocol::protocol::TurnEnvironmentSelection;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -16,6 +17,7 @@ pub(crate) struct AgentsMdManager {
 #[derive(Default)]
 struct AgentsMdCache {
     selections: Option<Vec<TurnEnvironmentSelection>>,
+    project_doc_paths: Option<Vec<AbsolutePathBuf>>,
     loaded: Option<Arc<LoadedAgentsMd>>,
 }
 
@@ -31,9 +33,14 @@ impl AgentsMdManager {
     #[tracing::instrument(name = "agents_md.refresh", skip_all)]
     pub(crate) async fn refresh(&self, config: &Config, environments: &TurnEnvironmentSnapshot) {
         let selections = environments.to_selections();
-        if self.cache.lock().await.selections.as_ref() == Some(&selections) {
+        let project_doc_paths = config.project_doc_paths.clone();
+        let cache = self.cache.lock().await;
+        if cache.selections.as_ref() == Some(&selections)
+            && cache.project_doc_paths.as_ref() == Some(&project_doc_paths)
+        {
             return;
         }
+        drop(cache);
 
         let loaded =
             load_project_instructions(config, self.user_instructions.clone(), environments)
@@ -41,6 +48,7 @@ impl AgentsMdManager {
                 .map(Arc::new);
         let mut cache = self.cache.lock().await;
         cache.selections = Some(selections);
+        cache.project_doc_paths = Some(project_doc_paths);
         cache.loaded = loaded;
     }
 

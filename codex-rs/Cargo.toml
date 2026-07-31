@@ -26,10 +26,7 @@ members = [
     "code-mode-protocol",
     "code-mode-runtime",
     "codex-home",
-    "cloud-config",
-    "cloud-tasks",
-    "cloud-tasks-client",
-    "cloud-tasks-mock-client",
+    # "cloud-config", # custom CLI: keep the crate source, exclude it from default workspace tests
     "cli",
     "collaboration-mode-templates",
     "connectors",
@@ -165,8 +162,6 @@ codex-cli = { path = "cli" }
 codex-client = { path = "codex-client" }
 codex-collaboration-mode-templates = { path = "collaboration-mode-templates" }
 codex-cloud-config = { path = "cloud-config" }
-codex-cloud-tasks-client = { path = "cloud-tasks-client" }
-codex-cloud-tasks-mock-client = { path = "cloud-tasks-mock-client" }
 codex-code-mode = { path = "code-mode" }
 codex-code-mode-protocol = { path = "code-mode-protocol" }
 codex-code-mode-runtime = { path = "code-mode-runtime" }

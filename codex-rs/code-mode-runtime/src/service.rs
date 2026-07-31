@@ -5,6 +5,8 @@ use codex_code_mode_protocol::CellId;
 use codex_code_mode_protocol::CodeModeNestedToolCall;
 use codex_code_mode_protocol::CodeModeSession;
 use codex_code_mode_protocol::CodeModeSessionDelegate;
+use codex_code_mode_protocol::CodeModeSessionProvider;
+use codex_code_mode_protocol::CodeModeSessionProviderFuture;
 use codex_code_mode_protocol::CodeModeSessionResultFuture;
 use codex_code_mode_protocol::CodeModeToolKind;
 use codex_code_mode_protocol::DEFAULT_EXEC_YIELD_TIME_MS;
@@ -38,6 +40,29 @@ fn yield_timeout(yield_time_ms: u64) -> Duration {
     }
 }
 
+fn execute_observe_mode(yield_time_ms: u64) -> runtime::ObserveMode {
+    if yield_time_ms == u64::MAX {
+        runtime::ObserveMode::UntilCompletion
+    } else {
+        runtime::ObserveMode::YieldAfter(yield_timeout(yield_time_ms))
+    }
+}
+
+#[derive(Default)]
+pub struct InProcessCodeModeSessionProvider;
+
+impl CodeModeSessionProvider for InProcessCodeModeSessionProvider {
+    fn create_session<'a>(
+        &'a self,
+        delegate: Arc<dyn CodeModeSessionDelegate>,
+    ) -> CodeModeSessionProviderFuture<'a> {
+        Box::pin(async move {
+            let session: Arc<dyn CodeModeSession> =
+                Arc::new(InProcessCodeModeSession::with_delegate(delegate));
+            Ok(session)
+        })
+    }
+}
 pub struct InProcessCodeModeSession {
     runtime: SessionRuntime<ProtocolDelegate>,
 }
@@ -67,12 +92,10 @@ impl InProcessCodeModeSession {
 
     pub async fn execute(&self, request: ExecuteRequest) -> Result<StartedCell, String> {
         let yield_time_ms = request.yield_time_ms.unwrap_or(DEFAULT_EXEC_YIELD_TIME_MS);
+        let observe_mode = execute_observe_mode(yield_time_ms);
         let started = self
             .runtime
-            .execute(
-                runtime_request(request),
-                runtime::ObserveMode::YieldAfter(yield_timeout(yield_time_ms)),
-            )
+            .execute(runtime_request(request), observe_mode)
             .await
             .map_err(|error| error.to_string())?;
         let cell_id = protocol_cell_id(&started.cell_id);

@@ -1022,15 +1022,13 @@ pub(super) fn maybe_open_auth_url_in_browser(request_handle: &AppServerRequestHa
 #[cfg(test)]
 mod tests {
     use super::*;
+    // use codex_cloud_config::cloud_config_bundle_loader_for_storage;
     use crate::legacy_core::config::ConfigBuilder;
     use codex_app_server_client::AppServerRequestHandle;
     use codex_app_server_client::DEFAULT_IN_PROCESS_CHANNEL_CAPACITY;
     use codex_app_server_client::InProcessAppServerClient;
     use codex_app_server_client::InProcessClientStartArgs;
     use codex_arg0::Arg0DispatchPaths;
-    use codex_cloud_config::cloud_config_bundle_loader_for_storage;
-    use codex_config::types::AuthCredentialsStoreMode;
-    use codex_login::AuthKeyringBackendKind;
 
     use pretty_assertions::assert_eq;
     use std::sync::Arc;
@@ -1059,22 +1057,15 @@ mod tests {
             .build()
             .await
             .unwrap();
-        let auth_route_config = config.auth_route_config();
         let client = InProcessAppServerClient::start(InProcessClientStartArgs {
             arg0_paths: Arg0DispatchPaths::default(),
             config: Arc::new(config),
             cli_overrides: Vec::new(),
             loader_overrides: Default::default(),
             strict_config: false,
-            cloud_config_bundle: cloud_config_bundle_loader_for_storage(
-                codex_home_path.clone(),
-                /*enable_codex_api_key_env*/ false,
-                AuthCredentialsStoreMode::File,
-                AuthKeyringBackendKind::default(),
-                "https://chatgpt.com/backend-api/".to_string(),
-                auth_route_config,
-            )
-            .await,
+            // The cloud loader setup is intentionally commented out; normal login UI tests use
+            // the no-cloud loader while preserving the upstream cloud path above.
+            cloud_config_bundle: codex_config::CloudConfigBundleLoader::default(),
             feedback: codex_feedback::CodexFeedback::new(),
             log_db: None,
             state_db: None,

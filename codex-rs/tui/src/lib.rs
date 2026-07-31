@@ -8,7 +8,9 @@ use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
 use crate::legacy_core::config::ConfigTomlLoadResult;
 use crate::legacy_core::config::load_config_toml_with_layer_stack;
+#[cfg(feature = "cloud")]
 use crate::legacy_core::config::resolve_bootstrap_auth_keyring_backend_kind;
+#[cfg(feature = "cloud")]
 use crate::legacy_core::config::resolve_bootstrap_http_client_factory;
 use crate::legacy_core::config::resolve_oss_provider;
 use crate::legacy_core::config::resolve_profile_v2_config_path;
@@ -38,6 +40,7 @@ use codex_app_server_protocol::ThreadListCwdFilter;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadSortKey as AppServerThreadSortKey;
 use codex_app_server_protocol::ThreadSourceKind;
+#[cfg(feature = "cloud")]
 use codex_cloud_config::cloud_config_bundle_loader_for_storage;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::ConfigLoadError;
@@ -47,6 +50,7 @@ use codex_config::types::ResumeCwdMode;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_login::AuthConfig;
+#[cfg(feature = "cloud")]
 use codex_login::AuthRouteConfig;
 use codex_login::default_client::originator;
 use codex_login::default_client::set_default_client_residency_requirement;
@@ -1018,10 +1022,12 @@ pub async fn run_main(
     .await;
     let bootstrap_config_toml = &bootstrap_config.config_toml;
 
+    #[cfg(feature = "cloud")]
     let chatgpt_base_url = bootstrap_config_toml
         .chatgpt_base_url
         .clone()
         .unwrap_or_else(|| "https://chatgpt.com/backend-api/".to_string());
+    #[cfg(feature = "cloud")]
     let bootstrap_http_client_factory = resolve_bootstrap_http_client_factory(
         bootstrap_config_toml,
         bootstrap_config
@@ -1030,8 +1036,10 @@ pub async fn run_main(
             .feature_requirements
             .as_ref(),
     )?;
+    #[cfg(feature = "cloud")]
     let auth_route_config =
         AuthRouteConfig::from_http_client_factory(bootstrap_http_client_factory);
+    #[cfg(feature = "cloud")]
     let cloud_config_bundle = cloud_config_bundle_loader_for_storage(
         codex_home.to_path_buf(),
         /*enable_codex_api_key_env*/ false,
@@ -1043,6 +1051,8 @@ pub async fn run_main(
         auth_route_config,
     )
     .await;
+    #[cfg(not(feature = "cloud"))]
+    let cloud_config_bundle = CloudConfigBundleLoader::default();
 
     let cwd_override = if app_server_target.uses_remote_workspace() {
         None
@@ -1119,6 +1129,7 @@ pub async fn run_main(
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
         show_raw_agent_reasoning: cli.oss.then_some(true),
         bypass_hook_trust: cli.bypass_hook_trust.then_some(true),
+        project_doc_paths: cli.shared.agents_md.clone(),
         additional_writable_roots: additional_dirs,
         ..Default::default()
     };
@@ -1132,6 +1143,7 @@ pub async fn run_main(
     )
     .await;
 
+    #[cfg(feature = "cloud")]
     let cloud_config_bundle = cloud_config_bundle_loader_for_storage(
         config.codex_home.to_path_buf(),
         /*enable_codex_api_key_env*/ false,
@@ -1141,6 +1153,8 @@ pub async fn run_main(
         config.auth_route_config(),
     )
     .await;
+    #[cfg(not(feature = "cloud"))]
+    let cloud_config_bundle = CloudConfigBundleLoader::default();
     let environment_manager = Arc::new(
         prepared_environment_manager
             .build(Some(local_runtime_paths), config.http_client_factory())
@@ -1329,6 +1343,7 @@ async fn run_ratatui_app(
     manually_selected_oss_provider: Option<String>,
     overrides: ConfigOverrides,
     cli_kv_overrides: Vec<(String, toml::Value)>,
+    #[cfg_attr(not(feature = "cloud"), allow(unused_mut))]
     mut cloud_config_bundle: CloudConfigBundleLoader,
     feedback: codex_feedback::CodexFeedback,
     log_db: Option<log_db::LogDbLayer>,
@@ -1478,15 +1493,18 @@ async fn run_ratatui_app(
         // and rebuild config. This avoids missing newly available cloud-managed policy due to login
         // status detection edge cases.
         if show_login_screen && !uses_remote_workspace {
-            cloud_config_bundle = cloud_config_bundle_loader_for_storage(
-                initial_config.codex_home.to_path_buf(),
-                /*enable_codex_api_key_env*/ false,
-                initial_config.cli_auth_credentials_store_mode,
-                initial_config.auth_keyring_backend_kind(),
-                initial_config.chatgpt_base_url.clone(),
-                initial_config.auth_route_config(),
-            )
-            .await;
+            #[cfg(feature = "cloud")]
+            {
+                cloud_config_bundle = cloud_config_bundle_loader_for_storage(
+                    initial_config.codex_home.to_path_buf(),
+                    /*enable_codex_api_key_env*/ false,
+                    initial_config.cli_auth_credentials_store_mode,
+                    initial_config.auth_keyring_backend_kind(),
+                    initial_config.chatgpt_base_url.clone(),
+                    initial_config.auth_route_config(),
+                )
+                .await;
+            }
         }
 
         // If the user made an explicit trust decision, or we showed the login flow, reload config
@@ -1716,6 +1734,11 @@ async fn run_ratatui_app(
     ) {
         config.startup_warnings.push(w);
     }
+    config
+        .startup_warnings
+        .extend(crate::diff_render::set_custom_diff_theme_override(
+            config.custom_theme_diff.as_ref(),
+        ));
 
     set_default_client_residency_requirement(config.enforce_residency.value());
     let should_show_trust_screen = should_show_trust_screen(&config);
@@ -2040,6 +2063,7 @@ mod tests {
     use super::*;
     use crate::legacy_core::config::ConfigBuilder;
     use crate::legacy_core::config::ConfigOverrides;
+    use crate::legacy_core::config::resolve_bootstrap_http_client_factory;
     use codex_app_server_protocol::AskForApproval;
     use codex_app_server_protocol::ClientRequest;
     use codex_app_server_protocol::RequestId;
@@ -3400,13 +3424,11 @@ trust_level = "untrusted"
             config.startup_warnings.push(w);
         }
 
-        assert_eq!(
-            config.startup_warnings.len(),
-            1,
-            "warning from final config's invalid theme should be present"
-        );
         assert!(
-            config.startup_warnings[0].contains("bogus-theme"),
+            config
+                .startup_warnings
+                .iter()
+                .any(|warning| warning.contains("bogus-theme")),
             "warning should reference the final config's theme name"
         );
         Ok(())

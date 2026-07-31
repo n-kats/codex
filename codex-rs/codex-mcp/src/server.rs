@@ -280,6 +280,7 @@ pub(crate) struct McpServerMetadata {
     pub supports_parallel_tool_calls: bool,
     pub default_tools_approval_mode: Option<AppToolApproval>,
     pub tool_approval_modes: HashMap<String, AppToolApproval>,
+    pub wait_for_mcp_tool_completion: std::collections::HashSet<String>,
 }
 
 impl McpServerMetadata {
@@ -308,6 +309,13 @@ impl From<&EffectiveMcpServer> for McpServerMetadata {
                     config
                         .approval_mode
                         .map(|approval_mode| (name.clone(), approval_mode))
+                })
+                .collect(),
+            wait_for_mcp_tool_completion: config
+                .tools
+                .iter()
+                .filter_map(|(name, config)| {
+                    config.wait_for_mcp_tool_completion.then_some(name.clone())
                 })
                 .collect(),
         }

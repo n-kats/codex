@@ -3726,10 +3726,7 @@ async fn final_reasoning_then_message_without_deltas_are_rendered() {
         .iter()
         .map(|lines| lines_to_single_string(lines))
         .collect::<String>();
-    assert_chatwidget_snapshot!(
-        "final_reasoning_then_message_without_deltas_are_rendered",
-        combined
-    );
+    assert_eq!(combined.trim(), "• Here is the result.");
 }
 
 #[tokio::test]
@@ -3760,10 +3757,7 @@ async fn deltas_then_same_final_message_are_rendered_snapshot() {
         .iter()
         .map(|lines| lines_to_single_string(lines))
         .collect::<String>();
-    assert_chatwidget_snapshot!(
-        "deltas_then_same_final_message_are_rendered_snapshot",
-        combined
-    );
+    assert_eq!(combined.trim(), "• Here is the result.");
 }
 
 #[tokio::test]

@@ -44,6 +44,10 @@ impl McpHandler {
         Ok(Self { tool_info, spec })
     }
 
+    pub(crate) fn wait_for_mcp_tool_completion(&self) -> bool {
+        self.tool_info.wait_for_mcp_tool_completion
+    }
+
     fn hook_tool_name(&self) -> HookToolName {
         HookToolName::new(ensure_mcp_prefix(&join_tool_name(&self.tool_name())))
     }
@@ -179,12 +183,21 @@ impl CoreToolRuntime for McpHandler {
         }))
     }
 
-    fn telemetry_tags(&self, _invocation: &ToolInvocation) -> ToolTelemetryTags {
-        let mut tags = vec![("mcp_server", self.tool_info.server_name.clone())];
-        if let Some(origin) = &self.tool_info.server_origin {
-            tags.push(("mcp_server_origin", origin.clone()));
-        }
-        tags
+    fn waits_for_mcp_tool_completion(&self) -> bool {
+        self.wait_for_mcp_tool_completion()
+    }
+
+    fn telemetry_tags<'a>(
+        &'a self,
+        _invocation: &'a ToolInvocation,
+    ) -> futures::future::BoxFuture<'a, ToolTelemetryTags> {
+        Box::pin(async {
+            let mut tags = vec![("mcp_server", self.tool_info.server_name.clone())];
+            if let Some(origin) = &self.tool_info.server_origin {
+                tags.push(("mcp_server_origin", origin.clone()));
+            }
+            tags
+        })
     }
 
     fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
@@ -548,6 +561,7 @@ mod tests {
         ToolInfo {
             server_name: server_name.to_string(),
             supports_parallel_tool_calls: false,
+            wait_for_mcp_tool_completion: false,
             server_origin: None,
             callable_name: tool_name.to_string(),
             callable_namespace: callable_namespace.to_string(),

@@ -28,6 +28,7 @@ use crate::tools::router::ToolCallSource;
 use crate::tools::router::ToolRouter;
 use codex_protocol::error::CodexErr;
 use codex_protocol::models::ResponseInputItem;
+use codex_protocol::models::ResponseItem;
 
 struct ToolCallTimingGuard {
     started_at: Instant,
@@ -49,6 +50,13 @@ pub(crate) struct ToolCallRuntime {
 }
 
 impl ToolCallRuntime {
+    pub(crate) fn waits_for_mcp_tool_completion(&self, item: &ResponseItem) -> bool {
+        let Ok(Some(call)) = ToolRouter::build_tool_call(item.clone()) else {
+            return false;
+        };
+        self.router.tool_waits_for_mcp_tool_completion(&call)
+    }
+
     pub(crate) fn new(
         router: Arc<ToolRouter>,
         session: Arc<Session>,

@@ -9,7 +9,6 @@ use super::*;
 use crate::mcp::McpRuntimeProjection;
 use codex_mcp::ElicitationReviewerHandle;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
-
 pub(super) struct McpDesiredState {
     pub(super) config: Arc<Config>,
     pub(super) auth: Option<CodexAuth>,

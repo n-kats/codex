@@ -1,3 +1,10 @@
+// Cloud-managed sandbox support is retained upstream but disabled in this CLI.
+#![cfg(any())]
+
+// The custom CLI does not use cloud-managed sandbox configuration. Keep the
+// upstream test source intact, but exclude its cloud-only integration test
+// from this test binary.
+
 use std::process::Command;
 
 use anyhow::Context;

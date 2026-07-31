@@ -41,6 +41,7 @@ fn server(url: &str) -> McpServerConfig {
             "read".to_string(),
             McpServerToolConfig {
                 approval_mode: Some(AppToolApproval::Approve),
+                wait_for_mcp_tool_completion: false,
             },
         )]),
     }

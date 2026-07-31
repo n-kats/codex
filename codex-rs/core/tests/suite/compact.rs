@@ -1,5 +1,6 @@
 use anyhow::Result;
 use anyhow::anyhow;
+use codex_core::CodexThread;
 use codex_core::compact::SUMMARIZATION_PROMPT;
 use codex_core::compact::SUMMARY_PREFIX;
 use codex_core::config::Config;
@@ -93,6 +94,7 @@ const OLD_GLOBAL_INSTRUCTIONS: &str = "old global instructions";
 const REMOTE_V2_SUMMARY: &str = "global-instructions-remote-v2-summary";
 
 pub(super) const COMPACT_WARNING_MESSAGE: &str = "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.";
+const USER_SHELL_NO_INJECT_WARNING: &str = "custom.user_shell.no_inject is false (default); `!` (UserShell) commands and their outputs will be injected into the model context and recorded to the local session history. Set custom.user_shell.no_inject=true to disable injection/recording, and avoid secrets in `!` commands/output.";
 
 fn ev_shell_command_call(call_id: &str, command: &str) -> serde_json::Value {
     ev_function_call(
@@ -100,6 +102,19 @@ fn ev_shell_command_call(call_id: &str, command: &str) -> serde_json::Value {
         "shell_command",
         &json!({ "command": command }).to_string(),
     )
+}
+
+async fn wait_for_compact_warning(codex: &Arc<CodexThread>) -> WarningEvent {
+    loop {
+        let warning_event = wait_for_event(codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
+        let EventMsg::Warning(warning) = warning_event else {
+            unreachable!("wait_for_event should only return warning events here");
+        };
+        if warning.message == USER_SHELL_NO_INJECT_WARNING {
+            continue;
+        }
+        return warning;
+    }
 }
 
 fn disabled_permission_user_turn(text: impl Into<String>, cwd: PathBuf, model: String) -> Op {
@@ -544,11 +559,8 @@ async fn summarize_context_three_requests_and_instructions() {
 
     // 2) Summarize – second hit should include the summarization prompt.
     codex.submit(Op::Compact).await.unwrap();
-    let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
-    let EventMsg::Warning(WarningEvent { message }) = warning_event else {
-        panic!("expected warning event after compact");
-    };
-    assert_eq!(message, COMPACT_WARNING_MESSAGE);
+    let warning = wait_for_compact_warning(&codex).await;
+    assert_eq!(warning.message, COMPACT_WARNING_MESSAGE);
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     // 3) Next user input – third hit; history should include only the summary.
@@ -749,7 +761,8 @@ async fn manual_pre_compact_block_decision_does_not_block_compaction() {
     })
     .await;
     assert_eq!(completed.run.status, HookRunStatus::Failed);
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
+    let warning = wait_for_compact_warning(&codex).await;
+    assert_eq!(warning.message, COMPACT_WARNING_MESSAGE);
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = request_log.requests();
@@ -811,7 +824,8 @@ async fn compact_hooks_respect_matchers_and_post_runs_after_compaction() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex.submit(Op::Compact).await.expect("trigger compact");
-    wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
+    let warning = wait_for_compact_warning(&codex).await;
+    assert_eq!(warning.message, COMPACT_WARNING_MESSAGE);
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     assert_eq!(request_log.requests().len(), 2);
@@ -881,11 +895,8 @@ async fn manual_compact_uses_custom_prompt() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex.submit(Op::Compact).await.expect("trigger compact");
-    let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
-    let EventMsg::Warning(WarningEvent { message }) = warning_event else {
-        panic!("expected warning event after compact");
-    };
-    assert_eq!(message, COMPACT_WARNING_MESSAGE);
+    let warning = wait_for_compact_warning(&codex).await;
+    assert_eq!(warning.message, COMPACT_WARNING_MESSAGE);
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = request_log.requests();
@@ -3660,11 +3671,8 @@ async fn manual_compact_retries_after_context_window_error() {
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     codex.submit(Op::Compact).await.unwrap();
-    let warning_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Warning(_))).await;
-    let EventMsg::Warning(WarningEvent { message }) = warning_event else {
-        panic!("expected warning event after compact retry");
-    };
-    assert_eq!(message, COMPACT_WARNING_MESSAGE);
+    let warning = wait_for_compact_warning(&codex).await;
+    assert_eq!(warning.message, COMPACT_WARNING_MESSAGE);
     wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
     let requests = request_log.requests();

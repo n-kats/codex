@@ -70,8 +70,15 @@ pub(crate) trait CoreToolRuntime: ToolExecutor<ToolInvocation> {
         false
     }
 
-    fn telemetry_tags(&self, _invocation: &ToolInvocation) -> ToolTelemetryTags {
-        Vec::new()
+    fn waits_for_mcp_tool_completion(&self) -> bool {
+        false
+    }
+
+    fn telemetry_tags<'a>(
+        &'a self,
+        _invocation: &'a ToolInvocation,
+    ) -> BoxFuture<'a, ToolTelemetryTags> {
+        Box::pin(async { Vec::new() })
     }
 
     fn post_tool_use_payload(
@@ -298,6 +305,10 @@ impl CoreToolRuntime for ExposureOverride {
         self.handler.waits_for_runtime_cancellation()
     }
 
+    fn waits_for_mcp_tool_completion(&self) -> bool {
+        self.handler.waits_for_mcp_tool_completion()
+    }
+
     fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
         self.handler.pre_tool_use_payload(invocation)
     }
@@ -319,8 +330,11 @@ impl CoreToolRuntime for ExposureOverride {
             .with_updated_hook_input(invocation, updated_input)
     }
 
-    fn telemetry_tags(&self, invocation: &ToolInvocation) -> ToolTelemetryTags {
-        self.handler.telemetry_tags(invocation)
+    fn telemetry_tags<'a>(
+        &'a self,
+        invocation: &'a ToolInvocation,
+    ) -> BoxFuture<'a, ToolTelemetryTags> {
+        Box::pin(async move { self.handler.telemetry_tags(invocation).await })
     }
 
     fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
@@ -490,6 +504,19 @@ impl ToolRegistry {
         Some(tool.waits_for_runtime_cancellation())
     }
 
+    pub(crate) fn waits_for_mcp_tool_completion(&self, name: &ToolName) -> Option<bool> {
+        self.tool(name)
+            .map(|tool| tool.waits_for_mcp_tool_completion())
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn dispatch_any(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<AnyToolResult, FunctionCallError> {
+        self.dispatch_any_with_terminal_outcome(invocation, /*terminal_outcome_reached*/ None)
+            .await
+    }
     #[expect(
         clippy::await_holding_invalid_type,
         reason = "tool dispatch must keep active-turn accounting atomic"
@@ -552,7 +579,7 @@ impl ToolRegistry {
             }
         };
 
-        let telemetry_tags = tool.telemetry_tags(&invocation);
+        let telemetry_tags = tool.telemetry_tags(&invocation).await;
         let mut tool_result_tags =
             Vec::with_capacity(base_tool_result_tags.len() + telemetry_tags.len() + 1);
         let mut extra_trace_fields = Vec::new();

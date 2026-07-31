@@ -61,6 +61,10 @@ pub struct McpServerToolConfig {
     /// Approval mode for this tool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_mode: Option<AppToolApproval>,
+
+    /// Wait for this MCP tool to complete before continuing the model stream.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub wait_for_mcp_tool_completion: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]

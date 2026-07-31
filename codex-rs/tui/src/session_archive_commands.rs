@@ -12,6 +12,7 @@ use crate::app_server_session::AppServerSession;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
 use crate::legacy_core::config::load_config_toml_with_layer_stack;
+#[cfg(feature = "cloud")]
 use crate::legacy_core::config::resolve_bootstrap_auth_keyring_backend_kind;
 use crate::legacy_core::config::resolve_bootstrap_http_client_factory;
 use crate::legacy_core::config::resolve_oss_provider;
@@ -20,12 +21,14 @@ use codex_app_server_protocol::Thread as AppServerThread;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadSortKey;
 use codex_arg0::Arg0DispatchPaths;
+#[cfg(feature = "cloud")]
 use codex_cloud_config::cloud_config_bundle_loader_for_storage;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::ConfigLoadOptions;
 use codex_config::LoaderOverrides;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
+#[cfg(feature = "cloud")]
 use codex_login::AuthRouteConfig;
 use codex_protocol::ThreadId;
 use codex_utils_cli::CliConfigOverrides;
@@ -328,6 +331,7 @@ async fn start_app_server_for_archive_command(
     .await
     .wrap_err("failed to load config.toml")?;
     let config_toml = &bootstrap_config.config_toml;
+    #[cfg(feature = "cloud")]
     let chatgpt_base_url = config_toml
         .chatgpt_base_url
         .clone()
@@ -345,7 +349,9 @@ async fn start_app_server_for_archive_command(
             .build(Some(local_runtime_paths), http_client_factory.clone())
             .wrap_err("failed to initialize environment manager")?,
     );
+    #[cfg(feature = "cloud")]
     let auth_route_config = AuthRouteConfig::from_http_client_factory(http_client_factory);
+    #[cfg(feature = "cloud")]
     let cloud_config_bundle = cloud_config_bundle_loader_for_storage(
         codex_home.to_path_buf(),
         /*enable_codex_api_key_env*/ false,
@@ -355,6 +361,8 @@ async fn start_app_server_for_archive_command(
         auth_route_config,
     )
     .await;
+    #[cfg(not(feature = "cloud"))]
+    let cloud_config_bundle = CloudConfigBundleLoader::default();
 
     let model_provider = if cli.oss {
         resolve_oss_provider(cli.oss_provider.as_deref(), config_toml)

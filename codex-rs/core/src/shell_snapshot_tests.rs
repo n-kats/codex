@@ -102,6 +102,47 @@ fn strip_snapshot_preamble_requires_marker() {
 }
 
 #[test]
+fn redact_snapshot_exports_keeps_only_allowed_exports() {
+    let snapshot = "\
+# Snapshot file
+# Functions
+
+# exports 9
+declare -x PATH=\"/usr/bin\"
+declare -x HOME=\"/home/user\"
+declare -x XDG_CONFIG_HOME=\"/home/user/.config\"
+declare -x CODEX_TEST_API_KEY=\"secret\"
+declare -x CODEX_TEST_SECRET=\"secret\"
+declare -x CODEX_TEST_TOKEN=\"secret\"
+declare -x CODEX_TEST_BUILD_HOME=\"/tmp/build\"
+declare -x CODEX_TEST_OUT_DIR=\"/tmp/out\"
+declare -x CODEX_TEST_CACHE_DIR=\"/tmp/cache\"
+";
+
+    let redacted = redact_snapshot_exports(snapshot);
+
+    assert_eq!(
+        redacted,
+        "\
+# Snapshot file
+# Functions
+
+# exports 3
+declare -x PATH=\"/usr/bin\"
+declare -x HOME=\"/home/user\"
+declare -x XDG_CONFIG_HOME=\"/home/user/.config\"
+"
+    );
+}
+
+#[test]
+fn redact_snapshot_exports_preserves_snapshot_without_exports_section() {
+    let snapshot = "# Snapshot file\n# Functions\n";
+
+    assert_eq!(redact_snapshot_exports(snapshot), snapshot);
+}
+
+#[test]
 fn snapshot_file_name_parser_supports_legacy_and_suffixed_names() {
     let session_id = "019cf82b-6a62-7700-bbbd-46909794ef89";
 

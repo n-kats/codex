@@ -31,6 +31,7 @@ use wiremock::ResponseTemplate;
 const SERVER_MODEL: &str = "gpt-5.2";
 const REQUESTED_MODEL: &str = "gpt-5.3-codex";
 const TRUSTED_ACCESS_FOR_CYBER_VERIFICATION: &str = "trusted_access_for_cyber";
+const USER_SHELL_NO_INJECT_WARNING: &str = "custom.user_shell.no_inject is false (default); `!` (UserShell) commands and their outputs will be injected into the model context and recorded to the local session history. Set custom.user_shell.no_inject=true to disable injection/recording, and avoid secrets in `!` commands/output.";
 
 const CYBER_POLICY_MESSAGE: &str =
     "This request has been flagged for potentially high-risk cyber activity.";
@@ -91,7 +92,10 @@ async fn openai_model_header_mismatch_emits_warning_event() -> Result<()> {
     assert_eq!(reroute.to_model, SERVER_MODEL);
     assert_eq!(reroute.reason, ModelRerouteReason::HighRiskCyberActivity);
 
-    let warning = wait_for_event(&test.codex, |event| matches!(event, EventMsg::Warning(_))).await;
+    let warning = wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::Warning(warning) if warning.message != USER_SHELL_NO_INJECT_WARNING)
+    })
+    .await;
     let EventMsg::Warning(warning) = warning else {
         panic!("expected warning event");
     };
@@ -182,9 +186,7 @@ async fn response_model_field_mismatch_emits_warning_when_header_matches_request
         matches!(
             event,
             EventMsg::Warning(warning)
-                if warning
-                    .message
-                    .contains("flagged for potentially high-risk cyber activity")
+                if warning.message.contains("flagged for potentially high-risk cyber activity")
         )
     })
     .await;
@@ -248,6 +250,7 @@ async fn openai_model_header_mismatch_only_emits_one_warning_per_turn() -> Resul
             {
                 warning_count += 1;
             }
+            EventMsg::Warning(warning) if warning.message == USER_SHELL_NO_INJECT_WARNING => {}
             EventMsg::TurnComplete(_) => break,
             _ => {}
         }
@@ -288,6 +291,7 @@ async fn openai_model_header_casing_only_mismatch_does_not_warn() -> Result<()> 
             {
                 warning_count += 1;
             }
+            EventMsg::Warning(warning) if warning.message == USER_SHELL_NO_INJECT_WARNING => {}
             EventMsg::TurnComplete(_) => break,
             _ => {}
         }
@@ -332,7 +336,10 @@ async fn model_verification_emits_structured_event_without_reroute_or_warning() 
                 );
                 verification_count += 1;
             }
-            EventMsg::Warning(_) => warning_count += 1,
+            EventMsg::Warning(warning) if warning.message != USER_SHELL_NO_INJECT_WARNING => {
+                warning_count += 1
+            }
+            EventMsg::Warning(_) => {}
             EventMsg::ModelReroute(_) => reroute_count += 1,
             EventMsg::RawResponseItem(raw)
                 if matches!(
@@ -402,7 +409,10 @@ async fn model_verification_only_emits_once_per_turn() -> Result<()> {
         let event = wait_for_event(&test.codex, |_| true).await;
         match event {
             EventMsg::ModelVerification(_) => verification_count += 1,
-            EventMsg::Warning(warning) if warning.message.contains("high-risk cyber activity") => {
+            EventMsg::Warning(warning)
+                if warning.message.contains("high-risk cyber activity")
+                    && warning.message != USER_SHELL_NO_INJECT_WARNING =>
+            {
                 panic!("model verification should not emit a warning event");
             }
             EventMsg::TurnComplete(_) => break,

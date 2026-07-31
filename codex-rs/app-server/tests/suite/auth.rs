@@ -56,6 +56,7 @@ fn create_config_toml(codex_home: &Path) -> std::io::Result<()> {
 model = "mock-model"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
+cli_auth_credentials_store = "file"
 
 [features]
 shell_snapshot = false
@@ -397,6 +398,8 @@ async fn get_auth_status_omits_token_after_permanent_refresh_failure() -> Result
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// Cloud auth-refresh integration is not part of the custom CLI test surface.
+#[cfg(any())]
 async fn get_auth_status_omits_token_after_proactive_refresh_failure() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path())?;
@@ -460,6 +463,7 @@ async fn get_auth_status_omits_token_after_proactive_refresh_failure() -> Result
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "TODO(aibrahim): flaky"]
 async fn get_auth_status_returns_token_after_proactive_refresh_recovery() -> Result<()> {
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path())?;

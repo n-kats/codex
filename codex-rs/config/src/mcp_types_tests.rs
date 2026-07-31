@@ -383,6 +383,7 @@ fn deserialize_server_config_with_default_tool_approval_mode() {
         cfg.tools.get("search"),
         Some(&McpServerToolConfig {
             approval_mode: Some(AppToolApproval::Prompt),
+            wait_for_mcp_tool_completion: false,
         })
     );
 
@@ -392,6 +393,30 @@ fn deserialize_server_config_with_default_tool_approval_mode() {
     let round_tripped: McpServerConfig =
         toml::from_str(&serialized).expect("should deserialize serialized MCP config");
     assert_eq!(round_tripped, cfg);
+}
+
+#[test]
+fn deserialize_server_config_with_tool_stream_wait() {
+    let cfg: McpServerConfig = toml::from_str(
+        r#"
+            command = "echo"
+
+            [tools.search]
+            wait_for_mcp_tool_completion = true
+        "#,
+    )
+    .expect("should deserialize MCP tool stream wait setting");
+
+    assert_eq!(
+        cfg.tools.get("search"),
+        Some(&McpServerToolConfig {
+            approval_mode: None,
+            wait_for_mcp_tool_completion: true,
+        })
+    );
+
+    let serialized = toml::to_string(&cfg).expect("should serialize MCP tool stream wait setting");
+    assert!(serialized.contains("wait_for_mcp_tool_completion = true"));
 }
 
 #[test]

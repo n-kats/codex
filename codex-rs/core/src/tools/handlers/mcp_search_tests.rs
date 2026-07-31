@@ -72,6 +72,7 @@ fn tool_info() -> ToolInfo {
     ToolInfo {
         server_name: "codex-apps".to_string(),
         supports_parallel_tool_calls: false,
+        wait_for_mcp_tool_completion: false,
         server_origin: None,
         callable_name: "_create_event".to_string(),
         callable_namespace: "mcp__calendar__".to_string(),

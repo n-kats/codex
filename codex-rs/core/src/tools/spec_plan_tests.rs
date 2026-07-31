@@ -371,6 +371,7 @@ fn mcp_tool(server: &str, namespace: &str, name: &str) -> ToolInfo {
     ToolInfo {
         server_name: server.to_string(),
         supports_parallel_tool_calls: false,
+        wait_for_mcp_tool_completion: false,
         server_origin: None,
         callable_name: name.to_string(),
         callable_namespace: namespace.to_string(),
