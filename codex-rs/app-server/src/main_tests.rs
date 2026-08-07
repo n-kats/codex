@@ -9,9 +9,9 @@ use url::Url;
 fn app_server_accepts_cli_config_overrides() {
     let args = AppServerArgs::try_parse_from([
         "codex-app-server",
-        "-c",
-        "model=\"gpt-5-codex\"",
         "--config",
+        "model=\"gpt-5-codex\"",
+        "-c",
         "sandbox_mode=\"read-only\"",
         "--listen",
         "off",

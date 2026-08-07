@@ -25,6 +25,9 @@ fn strict_config_rejects_unknown_config_override() -> Result<()> {
 }
 
 #[test]
+// The custom CLI does not expose the upstream `cloud` command. Keep the
+// upstream regression test in the source, but exclude it from this test binary.
+#[cfg(any())]
 fn strict_config_is_not_supported_for_cloud_command() -> Result<()> {
     let codex_home = TempDir::new()?;
 

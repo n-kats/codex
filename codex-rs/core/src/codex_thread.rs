@@ -188,6 +188,7 @@ pub struct CodexThreadSettingsOverrides {
     pub service_tier: Option<Option<String>>,
     pub collaboration_mode: Option<CollaborationMode>,
     pub personality: Option<Personality>,
+    pub project_doc_paths: Option<Vec<AbsolutePathBuf>>,
 }
 
 pub struct CodexThread {
@@ -504,6 +505,7 @@ impl CodexThread {
             service_tier,
             collaboration_mode,
             personality,
+            project_doc_paths,
         } = overrides;
         let collaboration_mode = if let Some(collaboration_mode) = collaboration_mode {
             collaboration_mode
@@ -527,6 +529,7 @@ impl CodexThread {
             reasoning_summary: summary,
             service_tier,
             personality,
+            project_doc_paths,
             ..Default::default()
         }
     }

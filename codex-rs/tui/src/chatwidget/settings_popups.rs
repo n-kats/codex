@@ -62,6 +62,7 @@ impl ChatWidget {
                         /*service_tier*/ None,
                         /*collaboration_mode*/ None,
                         Some(personality),
+                        /*project_doc_paths*/ None,
                     )));
                     tx.send(AppEvent::UpdatePersonality(personality));
                     tx.send(AppEvent::PersistPersonalitySelection { personality });

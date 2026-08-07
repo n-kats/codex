@@ -29,6 +29,7 @@ use codex_code_mode::host::MAX_FRAME_BYTES;
 use codex_protocol::ToolName;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use tempfile::TempDir;
 use tokio::sync::Semaphore;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -750,7 +751,7 @@ async fn oversized_initial_response_does_not_close_the_shared_host() {
 async fn child_process_loss_cleans_up_and_rebuilds_the_shared_host() {
     let host_program =
         codex_utils_cargo_bin::cargo_bin("codex-code-mode-host").expect("host binary");
-    let proxy_dir = tempfile::tempdir().expect("create host proxy directory");
+    let proxy_dir = TempDir::new().expect("create host proxy directory");
     let proxy_program = proxy_dir.path().join("host-proxy.sh");
     let pid_path = proxy_dir.path().join("host.pid");
     std::fs::write(
@@ -772,14 +773,24 @@ async fn child_process_loss_cleans_up_and_rebuilds_the_shared_host() {
     let (delegate_a, mut events_a) = CancellationDelegate::new();
     delegate_a.hold_slow_cleanup();
     let delegate_b = Arc::new(RecordingDelegate::default());
-    let session_a = provider
-        .create_session(delegate_a.clone())
-        .await
-        .expect("create first remote session");
-    let session_b = provider
-        .create_session(delegate_b.clone())
-        .await
-        .expect("create second remote session");
+    let session_a = loop {
+        match provider.create_session(delegate_a.clone()).await {
+            Ok(session) => break session,
+            Err(err) if err.to_string().contains("Text file busy") => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(err) => panic!("create first remote session: {err:?}"),
+        }
+    };
+    let session_b = loop {
+        match provider.create_session(delegate_b.clone()).await {
+            Ok(session) => break session,
+            Err(err) if err.to_string().contains("Text file busy") => {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            Err(err) => panic!("create second remote session: {err:?}"),
+        }
+    };
 
     let mut request_a = execute_request("await tools.tool_call_slow({});");
     request_a.yield_time_ms = Some(1);

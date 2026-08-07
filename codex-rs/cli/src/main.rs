@@ -18,7 +18,6 @@ use codex_cli::run_login_with_api_key;
 use codex_cli::run_login_with_chatgpt;
 use codex_cli::run_login_with_device_code;
 use codex_cli::run_logout;
-use codex_cloud_tasks::Cli as CloudTasksCli;
 use codex_exec::Cli as ExecCli;
 use codex_exec::Command as ExecCommand;
 use codex_exec::ReviewArgs;
@@ -39,6 +38,7 @@ use owo_colors::OwoColorize;
 use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use supports_color::Stream;
@@ -125,6 +125,9 @@ struct MultitoolCli {
     subcommand: Option<Subcommand>,
 }
 
+#[cfg(test)]
+mod custom_tests;
+
 #[derive(Debug, clap::Subcommand)]
 enum Subcommand {
     /// Run Codex non-interactively.
@@ -199,10 +202,6 @@ enum Subcommand {
 
     /// Fork a previous interactive session (picker by default; use --last to fork the most recent).
     Fork(ForkCommand),
-
-    /// [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally.
-    #[clap(name = "cloud", alias = "cloud-tasks")]
-    Cloud(CloudTasksCli),
 
     /// Internal: run the responses API proxy.
     #[clap(hide = true)]
@@ -1007,6 +1006,9 @@ async fn cli_main(
     root_config_overrides.raw_overrides.extend(toggle_overrides);
     let root_remote = remote.remote;
     let root_remote_auth_token_env = remote.remote_auth_token_env;
+    let root_shared = interactive.shared.clone().into_inner();
+    apply_bootstrap_env(&root_shared)?;
+    let root_loader_overrides = loader_overrides_from_shared(&root_shared)?;
     let root_strict_config = interactive.strict_config;
     interactive
         .shared
@@ -1024,6 +1026,7 @@ async fn cli_main(
             );
             let exit_info = run_interactive_tui(
                 interactive,
+                root_loader_overrides.clone(),
                 root_remote.clone(),
                 root_remote_auth_token_env.clone(),
                 arg0_paths.clone(),
@@ -1079,6 +1082,7 @@ async fn cli_main(
             codex_mcp_server::run_main(
                 arg0_paths.clone(),
                 root_config_overrides,
+                root_loader_overrides.clone(),
                 strict_config || root_strict_config,
             )
             .await?;
@@ -1091,8 +1095,10 @@ async fn cli_main(
             )?;
             // Propagate any root-level config overrides (e.g. `-c key=value`).
             prepend_config_flags(&mut mcp_cli.config_overrides, root_config_overrides.clone());
-            let loader_overrides =
-                loader_overrides_for_profile(interactive.config_profile_v2.as_ref())?;
+            let loader_overrides = loader_overrides_for_profile(
+                &root_loader_overrides,
+                interactive.config_profile_v2.as_ref(),
+            )?;
             mcp_cli.run(loader_overrides).await?;
         }
         Some(Subcommand::Plugin(plugin_cli)) => {
@@ -1177,7 +1183,7 @@ async fn cli_main(
                     codex_app_server::run_main_with_transport_options(
                         arg0_paths.clone(),
                         root_config_overrides,
-                        LoaderOverrides::default(),
+                        root_loader_overrides.clone(),
                         strict_config,
                         analytics_default_enabled,
                         transport,
@@ -1275,6 +1281,7 @@ async fn cli_main(
                 arg0_paths.clone(),
                 root_config_overrides,
                 psp,
+                root_loader_overrides.clone(),
             )
             .await?;
         }
@@ -1307,6 +1314,7 @@ async fn cli_main(
             );
             let exit_info = run_interactive_tui(
                 interactive,
+                root_loader_overrides.clone(),
                 remote.remote.or(root_remote.clone()),
                 remote
                     .remote_auth_token_env
@@ -1382,6 +1390,7 @@ async fn cli_main(
             );
             let exit_info = run_interactive_tui(
                 interactive,
+                root_loader_overrides.clone(),
                 remote.remote.or(root_remote.clone()),
                 remote
                     .remote_auth_token_env
@@ -1472,23 +1481,11 @@ async fn cli_main(
             doctor::run_doctor(
                 doctor_cli,
                 root_config_overrides.clone(),
+                root_loader_overrides.clone(),
                 &interactive,
                 &arg0_paths,
             )
             .await?;
-        }
-        Some(Subcommand::Cloud(mut cloud_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "cloud",
-            )?;
-            prepend_config_flags(
-                &mut cloud_cli.config_overrides,
-                root_config_overrides.clone(),
-            );
-            codex_cloud_tasks::run_main(cloud_cli, arg0_paths.codex_linux_sandbox_exe.clone())
-                .await?;
         }
         Some(Subcommand::Sandbox(mut sandbox_cli)) => {
             let config_profile = sandbox_cli
@@ -1518,7 +1515,8 @@ async fn cli_main(
                 root_remote_auth_token_env.as_deref(),
                 "sandbox",
             )?;
-            let loader_overrides = loader_overrides_for_profile(config_profile)?;
+            let loader_overrides =
+                loader_overrides_for_profile(&root_loader_overrides, config_profile)?;
             #[cfg(target_os = "macos")]
             codex_cli::run_command_under_seatbelt(
                 sandbox_cli,
@@ -1553,7 +1551,8 @@ async fn cli_main(
                     root_remote_auth_token_env.as_deref(),
                     "debug models",
                 )?;
-                run_debug_models_command(cmd, root_config_overrides).await?;
+                run_debug_models_command(cmd, root_config_overrides, root_loader_overrides.clone())
+                    .await?;
             }
             DebugSubcommand::AppServer(cmd) => {
                 reject_remote_mode_for_subcommand(
@@ -1573,6 +1572,7 @@ async fn cli_main(
                     cmd,
                     root_config_overrides,
                     interactive,
+                    root_loader_overrides.clone(),
                     arg0_paths.clone(),
                 )
                 .await?;
@@ -1591,7 +1591,11 @@ async fn cli_main(
                     root_remote_auth_token_env.as_deref(),
                     "debug clear-memories",
                 )?;
-                run_debug_clear_memories_command(&root_config_overrides).await?;
+                run_debug_clear_memories_command(
+                    &root_config_overrides,
+                    root_loader_overrides.clone(),
+                )
+                .await?;
             }
         },
         Some(Subcommand::Execpolicy(ExecpolicyCommand { sub })) => match sub {
@@ -1641,8 +1645,14 @@ async fn cli_main(
                 "exec-server",
             )?;
             let strict_config = cmd.strict_config || root_strict_config;
-            run_exec_server_command(cmd, &arg0_paths, &root_config_overrides, strict_config)
-                .await?;
+            run_exec_server_command(
+                cmd,
+                &arg0_paths,
+                &root_config_overrides,
+                &root_loader_overrides,
+                strict_config,
+            )
+            .await?;
         }
         Some(Subcommand::Features(FeaturesCli { sub })) => match sub {
             FeaturesSubcommand::List => {
@@ -1737,6 +1747,7 @@ async fn run_exec_server_command(
     cmd: ExecServerCommand,
     arg0_paths: &Arg0DispatchPaths,
     root_config_overrides: &CliConfigOverrides,
+    root_loader_overrides: &LoaderOverrides,
     strict_config: bool,
 ) -> anyhow::Result<()> {
     let codex_self_exe = arg0_paths
@@ -1751,11 +1762,12 @@ async fn run_exec_server_command(
         let environment_id = cmd
             .environment_id
             .ok_or_else(|| anyhow::anyhow!("--environment-id is required when --remote is set"))?;
-        let config = load_exec_server_config(root_config_overrides, strict_config).await?;
+        let config =
+            load_exec_server_config(root_config_overrides, root_loader_overrides, strict_config)
+                .await?;
         let (_otel, telemetry) = exec_server_telemetry::init(Some(&config));
         let auth_provider =
-            load_exec_server_remote_auth_provider(&config, &base_url, cmd.use_agent_identity_auth)
-                .await?;
+            load_exec_server_remote_auth_provider(&config, cmd.use_agent_identity_auth).await?;
         let mut remote_config = codex_exec_server::RemoteEnvironmentConfig::new(
             base_url,
             environment_id,
@@ -1790,7 +1802,9 @@ async fn run_exec_server_command(
         .await?;
         Ok(())
     } else {
-        let config_result = load_exec_server_config(root_config_overrides, strict_config).await;
+        let config_result =
+            load_exec_server_config(root_config_overrides, root_loader_overrides, strict_config)
+                .await;
         let config = if strict_config {
             Some(config_result?)
         } else {
@@ -1829,7 +1843,6 @@ async fn run_exec_server_command(
 
 async fn load_exec_server_remote_auth_provider(
     config: &codex_core::config::Config,
-    base_url: &str,
     use_agent_identity_auth: bool,
 ) -> anyhow::Result<codex_api::SharedAuthProvider> {
     if use_agent_identity_auth {
@@ -1861,10 +1874,6 @@ async fn load_exec_server_remote_auth_provider(
         );
     }
 
-    if auth.is_api_key_auth() {
-        validate_api_key_remote_host(base_url)?;
-    }
-
     Ok(codex_model_provider::auth_provider_from_auth(&auth))
 }
 
@@ -1872,48 +1881,16 @@ fn is_supported_exec_server_remote_auth(auth: &CodexAuth) -> bool {
     auth.is_chatgpt_auth() || auth.is_api_key_auth()
 }
 
-fn validate_api_key_remote_host(base_url: &str) -> anyhow::Result<()> {
-    let url = url::Url::parse(base_url)
-        .map_err(|err| anyhow::anyhow!("invalid remote exec-server registration URL: {err}"))?;
-    let host = url.host().ok_or_else(|| {
-        anyhow::anyhow!("remote exec-server registration URL must include a host")
-    })?;
-
-    let is_loopback = match &host {
-        url::Host::Domain(host) => host.eq_ignore_ascii_case("localhost"),
-        url::Host::Ipv4(ip) => ip.is_loopback(),
-        url::Host::Ipv6(ip) => ip.is_loopback(),
-    };
-    let is_openai_host = match &host {
-        url::Host::Domain(host) => ["openai.com", "openai.org"].into_iter().any(|domain| {
-            host.eq_ignore_ascii_case(domain)
-                || host.to_ascii_lowercase().ends_with(&format!(".{domain}"))
-        }),
-        _ => false,
-    };
-    let is_allowed = match url.scheme() {
-        "https" => is_loopback || is_openai_host,
-        "http" => is_loopback,
-        _ => false,
-    };
-
-    if !is_allowed {
-        anyhow::bail!(
-            "remote exec-server API-key authentication is restricted to HTTPS openai.com and openai.org hosts and subdomains or loopback hosts"
-        );
-    }
-
-    Ok(())
-}
-
 async fn load_exec_server_config(
     root_config_overrides: &CliConfigOverrides,
+    root_loader_overrides: &LoaderOverrides,
     strict_config: bool,
 ) -> anyhow::Result<codex_core::config::Config> {
     let cli_kv_overrides = root_config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
     Ok(ConfigBuilder::default()
+        .loader_overrides(root_loader_overrides.clone())
         .cli_overrides(cli_kv_overrides)
         .strict_config(strict_config)
         .build()
@@ -1965,32 +1942,67 @@ async fn disable_feature_in_config(feature: &str) -> anyhow::Result<()> {
 }
 
 fn loader_overrides_for_profile(
+    root_loader_overrides: &LoaderOverrides,
     profile_v2: Option<&ProfileV2Name>,
 ) -> anyhow::Result<LoaderOverrides> {
+    let loader_overrides = root_loader_overrides.clone();
     match profile_v2 {
         Some(profile_v2) => {
             let codex_home = find_codex_home()?;
             Ok(loader_overrides_for_profile_at_codex_home(
                 Some(profile_v2),
-                &codex_home,
+                codex_home.as_path(),
+                loader_overrides,
             ))
         }
-        None => Ok(LoaderOverrides::default()),
+        None => Ok(loader_overrides),
     }
 }
 
 fn loader_overrides_for_profile_at_codex_home(
     profile_v2: Option<&ProfileV2Name>,
-    codex_home: &std::path::Path,
+    codex_home: &Path,
+    mut loader_overrides: LoaderOverrides,
 ) -> LoaderOverrides {
-    match profile_v2 {
-        Some(profile_v2) => LoaderOverrides {
-            user_config_path: Some(resolve_profile_v2_config_path(codex_home, profile_v2)),
-            user_config_profile: Some(profile_v2.clone()),
-            ..Default::default()
-        },
-        None => LoaderOverrides::default(),
+    if let Some(profile_v2) = profile_v2 {
+        if loader_overrides.user_config_path.is_none() && !loader_overrides.ignore_user_config {
+            loader_overrides.user_config_path =
+                Some(resolve_profile_v2_config_path(codex_home, profile_v2));
+        }
+        loader_overrides.user_config_profile = Some(profile_v2.clone());
     }
+    loader_overrides
+}
+
+fn loader_overrides_from_shared(shared: &SharedCliOptions) -> anyhow::Result<LoaderOverrides> {
+    let mut loader_overrides = LoaderOverrides::default();
+    if let Some(config_toml_file) = shared.config_toml_file.as_ref() {
+        loader_overrides.user_config_path =
+            Some(AbsolutePathBuf::relative_to_current_dir(config_toml_file)?);
+    }
+    if shared.no_config {
+        loader_overrides.ignore_user_config = true;
+        loader_overrides.ignore_project_config = true;
+        loader_overrides.user_config_profile = None;
+        loader_overrides.user_config_path = None;
+    }
+    Ok(loader_overrides)
+}
+
+fn apply_bootstrap_env(shared: &SharedCliOptions) -> anyhow::Result<()> {
+    if let Some(codex_home) = shared.codex_home.as_ref() {
+        let resolved = AbsolutePathBuf::relative_to_current_dir(codex_home)?;
+        unsafe {
+            std::env::set_var("CODEX_HOME", resolved.as_path());
+        }
+    }
+    if let Some(codex_memory) = shared.codex_memory.as_ref() {
+        let resolved = AbsolutePathBuf::relative_to_current_dir(codex_memory)?;
+        unsafe {
+            std::env::set_var("CODEX_MEMORIES_HOME", resolved.as_path());
+        }
+    }
+    Ok(())
 }
 
 fn maybe_print_under_development_feature_warning(codex_home: &std::path::Path, feature: &str) {
@@ -2025,9 +2037,13 @@ async fn run_debug_prompt_input_command(
     cmd: DebugPromptInputCommand,
     root_config_overrides: CliConfigOverrides,
     interactive: TuiCli,
+    root_loader_overrides: LoaderOverrides,
     arg0_paths: Arg0DispatchPaths,
 ) -> anyhow::Result<()> {
-    let loader_overrides = loader_overrides_for_profile(interactive.config_profile_v2.as_ref())?;
+    let loader_overrides = loader_overrides_for_profile(
+        &root_loader_overrides,
+        interactive.config_profile_v2.as_ref(),
+    )?;
     let shared = interactive.shared.into_inner();
     let mut cli_kv_overrides = root_config_overrides
         .parse_overrides()
@@ -2060,6 +2076,7 @@ async fn run_debug_prompt_input_command(
         show_raw_agent_reasoning: shared.oss.then_some(true),
         ephemeral: Some(true),
         bypass_hook_trust: shared.bypass_hook_trust.then_some(true),
+        project_doc_paths: shared.agents_md,
         additional_writable_roots: shared.add_dir,
         ..Default::default()
     };
@@ -2121,6 +2138,7 @@ async fn run_debug_prompt_input_command(
 async fn run_debug_models_command(
     cmd: DebugModelsCommand,
     root_config_overrides: CliConfigOverrides,
+    root_loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     let catalog = if cmd.bundled {
         bundled_models_response()?
@@ -2129,6 +2147,7 @@ async fn run_debug_models_command(
             .parse_overrides()
             .map_err(anyhow::Error::msg)?;
         let config = ConfigBuilder::default()
+            .loader_overrides(root_loader_overrides)
             .cli_overrides(cli_overrides)
             .build()
             .await?;
@@ -2150,11 +2169,13 @@ async fn run_debug_models_command(
 
 async fn run_debug_clear_memories_command(
     root_config_overrides: &CliConfigOverrides,
+    root_loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     let cli_kv_overrides = root_config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
     let config = ConfigBuilder::default()
+        .loader_overrides(root_loader_overrides)
         .cli_overrides(cli_kv_overrides)
         .build()
         .await?;
@@ -2233,7 +2254,7 @@ fn reject_root_strict_config_for_subcommand(
 /// unsupported subcommands need an explicit post-parse reject path.
 ///
 /// `Some(...)` returns the user-facing command name fragment to embed in the
-/// rejection error, such as `cloud` or `app-server proxy`. `None` means the
+/// rejection error, such as `app-server proxy`. `None` means the
 /// selected command is allowed to inherit root `--strict-config`.
 fn unsupported_subcommand_name_for_strict_config(
     subcommand: &Option<Subcommand>,
@@ -2264,7 +2285,6 @@ fn unsupported_subcommand_name_for_strict_config(
         Some(Subcommand::Logout(_)) => Some("logout"),
         Some(Subcommand::Completion(_)) => Some("completion"),
         Some(Subcommand::Update) => Some("update"),
-        Some(Subcommand::Cloud(_)) => Some("cloud"),
         Some(Subcommand::Sandbox(_)) => Some("sandbox"),
         Some(Subcommand::Debug(_)) => Some("debug"),
         Some(Subcommand::Execpolicy(_)) => Some("execpolicy"),
@@ -2383,6 +2403,7 @@ fn read_remote_auth_token_from_env_var(env_var_name: &str) -> anyhow::Result<Str
 
 async fn run_interactive_tui(
     mut interactive: TuiCli,
+    loader_overrides: LoaderOverrides,
     remote: Option<String>,
     remote_auth_token_env: Option<String>,
     arg0_paths: Arg0DispatchPaths,
@@ -2421,7 +2442,7 @@ async fn run_interactive_tui(
         codex_tui::run_main(
             interactive.clone(),
             arg0_paths.clone(),
-            codex_config::LoaderOverrides::default(),
+            loader_overrides.clone(),
             remote_endpoint.clone(),
         )
     };
@@ -2690,56 +2711,6 @@ mod tests {
         assert!(is_supported_exec_server_remote_auth(&auth));
     }
 
-    #[test]
-    fn exec_server_remote_api_key_auth_accepts_https_openai_domains() {
-        for base_url in [
-            "https://openai.com/api",
-            "https://service.openai.com/api",
-            "https://openai.org/api",
-            "https://service.openai.org/api",
-        ] {
-            assert!(validate_api_key_remote_host(base_url).is_ok());
-        }
-    }
-
-    #[test]
-    fn exec_server_remote_api_key_auth_accepts_http_loopback() {
-        for base_url in [
-            "http://localhost:8098/api",
-            "http://127.0.0.1:8098/api",
-            "http://[::1]:8098/api",
-        ] {
-            assert!(validate_api_key_remote_host(base_url).is_ok());
-        }
-    }
-
-    #[test]
-    fn exec_server_remote_api_key_auth_rejects_http_openai_domain() {
-        for base_url in [
-            "http://service.openai.com/api",
-            "http://service.openai.org/api",
-        ] {
-            let error = validate_api_key_remote_host(base_url)
-                .expect_err("reject plaintext OpenAI destination");
-
-            assert_eq!(
-                error.to_string(),
-                "remote exec-server API-key authentication is restricted to HTTPS openai.com and openai.org hosts and subdomains or loopback hosts"
-            );
-        }
-    }
-
-    #[test]
-    fn exec_server_remote_api_key_auth_rejects_suffix_spoof() {
-        let error = validate_api_key_remote_host("https://service.openai.org.evil.example/api")
-            .expect_err("reject suffix spoof");
-
-        assert_eq!(
-            error.to_string(),
-            "remote exec-server API-key authentication is restricted to HTTPS openai.com and openai.org hosts and subdomains or loopback hosts"
-        );
-    }
-
     fn finalize_resume_from_args(args: &[&str]) -> TuiCli {
         let cli = MultitoolCli::try_parse_from(args).expect("parse");
         let MultitoolCli {
@@ -2867,8 +2838,11 @@ mod tests {
         let codex_home = tempfile::tempdir()?;
         let profile: ProfileV2Name = "work".parse()?;
 
-        let overrides =
-            loader_overrides_for_profile_at_codex_home(Some(&profile), codex_home.path());
+        let overrides = loader_overrides_for_profile_at_codex_home(
+            Some(&profile),
+            codex_home.path(),
+            LoaderOverrides::default(),
+        );
 
         assert_eq!(
             overrides.user_config_path,
@@ -3711,6 +3685,52 @@ mod tests {
     }
 
     #[test]
+    fn resume_preserves_root_agents_md_and_config_flags() {
+        let interactive = finalize_resume_from_args(
+            [
+                "codex",
+                "--agents-md",
+                "root/AGENTS.md",
+                "--config-file",
+                "root.toml",
+                "resume",
+                "sid",
+            ]
+            .as_ref(),
+        );
+
+        let shared = interactive.shared.clone().into_inner();
+        assert_eq!(shared.agents_md, vec![PathBuf::from("root/AGENTS.md")]);
+        assert_eq!(shared.config_toml_file, Some(PathBuf::from("root.toml")));
+        assert_eq!(interactive.resume_session_id.as_deref(), Some("sid"));
+    }
+
+    #[test]
+    fn resume_subcommand_agents_md_and_config_override_root_flags() {
+        let interactive = finalize_resume_from_args(
+            [
+                "codex",
+                "--agents-md",
+                "root/AGENTS.md",
+                "--config-file",
+                "root.toml",
+                "resume",
+                "sid",
+                "--agents-md",
+                "resume/AGENTS.md",
+                "--config-file",
+                "resume.toml",
+            ]
+            .as_ref(),
+        );
+
+        let shared = interactive.shared.clone().into_inner();
+        assert_eq!(shared.agents_md, vec![PathBuf::from("resume/AGENTS.md")]);
+        assert_eq!(shared.config_toml_file, Some(PathBuf::from("resume.toml")));
+        assert_eq!(interactive.resume_session_id.as_deref(), Some("sid"));
+    }
+
+    #[test]
     fn resume_merges_dangerously_bypass_flag() {
         let interactive = finalize_resume_from_args(
             [
@@ -3804,6 +3824,27 @@ mod tests {
         let interactive = finalize_fork_from_args(["codex", "fork", "--all"].as_ref());
         assert!(interactive.fork_picker);
         assert!(interactive.fork_show_all);
+    }
+
+    #[test]
+    fn fork_preserves_root_agents_md_and_config_flags() {
+        let interactive = finalize_fork_from_args(
+            [
+                "codex",
+                "--agents-md",
+                "root/AGENTS.md",
+                "--config-file",
+                "root.toml",
+                "fork",
+                "sid",
+            ]
+            .as_ref(),
+        );
+
+        let shared = interactive.shared.clone().into_inner();
+        assert_eq!(shared.agents_md, vec![PathBuf::from("root/AGENTS.md")]);
+        assert_eq!(shared.config_toml_file, Some(PathBuf::from("root.toml")));
+        assert_eq!(interactive.fork_session_id.as_deref(), Some("sid"));
     }
 
     #[test]

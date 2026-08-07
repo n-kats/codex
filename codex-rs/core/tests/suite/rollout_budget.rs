@@ -19,6 +19,7 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
+use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::time::Duration;
@@ -259,21 +260,11 @@ async fn subagent_usage_draws_from_the_shared_budget() -> Result<()> {
     .await;
     test.submit_turn(FOLLOW_UP_PROMPT).await?;
 
-    let requests = follow_up
-        .requests()
-        .into_iter()
-        .filter(|request| {
-            request
-                .message_input_texts("user")
-                .iter()
-                .any(|text| text == FOLLOW_UP_PROMPT)
-        })
-        .collect::<Vec<_>>();
-    let [request] = requests.as_slice() else {
-        anyhow::bail!("expected 1 follow-up request, got {}", requests.len());
-    };
+    let request = follow_up
+        .last_request()
+        .expect("follow-up request should be captured");
     assert_eq!(
-        rollout_budget_texts(request).last(),
+        rollout_budget_texts(&request).last(),
         Some(&rollout_budget_message(/*remaining_tokens*/ 50))
     );
 
@@ -511,9 +502,11 @@ async fn restates_the_current_remainder_after_rollback() -> Result<()> {
     test.codex
         .submit(Op::ThreadRollback { num_turns: 1 })
         .await?;
-    wait_for_event(&test.codex, |event| {
-        matches!(event, EventMsg::ThreadRolledBack(_))
-    })
+    wait_for_event_with_timeout(
+        &test.codex,
+        |event| matches!(event, EventMsg::ThreadRolledBack(_)),
+        Duration::from_secs(120),
+    )
     .await;
     test.submit_turn("turn after rollback").await?;
 

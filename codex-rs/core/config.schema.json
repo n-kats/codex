@@ -934,6 +934,82 @@
       ],
       "type": "string"
     },
+    "CustomConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "theme": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomThemeToml"
+            }
+          ],
+          "default": {
+            "diff": null
+          }
+        },
+        "user_shell": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomUserShellToml"
+            }
+          ],
+          "default": {
+            "no_inject": null
+          }
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeDiffToml": {
+      "additionalProperties": false,
+      "properties": {
+        "add_line_bg": {
+          "type": "string"
+        },
+        "content": {
+          "type": "boolean"
+        },
+        "del_line_bg": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "gutter": {
+          "type": "boolean"
+        },
+        "line_bg": {
+          "type": "boolean"
+        },
+        "sign": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeToml": {
+      "additionalProperties": false,
+      "properties": {
+        "diff": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomThemeDiffToml"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "CustomUserShellToml": {
+      "additionalProperties": false,
+      "properties": {
+        "no_inject": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "DebugConfigLockToml": {
       "additionalProperties": false,
       "properties": {
@@ -1582,6 +1658,10 @@
             }
           ],
           "description": "Approval mode for this tool."
+        },
+        "wait_for_mcp_tool_completion": {
+          "description": "Wait for this MCP tool to complete before continuing the model stream.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -4977,6 +5057,22 @@
     "compact_prompt": {
       "description": "Compact prompt used for history compaction.",
       "type": "string"
+    },
+    "custom": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/CustomConfigToml"
+        }
+      ],
+      "default": {
+        "theme": {
+          "diff": null
+        },
+        "user_shell": {
+          "no_inject": null
+        }
+      },
+      "description": "Custom fork-specific settings."
     },
     "debug": {
       "allOf": [

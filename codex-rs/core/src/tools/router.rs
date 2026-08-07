@@ -150,6 +150,12 @@ impl ToolRouter {
             .unwrap_or(false)
     }
 
+    pub fn tool_waits_for_mcp_tool_completion(&self, call: &ToolCall) -> bool {
+        self.registry
+            .waits_for_mcp_tool_completion(&call.tool_name)
+            .unwrap_or(false)
+    }
+
     #[instrument(level = "trace", skip_all, err)]
     pub fn build_tool_call(item: ResponseItem) -> Result<Option<ToolCall>, FunctionCallError> {
         match item {

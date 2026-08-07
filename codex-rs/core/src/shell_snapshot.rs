@@ -211,6 +211,7 @@ async fn write_shell_snapshot(
 
     let raw_snapshot = capture_snapshot(&shell, cwd).await?;
     let snapshot = strip_snapshot_preamble(&raw_snapshot)?;
+    let snapshot = redact_snapshot_exports(&snapshot);
 
     if let Some(parent) = output_path.parent() {
         let parent_display = parent.display();
@@ -245,6 +246,91 @@ fn strip_snapshot_preamble(snapshot: &str) -> Result<String> {
     };
 
     Ok(snapshot[start..].to_string())
+}
+
+fn redact_snapshot_exports(snapshot: &str) -> String {
+    let keep_trailing_newline = snapshot.ends_with('\n');
+    let mut lines = snapshot.lines().map(str::to_string).collect::<Vec<_>>();
+
+    let Some(exports_idx) = lines.iter().position(|line| line.starts_with("# exports ")) else {
+        return snapshot.to_string();
+    };
+
+    let export_lines = lines.drain((exports_idx + 1)..).collect::<Vec<_>>();
+    let mut kept = Vec::new();
+    for line in export_lines {
+        let Some(key) = extract_export_key(&line) else {
+            continue;
+        };
+        if is_allowed_export_key(key) {
+            kept.push(line);
+        }
+    }
+
+    lines[exports_idx] = format!("# exports {}", kept.len());
+    lines.extend(kept);
+
+    let mut redacted = lines.join("\n");
+    if keep_trailing_newline {
+        redacted.push('\n');
+    }
+    redacted
+}
+
+fn extract_export_key(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let rest = match trimmed.split_whitespace().next() {
+        Some("export" | "declare" | "typeset" | "set" | "setenv") => {
+            let mut tokens = trimmed.split_whitespace();
+            let _cmd = tokens.next()?;
+            tokens.find(|token| !token.starts_with('-'))?
+        }
+        _ => trimmed,
+    };
+
+    let rest = rest.trim_start_matches('\'').trim_start_matches('"');
+    let mut end = 0;
+    for (idx, ch) in rest.char_indices() {
+        if (idx == 0 && (ch.is_ascii_alphabetic() || ch == '_'))
+            || (idx > 0 && (ch.is_ascii_alphanumeric() || ch == '_'))
+        {
+            end = idx + ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+    if end == 0 {
+        return None;
+    }
+    Some(&rest[..end])
+}
+
+fn is_allowed_export_key(key: &str) -> bool {
+    if key.starts_with("XDG_") {
+        return true;
+    }
+
+    matches!(
+        key,
+        "PATH"
+            | "HOME"
+            | "USER"
+            | "LOGNAME"
+            | "SHELL"
+            | "TERM"
+            | "TMPDIR"
+            | "TMP"
+            | "TEMP"
+            | "LANG"
+            | "LC_ALL"
+            | "LC_CTYPE"
+            | "COLORTERM"
+            | "PAGER"
+            | "GIT_PAGER"
+            | "EDITOR"
+            | "VISUAL"
+            | "CODEX_HOME"
+    )
 }
 
 async fn validate_snapshot(

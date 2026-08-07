@@ -30,6 +30,25 @@ use crate::session_runtime::SessionRuntime;
 const YIELD_GRACE_PERIOD: Duration = Duration::from_secs(1);
 const MIN_YIELD_TIME_FOR_GRACE: Duration = Duration::from_secs(10);
 
+#[cfg(test)]
+fn yield_timeout(yield_time_ms: u64) -> Duration {
+    let yield_time = Duration::from_millis(yield_time_ms);
+    if yield_time >= MIN_YIELD_TIME_FOR_GRACE {
+        yield_time.saturating_add(YIELD_GRACE_PERIOD)
+    } else {
+        yield_time
+    }
+}
+
+#[cfg(test)]
+fn execute_observe_mode(yield_time_ms: u64) -> runtime::ObserveMode {
+    if yield_time_ms == u64::MAX {
+        runtime::ObserveMode::UntilCompletion
+    } else {
+        runtime::ObserveMode::YieldAfter(yield_timeout(yield_time_ms))
+    }
+}
+
 pub struct InProcessCodeModeSession {
     runtime: SessionRuntime<ProtocolDelegate>,
     cell_execution_limits: CodeModeSessionCellExecutionLimits,
@@ -76,12 +95,14 @@ impl InProcessCodeModeSession {
 
     pub async fn execute(&self, request: ExecuteRequest) -> Result<StartedCell, String> {
         let yield_time_ms = request.yield_time_ms.unwrap_or(DEFAULT_EXEC_YIELD_TIME_MS);
+        let observe_mode = if yield_time_ms == u64::MAX {
+            runtime::ObserveMode::UntilCompletion
+        } else {
+            runtime::ObserveMode::YieldAfter(self.resolve_yield_timeout(yield_time_ms))
+        };
         let started = self
             .runtime
-            .execute(
-                runtime_request(request),
-                runtime::ObserveMode::YieldAfter(self.resolve_yield_timeout(yield_time_ms)),
-            )
+            .execute(runtime_request(request), observe_mode)
             .await
             .map_err(|error| error.to_string())?;
         let cell_id = protocol_cell_id(&started.cell_id);

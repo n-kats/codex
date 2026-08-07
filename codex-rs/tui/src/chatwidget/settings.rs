@@ -747,6 +747,7 @@ impl ChatWidget {
                 /*service_tier*/ None,
                 Some(self.effective_collaboration_mode()),
                 /*personality*/ None,
+                /*project_doc_paths*/ None,
             ),
         });
     }

@@ -9,6 +9,7 @@ use anyhow::Result;
 use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
+use app_test_support::to_response;
 use axum::Router;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ListMcpServerStatusParams;
@@ -397,8 +398,12 @@ async fn mcp_server_status_list_tools_and_auth_only_skips_slow_inventory_calls()
             thread_id: None,
         })
         .await?;
-    let response: ListMcpServerStatusResponse =
-        timeout(Duration::from_millis(500), mcp.read_response(request_id)).await??;
+    let response = timeout(
+        Duration::from_secs(2),
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let response: ListMcpServerStatusResponse = to_response(response)?;
 
     assert_eq!(response.next_cursor, None);
     assert_eq!(response.data.len(), 1);

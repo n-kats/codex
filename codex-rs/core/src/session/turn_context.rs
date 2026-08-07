@@ -365,7 +365,8 @@ impl TurnContext {
                 .permissions
                 .windows_sandbox_private_desktop,
             windows_sandbox_proxy_settings_mode: None,
-            use_legacy_landlock: self.config.features.use_legacy_landlock(),
+            use_legacy_landlock: self.config.features.use_legacy_landlock()
+                || crate::config::should_use_legacy_landlock(&self.permission_profile()),
         }
     }
 

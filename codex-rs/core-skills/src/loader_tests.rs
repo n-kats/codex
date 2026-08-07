@@ -39,7 +39,6 @@ struct BlockingRepoSkillRootFileSystem {
     walks_started: AtomicUsize,
     walk_started: Notify,
 }
-
 impl ExecutorFileSystem for BlockingRepoSkillRootFileSystem {
     fn canonicalize<'a>(
         &'a self,

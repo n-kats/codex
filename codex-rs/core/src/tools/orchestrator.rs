@@ -242,7 +242,8 @@ impl ToolOrchestrator {
         };
 
         // Platform-specific flag gating is handled by SandboxManager::select_initial.
-        let use_legacy_landlock = turn_ctx.config.features.use_legacy_landlock();
+        let use_legacy_landlock = turn_ctx.config.features.use_legacy_landlock()
+            || crate::config::should_use_legacy_landlock(&turn_ctx.permission_profile());
         let sandbox_policy_cwd = tool
             .sandbox_cwd(req)
             .cloned()

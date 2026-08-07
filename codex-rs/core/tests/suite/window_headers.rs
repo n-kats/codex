@@ -18,6 +18,22 @@ use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
+const USER_SHELL_NO_INJECT_WARNING: &str = "custom.user_shell.no_inject is false (default); `!` (UserShell) commands and their outputs will be injected into the model context and recorded to the local session history. Set custom.user_shell.no_inject=true to disable injection/recording, and avoid secrets in `!` commands/output.";
+
+async fn wait_for_compact_warning(codex: &Arc<CodexThread>) -> WarningEvent {
+    loop {
+        let warning_event =
+            wait_for_event(codex, |event| matches!(event, EventMsg::Warning(_))).await;
+        let EventMsg::Warning(warning) = warning_event else {
+            unreachable!("wait_for_event should only return warning events here");
+        };
+        if warning.message == USER_SHELL_NO_INJECT_WARNING {
+            continue;
+        }
+        return warning;
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn window_id_advances_after_compact_persists_on_resume_and_resets_on_fork() -> Result<()> {
     skip_if_no_network!(Ok(()));
@@ -118,11 +134,8 @@ async fn submit_user_turn(codex: &Arc<CodexThread>, text: &str) -> Result<()> {
 
 async fn submit_compact_turn(codex: &Arc<CodexThread>) -> Result<()> {
     codex.submit(Op::Compact).await?;
-    let warning_event = wait_for_event(codex, |event| matches!(event, EventMsg::Warning(_))).await;
-    let EventMsg::Warning(WarningEvent { message }) = warning_event else {
-        panic!("expected warning event after compact");
-    };
-    assert_eq!(message, COMPACT_WARNING_MESSAGE);
+    let warning = wait_for_compact_warning(codex).await;
+    assert_eq!(warning.message, COMPACT_WARNING_MESSAGE);
     wait_for_event(codex, |event| matches!(event, EventMsg::TurnComplete(_))).await;
     Ok(())
 }

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use app_test_support::ChatGptAuthFixture;
+// use app_test_support::ChatGptAuthFixture;
 use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
 use app_test_support::create_fake_paginated_rollout;
@@ -9,7 +9,7 @@ use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::rollout_path;
 use app_test_support::to_response;
-use app_test_support::write_chatgpt_auth;
+// use app_test_support::write_chatgpt_auth;
 use codex_app_server_protocol::ApprovalsReviewer;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::JSONRPCError;
@@ -43,9 +43,9 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
-use codex_config::types::AuthCredentialsStoreMode;
+// use codex_config::types::AuthCredentialsStoreMode;
 use codex_features::Feature;
-use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
+// use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_protocol::ThreadId;
 use codex_protocol::items::TurnItem as CoreTurnItem;
 use codex_protocol::items::UserMessageItem;
@@ -70,11 +70,11 @@ use serde_json::Value;
 use serde_json::json;
 use tempfile::TempDir;
 use tokio::time::timeout;
-use wiremock::Mock;
-use wiremock::MockServer;
-use wiremock::ResponseTemplate;
-use wiremock::matchers::method;
-use wiremock::matchers::path;
+// use wiremock::Mock;
+// use wiremock::MockServer;
+// use wiremock::ResponseTemplate;
+// use wiremock::matchers::method;
+// use wiremock::matchers::path;
 
 use super::analytics::assert_basic_thread_initialized_event;
 use super::analytics::mount_analytics_capture;
@@ -1776,6 +1776,8 @@ async fn thread_fork_with_empty_path_uses_thread_id() -> Result<()> {
 }
 
 #[tokio::test]
+// Cloud-managed config loading is disabled in the custom CLI.
+#[cfg(any())]
 async fn thread_fork_surfaces_cloud_config_bundle_load_errors() -> Result<()> {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

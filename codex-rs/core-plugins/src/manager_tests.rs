@@ -1130,6 +1130,7 @@ approval_mode = "approve"
         server.tools.get("search"),
         Some(&McpServerToolConfig {
             approval_mode: Some(AppToolApproval::Approve),
+            wait_for_mcp_tool_completion: false,
         })
     );
 }

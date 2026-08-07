@@ -17,16 +17,30 @@ use super::telemetry::CodeModeToolCallGuard;
 
 type CodeModeNestedTool = (Arc<ToolSpec>, Option<Arc<dyn CoreToolRuntime>>);
 
+fn code_mode_yield_time_ms(requested: Option<u64>, contains_waiting_mcp_tool: bool) -> Option<u64> {
+    if contains_waiting_mcp_tool {
+        Some(u64::MAX)
+    } else {
+        requested
+    }
+}
+
 pub struct CodeModeExecuteHandler {
     spec: ToolSpec,
     nested_tool_specs: Vec<CodeModeNestedTool>,
+    contains_waiting_mcp_tool: bool,
 }
 
 impl CodeModeExecuteHandler {
-    pub(crate) fn new(spec: ToolSpec, nested_tool_specs: Vec<CodeModeNestedTool>) -> Self {
+    pub(crate) fn new(
+        spec: ToolSpec,
+        nested_tool_specs: Vec<CodeModeNestedTool>,
+        contains_waiting_mcp_tool: bool,
+    ) -> Self {
         Self {
             spec,
             nested_tool_specs,
+            contains_waiting_mcp_tool,
         }
     }
 
@@ -61,6 +75,8 @@ impl CodeModeExecuteHandler {
         }
         enabled_tools.sort_by(|left, right| left.name.cmp(&right.name));
         enabled_tools.dedup_by(|left, right| left.name == right.name);
+        let yield_time_ms =
+            code_mode_yield_time_ms(args.yield_time_ms, self.contains_waiting_mcp_tool);
         let started_at = std::time::Instant::now();
         let started_cell = exec
             .session
@@ -70,7 +86,7 @@ impl CodeModeExecuteHandler {
                 tool_call_id: call_id.clone(),
                 enabled_tools,
                 source: args.code.clone(),
-                yield_time_ms: args.yield_time_ms,
+                yield_time_ms,
                 max_output_tokens: args.max_output_tokens,
             })
             .await
@@ -133,6 +149,22 @@ impl CodeModeExecuteHandler {
         handle_runtime_response(&exec, response, args.max_output_tokens, started_at)
             .await
             .map_err(FunctionCallError::RespondToModel)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::code_mode_yield_time_ms;
+
+    #[test]
+    fn waiting_mcp_tools_override_requested_intermediate_yield() {
+        assert_eq!(code_mode_yield_time_ms(Some(10_000), true), Some(u64::MAX));
+    }
+
+    #[test]
+    fn yield_time_is_preserved_without_waiting_mcp_tools() {
+        assert_eq!(code_mode_yield_time_ms(Some(10_000), false), Some(10_000));
+        assert_eq!(code_mode_yield_time_ms(None, false), None);
     }
 }
 

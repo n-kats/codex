@@ -482,19 +482,13 @@ impl ChatWidget {
         root_name
     }
 
-    /// Produces the terminal-title `project` value.
-    ///
-    /// This prefers the cached project-root name and falls back to the current
-    /// directory name when no project root can be inferred.
+    /// Produces the terminal-title `project` value from the active cwd.
     fn terminal_title_project_name(&mut self) -> Option<String> {
-        let project = self.status_line_project_root_name().or_else(|| {
-            let cwd = self.status_line_cwd();
-            Some(
-                cwd.file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_else(|| format_directory_display(cwd, /*max_width*/ None)),
-            )
-        })?;
+        let cwd = self.status_line_cwd();
+        let project = cwd
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| format_directory_display(cwd, /*max_width*/ None));
         Some(Self::truncate_terminal_title_part(
             project, /*max_chars*/ 24,
         ))

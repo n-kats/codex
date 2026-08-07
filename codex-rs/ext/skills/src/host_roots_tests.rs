@@ -398,8 +398,30 @@ async fn repo_ancestry_without_project_marker_does_not_walk_parents() {
     let cwd = outer.join("nested/inner");
     fs::create_dir_all(outer.join(".agents/skills")).expect("create outer skills");
     fs::create_dir_all(cwd.join(".agents/skills")).expect("create cwd skills");
+    // The test temp directory may itself be nested inside a checkout, so use a
+    // unique marker to keep ambient parent repositories out of this scenario.
+    let project_root_marker = format!(
+        ".codex-test-project-root-marker-{}",
+        temp_dir
+            .path()
+            .file_name()
+            .expect("temp dir name")
+            .to_string_lossy()
+    );
+    let mut config = toml::map::Map::new();
+    config.insert(
+        "project_root_markers".to_string(),
+        toml::Value::Array(vec![toml::Value::String(project_root_marker)]),
+    );
+    let config_stack = stack(vec![ConfigLayerEntry::new(
+        ConfigLayerSource::User {
+            file: outer.join("config.toml"),
+            profile: None,
+        },
+        toml::Value::Table(config),
+    )]);
 
-    let roots = repo_agents_skill_roots(Some(Arc::clone(&LOCAL_FS)), &stack(Vec::new()), &cwd)
+    let roots = repo_agents_skill_roots(Some(Arc::clone(&LOCAL_FS)), &config_stack, &cwd)
         .await
         .into_iter()
         .map(|root| root.path)

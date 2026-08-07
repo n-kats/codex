@@ -36,6 +36,7 @@ const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str =
     "Press Ctrl+C to return to the main thread first.";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
 const RAW_USAGE: &str = "Usage: /raw [on|off]";
+const CUSTOM_AGENTS_USAGE: &str = "Usage: /custom-agents <path> [path...] | clear";
 const USAGE_CHATGPT_LOGIN_REQUIRED: &str = "Sign in with ChatGPT to use /usage.";
 
 impl ChatWidget {
@@ -434,6 +435,12 @@ impl ChatWidget {
             }
             SlashCommand::Skills => {
                 self.open_skills_menu();
+            }
+            SlashCommand::CustomAgents => {
+                self.add_info_message(
+                    CUSTOM_AGENTS_USAGE.to_string(),
+                    Some("Use `clear` to restore automatic AGENTS.md discovery.".to_string()),
+                );
             }
             SlashCommand::Import => {
                 self.app_event_tx
@@ -909,6 +916,9 @@ impl ChatWidget {
                 self.app_event_tx
                     .send(AppEvent::BeginWindowsSandboxGrantReadRoot { path: args });
             }
+            SlashCommand::CustomAgents if !trimmed.is_empty() => {
+                self.apply_custom_agents_command(trimmed);
+            }
             SlashCommand::Pets
                 if matches!(
                     args.trim().to_ascii_lowercase().as_str(),
@@ -925,6 +935,86 @@ impl ChatWidget {
         if source == SlashCommandDispatchSource::Live && cmd != SlashCommand::Goal {
             self.bottom_pane.drain_pending_submission_state();
         }
+    }
+
+    fn apply_custom_agents_command(&mut self, trimmed: &str) {
+        let normalized = trimmed.to_ascii_lowercase();
+        let project_doc_paths = if matches!(
+            normalized.as_str(),
+            "clear" | "off" | "none" | "auto" | "default"
+        ) {
+            Vec::new()
+        } else {
+            let base_cwd = self
+                .current_cwd
+                .clone()
+                .unwrap_or_else(|| self.config.cwd.to_path_buf());
+            let mut paths = Vec::new();
+            for raw_path in trimmed.split_whitespace() {
+                let candidate = std::path::PathBuf::from(raw_path);
+                let path = if candidate.is_absolute() {
+                    candidate
+                } else {
+                    base_cwd.join(candidate)
+                };
+                if !path.exists() {
+                    self.add_error_message(format!(
+                        "`/custom-agents` path does not exist: {}",
+                        path.display()
+                    ));
+                    return;
+                }
+                if !path.is_file() {
+                    self.add_error_message(format!(
+                        "`/custom-agents` path is not a file: {}",
+                        path.display()
+                    ));
+                    return;
+                }
+                match path.canonicalize() {
+                    Ok(path) => paths.push(path),
+                    Err(err) => {
+                        self.add_error_message(format!(
+                            "Failed to resolve `/custom-agents` path {}: {err}",
+                            path.display()
+                        ));
+                        return;
+                    }
+                }
+            }
+            if paths.is_empty() {
+                self.add_error_message(CUSTOM_AGENTS_USAGE.to_string());
+                return;
+            }
+            paths
+        };
+
+        let message = if project_doc_paths.is_empty() {
+            "`/custom-agents` restored automatic AGENTS.md discovery.".to_string()
+        } else {
+            let joined = project_doc_paths
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("`/custom-agents` applied: {joined}")
+        };
+        self.submit_op(AppCommand::override_turn_context(
+            /*cwd*/ None,
+            /*approval_policy*/ None,
+            /*approvals_reviewer*/ None,
+            /*permission_profile*/ None,
+            /*active_permission_profile*/ None,
+            /*windows_sandbox_level*/ None,
+            /*model*/ None,
+            /*effort*/ None,
+            /*summary*/ None,
+            /*service_tier*/ None,
+            /*collaboration_mode*/ None,
+            /*personality*/ None,
+            Some(project_doc_paths),
+        ));
+        self.add_info_message(message, /*hint*/ None);
     }
 
     pub(super) fn submit_queued_slash_prompt(
@@ -1088,6 +1178,7 @@ impl ChatWidget {
             | SlashCommand::Diff
             | SlashCommand::App
             | SlashCommand::Rename
+            | SlashCommand::CustomAgents
             | SlashCommand::TestApproval => QueueDrain::Continue,
             SlashCommand::Feedback
             | SlashCommand::New

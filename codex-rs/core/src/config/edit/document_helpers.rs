@@ -181,6 +181,9 @@ fn serialize_mcp_server_tool(config: &McpServerToolConfig) -> TomlItem {
             AppToolApproval::Approve => "approve",
         });
     }
+    if config.wait_for_mcp_tool_completion {
+        entry["wait_for_mcp_tool_completion"] = value(true);
+    }
     TomlItem::Table(entry)
 }
 

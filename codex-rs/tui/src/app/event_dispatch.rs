@@ -1651,6 +1651,7 @@ impl App {
                                         /*service_tier*/ None,
                                         /*collaboration_mode*/ None,
                                         /*personality*/ None,
+                                        /*project_doc_paths*/ None,
                                     ),
                                 ));
                                 self.app_event_tx.send(
@@ -1678,6 +1679,7 @@ impl App {
                                         /*service_tier*/ None,
                                         /*collaboration_mode*/ None,
                                         /*personality*/ None,
+                                        /*project_doc_paths*/ None,
                                     ),
                                 ));
                                 if self.apply_permission_profile_selection(selection).await {
@@ -1707,6 +1709,7 @@ impl App {
                                         /*service_tier*/ None,
                                         /*collaboration_mode*/ None,
                                         /*personality*/ None,
+                                        /*project_doc_paths*/ None,
                                     ),
                                 ));
                                 self.app_event_tx.send(AppEvent::UpdateAskForApprovalPolicy(

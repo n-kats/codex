@@ -342,7 +342,9 @@ pub fn build_exec_request(
         sandbox_permissions: _,
     } = params;
 
-    let enforce_managed_network = network.is_some();
+    let use_legacy_landlock =
+        use_legacy_landlock || crate::config::should_use_legacy_landlock(permission_profile);
+    let enforce_managed_network = network.is_some() && !use_legacy_landlock;
     let sandbox_type = select_process_exec_tool_sandbox_type(
         permission_profile,
         windows_sandbox_level,

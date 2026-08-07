@@ -1,0 +1,73 @@
+# Sample config for local TUI testing in this fork.
+#
+# Usage:
+#   make run-tui
+# or:
+#   make run-tui RUN_TUI_CONFIG=sample_config.toml
+#
+# Edit this file to tweak test settings.
+
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+custom.user_shell.no_inject=true
+default_permissions = "test_config"
+
+project_doc_paths = ["/workspace/AGENTS.md"]
+model = "gpt-5.5"
+model_reasoning_effort = "medium"
+[memories]
+generate_memories = false
+use_memories = false
+
+[shell_environment_policy]
+inherit = "core"
+ignore_default_excludes = false
+experimental_use_profile = false
+include_only = [
+  "PATH",
+  "HOME",
+  "USER",
+  "SHELL",
+  "LANG",
+  "LC_ALL",
+  "UV_*",
+]
+
+[shell_environment_policy.set]
+HOME = "/home/ubuntu"
+USER = "ubuntu"
+UV_CACHE_DIR = "/workspace/_cache/codex_uv_cache"
+UV_PROJECT_ENVIRONMENT = "/workspace/_cache/codex_venv"
+UV_LINK_MODE = "copy"
+
+[features]
+unified_exec = true
+
+[tui.keymap.composer]
+submit = ["ctrl-enter", "ctrl-j"]
+
+[tui.keymap.editor]
+insert_newline = "enter"
+
+[tui.model_availability_nux]
+"gpt-5.5" = 4
+"gpt-5.6-sol" = 4
+
+[custom.theme.diff]
+# Optional: tweak TUI diff background colors while running `make run-tui`.
+add_line_bg = "#ccffcc"
+del_line_bg = "#cccccc"
+
+[projects."/workspace"]
+trust_level = "trusted"
+
+[permissions.test_config]
+extends = ":workspace"
+description = "Broad docker-internal access with explicit denials for the lab files."
+
+[permissions.test_config.filesystem]
+"/workspace" = "write"
+"/workspace/_cache/codex_home_debug/auth.json" = "deny"
+"/workspace/_local/codex_homes/auth.json" = "deny"
+"/workspace/_custom_tests/not_allowed_dir" = "deny"
+"/workspace/_custom_tests/not_allowed_file" = "deny"

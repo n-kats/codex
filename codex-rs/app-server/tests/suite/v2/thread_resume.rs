@@ -1,5 +1,5 @@
 use anyhow::Result;
-use app_test_support::ChatGptAuthFixture;
+// use app_test_support::ChatGptAuthFixture;
 use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
 use app_test_support::create_apply_patch_sse_response;
@@ -14,7 +14,7 @@ use app_test_support::create_shell_command_sse_response;
 use app_test_support::rollout_path;
 use app_test_support::test_absolute_path;
 use app_test_support::to_response;
-use app_test_support::write_chatgpt_auth;
+// use app_test_support::write_chatgpt_auth;
 use chrono::Utc;
 use codex_app_server_protocol::ApprovalsReviewer;
 use codex_app_server_protocol::AskForApproval;
@@ -65,10 +65,10 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
-use codex_config::types::AuthCredentialsStoreMode;
+// use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_features::Feature;
-use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
+// use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::ModeKind;
@@ -121,11 +121,11 @@ use tempfile::TempDir;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use uuid::Uuid;
-use wiremock::Mock;
-use wiremock::MockServer;
-use wiremock::ResponseTemplate;
-use wiremock::matchers::method;
-use wiremock::matchers::path;
+// use wiremock::Mock;
+// use wiremock::MockServer;
+// use wiremock::ResponseTemplate;
+// use wiremock::matchers::method;
+// use wiremock::matchers::path;
 
 use super::analytics::assert_basic_thread_initialized_event;
 use super::analytics::mount_analytics_capture;
@@ -4344,6 +4344,8 @@ required = true"#,
 }
 
 #[tokio::test]
+// Cloud-managed config loading is disabled in the custom CLI.
+#[cfg(any())]
 async fn thread_resume_surfaces_cloud_config_bundle_load_errors() -> Result<()> {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

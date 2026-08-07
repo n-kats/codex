@@ -50,6 +50,7 @@ pub struct LoaderOverrides {
     /// Remote app servers own their authentication policy independently.
     pub ignore_login_requirements: bool,
     pub ignore_user_config: bool,
+    pub ignore_project_config: bool,
     pub ignore_user_and_project_exec_policy_rules: bool,
     //TODO(gt): Add a macos_ prefix to this field and remove the target_os check.
     #[cfg(target_os = "macos")]
@@ -72,6 +73,7 @@ impl LoaderOverrides {
             ignore_managed_requirements: false,
             ignore_login_requirements: false,
             ignore_user_config: false,
+            ignore_project_config: false,
             ignore_user_and_project_exec_policy_rules: false,
             #[cfg(target_os = "macos")]
             managed_preferences_base64: Some(String::new()),

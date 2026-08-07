@@ -200,6 +200,7 @@ invalid = ["#,
         &[] as &[(String, TomlValue)],
         LoaderOverrides {
             ignore_user_config: true,
+            ignore_project_config: true,
             ..Default::default()
         },
         &codex_config::NoopThreadConfigLoader,
@@ -230,6 +231,7 @@ async fn ignore_rules_marks_config_stack_for_exec_policy_rule_skip() -> std::io:
         &[] as &[(String, TomlValue)],
         LoaderOverrides {
             ignore_user_and_project_exec_policy_rules: true,
+            ignore_project_config: false,
             ..Default::default()
         },
         &codex_config::NoopThreadConfigLoader,
@@ -3064,6 +3066,7 @@ async fn codex_home_is_not_loaded_as_project_layer_from_home_dir() -> std::io::R
     tokio::fs::write(
         codex_home.join(CONFIG_TOML_FILE),
         r#"foo = "user"
+project_root_markers = []
 "#,
     )
     .await?;
@@ -3187,7 +3190,7 @@ profile = "ignored"
         &codex_home_untrusted,
         &project_root,
         TrustLevel::Untrusted,
-        /*project_root_markers*/ None,
+        /*project_root_markers*/ Some(Vec::new()),
     )
     .await?;
     let untrusted_config_path = codex_home_untrusted.join(CONFIG_TOML_FILE);
@@ -3239,6 +3242,7 @@ profile = "ignored"
     tokio::fs::write(
         codex_home_unknown.join(CONFIG_TOML_FILE),
         r#"foo = "user"
+project_root_markers = []
 "#,
     )
     .await?;

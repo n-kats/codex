@@ -260,6 +260,7 @@ impl ChatWidget {
                 /*service_tier*/ None,
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
+                /*project_doc_paths*/ None,
             )));
             tx.send(AppEvent::UpdateAskForApprovalPolicy(approval));
             tx.send(AppEvent::UpdateActivePermissionProfile(

@@ -680,6 +680,7 @@ fn register_code_mode_executors(
     let mut exec_prompt_tool_specs = Vec::new();
     let mut deferred_exec_prompt_tool_specs = Vec::new();
     let mut included_deferred_mcp_output_schema = false;
+    let mut contains_waiting_mcp_tool = false;
     let deferred_tools_guidance_enabled = search_tool_enabled(turn_context);
     for tool in registry.entries() {
         let exposure = tool.exposure;
@@ -727,6 +728,7 @@ fn register_code_mode_executors(
                 continue;
             }
         }
+        contains_waiting_mcp_tool |= tool.runtime.waits_for_mcp_tool_completion();
 
         if exposure == ToolExposure::Deferred {
             if deferred_tools_guidance_enabled
@@ -772,6 +774,7 @@ fn register_code_mode_executors(
             },
         ),
         code_mode_nested_tool_specs,
+        contains_waiting_mcp_tool,
     );
 
     registry.prepend_trusted(Arc::new(CodeModeWaitHandler));

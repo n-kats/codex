@@ -73,6 +73,20 @@ fn assert_sandbox_denied(error: &std::io::Error) {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn should_skip_bwrap_tests() -> bool {
+    match Command::new("bwrap").arg("true").output() {
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            !output.status.success()
+                && (stderr.contains("No permissions to create a new namespace")
+                    || stderr.contains("Operation not permitted")
+                    || stderr.contains("Permission denied"))
+        }
+        Err(_) => true,
+    }
+}
+
 fn assert_normalized_path_rejected(error: &std::io::Error) {
     match error.kind() {
         std::io::ErrorKind::NotFound => assert!(
@@ -221,6 +235,12 @@ async fn sandboxed_file_system_helper_finds_bwrap_on_preserved_path() -> Result<
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_read_file_materializes_environment_workspace_roots() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    if should_skip_bwrap_tests() {
+        eprintln!("skipping bwrap test: bwrap sandbox prerequisites are unavailable");
+        return Ok(());
+    }
+
     let context = create_file_system_context(FileSystemImplementation::Remote).await?;
     let file_system = context.file_system;
     let tmp = TempDir::new()?;
