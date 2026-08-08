@@ -172,10 +172,6 @@ pub use codex_config::LoaderOverrides;
 pub use codex_network_proxy::NetworkProxyAuditMetadata;
 use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
 pub use codex_sandboxing::system_bwrap_warning;
-pub fn should_use_legacy_landlock(permission_profile: &PermissionProfile) -> bool {
-    self::system_bwrap_warning(permission_profile)
-        .is_some_and(|warning| !warning.starts_with("Codex could not find bubblewrap on PATH."))
-}
 pub use managed_features::ManagedFeatures;
 pub use network_proxy_spec::NetworkProxySpec;
 pub use network_proxy_spec::StartedNetworkProxy;
@@ -1798,8 +1794,7 @@ impl Config {
             approvals_reviewer: self.approvals_reviewer,
             environment_cwds: HashMap::new(),
             codex_linux_sandbox_exe: self.codex_linux_sandbox_exe.clone(),
-            use_legacy_landlock: self.features.use_legacy_landlock()
-                || should_use_legacy_landlock(self.permissions.permission_profile()),
+            use_legacy_landlock: self.features.use_legacy_landlock(),
             apps_enabled: self.features.enabled(Feature::Apps),
             prefix_mcp_tool_names: self.prefix_mcp_tool_names(),
             non_prefixed_mcp_tool_servers: if self

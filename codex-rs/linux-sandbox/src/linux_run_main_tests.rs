@@ -615,7 +615,7 @@ fn apply_seccomp_then_exec_with_legacy_landlock_panics() {
 }
 
 #[test]
-fn legacy_landlock_accepts_split_only_filesystem_policies() {
+fn legacy_landlock_rejects_split_only_filesystem_policies() {
     let temp_dir = tempfile::TempDir::new().expect("tempdir");
     let docs = temp_dir.path().join("docs");
     std::fs::create_dir_all(&docs).expect("create docs");
@@ -635,12 +635,16 @@ fn legacy_landlock_accepts_split_only_filesystem_policies() {
         },
     ]);
 
-    ensure_legacy_landlock_mode_supports_policy(
-        /*use_legacy_landlock*/ true,
-        &policy,
-        NetworkSandboxPolicy::Restricted,
-        temp_dir.path(),
-    );
+    let result = std::panic::catch_unwind(|| {
+        ensure_legacy_landlock_mode_supports_policy(
+            /*use_legacy_landlock*/ true,
+            &policy,
+            NetworkSandboxPolicy::Restricted,
+            temp_dir.path(),
+        );
+    });
+
+    assert!(result.is_err());
 }
 
 #[test]

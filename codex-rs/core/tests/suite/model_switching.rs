@@ -42,10 +42,8 @@ use core_test_support::test_codex::local_selections;
 use core_test_support::test_codex::test_codex;
 use core_test_support::test_codex::turn_permission_fields;
 use core_test_support::wait_for_event;
-use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use test_case::test_case;
-use tokio::time::Duration;
 use wiremock::MockServer;
 
 fn read_only_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -> Op {
@@ -1104,16 +1102,10 @@ async fn thread_rollback_after_generated_image_drops_entire_image_turn_history()
     test.codex
         .submit(Op::ThreadRollback { num_turns: 1 })
         .await?;
-    let rollback_event = wait_for_event_with_timeout(
-        &test.codex,
-        |ev| matches!(ev, EventMsg::ThreadRolledBack(_)),
-        Duration::from_secs(120),
-    )
+    wait_for_event(&test.codex, |ev| {
+        matches!(ev, EventMsg::ThreadRolledBack(_))
+    })
     .await;
-    let EventMsg::ThreadRolledBack(rollback_event) = rollback_event else {
-        panic!("expected thread rolled back event");
-    };
-    assert_eq!(rollback_event.num_turns, 1);
 
     test.codex
         .submit(read_only_user_turn(

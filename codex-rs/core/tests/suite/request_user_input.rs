@@ -30,7 +30,6 @@ use core_test_support::test_codex::test_codex;
 use core_test_support::test_codex::turn_permission_fields;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
-use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
@@ -310,16 +309,11 @@ async fn request_user_input_interrupt_emits_deferred_token_count() -> anyhow::Re
 
     codex.submit(Op::Interrupt).await?;
 
-    let token_count = match wait_for_event_with_timeout(
-        &codex,
-        |event| matches!(event, EventMsg::TokenCount(_)),
-        Duration::from_secs(60),
-    )
-    .await
-    {
-        EventMsg::TokenCount(token_count) => token_count,
-        other => panic!("expected token count event, got {other:?}"),
-    };
+    let token_count = wait_for_event_match(&codex, |event| match event {
+        EventMsg::TokenCount(token_count) => Some(token_count.clone()),
+        _ => None,
+    })
+    .await;
     assert_eq!(
         token_count
             .info

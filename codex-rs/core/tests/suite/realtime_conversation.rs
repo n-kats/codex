@@ -1257,10 +1257,7 @@ async fn conversation_webrtc_close_while_sideband_connecting_drops_pending_join(
         _ => None,
     })
     .await;
-    assert!(matches!(
-        closed.reason.as_deref(),
-        Some("requested" | "transport_closed")
-    ));
+    assert_eq!(closed.reason.as_deref(), Some("requested"));
 
     release_handshake_tx
         .send(())
@@ -4151,10 +4148,7 @@ async fn conversation_close_routes_only_remaining_transcript_tail_once() -> Resu
         _ => None,
     })
     .await;
-    assert!(matches!(
-        closed.reason.as_deref(),
-        Some("requested" | "transport_closed")
-    ));
+    assert_eq!(closed.reason.as_deref(), Some("requested"));
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     while response_mock.requests().len() < 2 {

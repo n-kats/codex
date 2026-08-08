@@ -38,6 +38,7 @@
 - Cloud Tasks crate を workspace member として残すだけでは、workspace 全体の `cargo test` 等で再びビルドされるため、関連 crate は workspace members から外す。
 - `codex-cli` から依存だけを削っても、`main.rs` の clap 定義と dispatch が残るとビルドできない。
 - `tui/src/public_widgets/composer_input.rs` の Cloud Tasks 言及はコメントであり、通常コードの依存ではない。
+- `cli/src/mcp_cmd/cloud_config.rs` に残すコメントアウト済みの cloud-managed configuration 実装は意図的な残置である。通常の custom CLI ビルドから cloud 依存を外しつつ、上流との差分を小さく保ち、rebase 時に cloud 経路の変更やコンフリクトを見つけやすくするため、削除せず参照用に保持する。
 - 上流 rebase では Cloud Tasks の crate 追加、CLI の `Cloud` サブコマンド、Cargo/Bazel の workspace 定義が競合候補になる。Cloud Tasks を戻さない方針を維持し、必要なら上流側の変更を custom から除外する。
 
 ## 動作確認手順

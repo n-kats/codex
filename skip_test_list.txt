@@ -11,9 +11,6 @@ remote_models_merge_adds_new_high_priority_first
 turn_start_jsonrpc_span_parents_core_turn_spans
 # guardian denial output routing can be unstable under test load
 suite::network_approval::guardian_network_approval_preserves_action_and_outcome_routing
-# rollback event delivery can time out under test load
-suite::rollout_budget::restates_the_current_remainder_after_rollback
-
 # other almost-specific skips
 # The custom fork removes the `codex cloud` command.
 strict_config_is_not_supported_for_cloud_command
@@ -112,8 +109,6 @@ suite::rmcp_client::stdio_image_responses_resize_large_image
 suite::unified_exec::write_stdin_clamps_model_requested_max_output_tokens_to_policy
 # delayed output capture misses one interaction in almost
 suite::unified_exec::unified_exec_terminal_interaction_captures_delayed_output
-# remote control auth-change wakeup is timing-sensitive in almost
-transport::remote_control::tests::remote_control_waits_for_account_id_before_enrolling
 # exec-server unix sandbox tests require bwrap user namespaces in this environment
 file_system_sandboxed_canonicalize_resolves_directory_symlink::
 shared::file_system_sandboxed_metadata_and_read_allow_readable_root::
