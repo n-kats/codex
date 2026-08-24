@@ -167,10 +167,17 @@ async fn shell_snapshot_v2_filters_profile_exports_and_stays_in_memory(
     } else {
         "unset() { exit 41; }\nbuiltin() { :; }\n"
     };
+    let capture_profile = if use_sandbox {
+        // The sandbox case is intentionally read-only, so do not write the
+        // cache marker from the startup profile there.
+        ""
+    } else {
+        "printf x >> \"$HOME/captures\"\n"
+    };
     std::fs::write(
         &profile_path,
         format!(
-            "printf x >> \"$HOME/captures\"\nexport PATH=\"$HOME/profile-bin:/usr/bin:/bin\"\nexport PROFILE_ALLOWED=profile\nexport PROFILE_SECRET=secret\nexport PROFILE_DENIED=denied\nprofile_helper() {{ printf helper; }}\n{shadowed_builtins}{padding}"
+            "{capture_profile}export PATH=\"$HOME/profile-bin:/usr/bin:/bin\"\nexport PROFILE_ALLOWED=profile\nexport PROFILE_SECRET=secret\nexport PROFILE_DENIED=denied\nprofile_helper() {{ printf helper; }}\n{shadowed_builtins}{padding}"
         ),
     )?;
     if shell_name == "zsh" && automatic_startup {
@@ -261,7 +268,9 @@ async fn shell_snapshot_v2_filters_profile_exports_and_stays_in_memory(
         );
     }
 
-    assert_eq!(std::fs::read_to_string(home.path().join("captures"))?, "x");
+    if !use_sandbox {
+        assert_eq!(std::fs::read_to_string(home.path().join("captures"))?, "x");
+    }
     if let Some(server) = context._server {
         assert!(!server.codex_home().join("shell_snapshots").exists());
     }

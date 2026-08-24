@@ -348,6 +348,7 @@ pub(super) async fn run_main_inner(
         .await?;
     startup_draft.apply_config(&config);
 
+    #[cfg(feature = "cloud")]
     let cloud_config_bundle = if workload_identity_selected {
         cloud_config_bundle
     } else {

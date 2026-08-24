@@ -1,0 +1,11 @@
+[project]
+name = "exec-mcp"
+version = "0.1.0"
+description = "Rust向けコマンド実行MCPサーバー（FastMCP）"
+requires-python = ">=3.12"
+dependencies = [
+  "fastmcp<3",
+]
+
+[project.scripts]
+exec-mcp = "server:main"

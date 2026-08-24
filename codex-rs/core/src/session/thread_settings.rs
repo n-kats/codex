@@ -53,6 +53,7 @@ pub(super) async fn prepare_update(
         service_tier,
         collaboration_mode,
         personality,
+        project_doc_paths,
     } = overrides;
     let collaboration_mode = match collaboration_mode {
         Some(collaboration_mode) => collaboration_mode,
@@ -79,6 +80,7 @@ pub(super) async fn prepare_update(
         reasoning_summary: summary,
         service_tier,
         personality,
+        project_doc_paths,
         ..Default::default()
     }
 }

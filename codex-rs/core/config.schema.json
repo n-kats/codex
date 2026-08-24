@@ -652,6 +652,9 @@
             "connectors": {
               "type": "boolean"
             },
+            "content_item_kinds": {
+              "type": "boolean"
+            },
             "current_time_reminder": {
               "$ref": "#/definitions/FeatureToml_for_CurrentTimeReminderConfigToml"
             },
@@ -1111,6 +1114,82 @@
         "external"
       ],
       "type": "string"
+    },
+    "CustomConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "theme": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomThemeToml"
+            }
+          ],
+          "default": {
+            "diff": null
+          }
+        },
+        "user_shell": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomUserShellToml"
+            }
+          ],
+          "default": {
+            "no_inject": null
+          }
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeDiffToml": {
+      "additionalProperties": false,
+      "properties": {
+        "add_line_bg": {
+          "type": "string"
+        },
+        "content": {
+          "type": "boolean"
+        },
+        "del_line_bg": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "gutter": {
+          "type": "boolean"
+        },
+        "line_bg": {
+          "type": "boolean"
+        },
+        "sign": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "CustomThemeToml": {
+      "additionalProperties": false,
+      "properties": {
+        "diff": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/CustomThemeDiffToml"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "CustomUserShellToml": {
+      "additionalProperties": false,
+      "properties": {
+        "no_inject": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
     },
     "ExperimentalRequestUserInput": {
       "additionalProperties": false,
@@ -1906,6 +1985,10 @@
             }
           ],
           "description": "Approval mode for this tool."
+        },
+        "wait_for_mcp_tool_completion": {
+          "description": "Wait for this MCP tool to complete before continuing the model stream.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -5475,6 +5558,22 @@
     "computer_use": {
       "$ref": "#/definitions/ComputerUseConfigToml"
     },
+    "custom": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/CustomConfigToml"
+        }
+      ],
+      "default": {
+        "theme": {
+          "diff": null
+        },
+        "user_shell": {
+          "no_inject": null
+        }
+      },
+      "description": "Custom fork-specific settings."
+    },
     "default_permissions": {
       "description": "Default permissions profile to apply. Names starting with `:` refer to built-in profiles; other names are resolved from the `[permissions]` table.",
       "type": "string"
@@ -5623,6 +5722,9 @@
           "type": "boolean"
         },
         "connectors": {
+          "type": "boolean"
+        },
+        "content_item_kinds": {
           "type": "boolean"
         },
         "current_time_reminder": {

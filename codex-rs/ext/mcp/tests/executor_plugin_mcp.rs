@@ -253,18 +253,21 @@ default_tools_approval_mode = "auto"
                     "read".to_string(),
                     McpServerToolConfig {
                         approval_mode: Some(AppToolApproval::Prompt),
+                        wait_for_mcp_tool_completion: false,
                     },
                 ),
                 (
                     "deploy".to_string(),
                     McpServerToolConfig {
                         approval_mode: Some(AppToolApproval::Prompt),
+                        wait_for_mcp_tool_completion: false,
                     },
                 ),
                 (
                     "trusted".to_string(),
                     McpServerToolConfig {
                         approval_mode: Some(AppToolApproval::Approve),
+                        wait_for_mcp_tool_completion: false,
                     },
                 ),
             ]),

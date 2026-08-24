@@ -30,6 +30,7 @@ use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
 use codex_config::config_toml::ThreadStoreToml;
 use codex_config::config_toml::validate_model_providers;
+use codex_config::custom::CustomThemeDiffToml;
 use codex_config::loader::load_config_layers_state;
 use codex_config::loader::project_trust_key;
 use codex_config::permissions_toml::PermissionProfileToml;
@@ -157,6 +158,7 @@ use toml_edit::DocumentMut;
 
 pub(crate) mod agent_roles;
 mod auth_keyring;
+pub(crate) mod custom;
 pub mod edit;
 mod managed_features;
 mod network_proxy_spec;
@@ -317,6 +319,8 @@ pub struct Permissions {
     pub allow_login_shell: bool,
     /// Policy used to build process environments for shell/unified exec.
     pub shell_environment_policy: ShellEnvironmentPolicy,
+    /// Custom fork-specific permission overrides.
+    pub(crate) custom: custom::CustomPermissions,
     /// Effective Windows sandbox mode derived from `[windows].sandbox` or
     /// legacy feature keys.
     pub windows_sandbox_mode: Option<WindowsSandboxModeToml>,
@@ -341,6 +345,7 @@ impl Permissions {
             network: None,
             allow_login_shell: true,
             shell_environment_policy: ShellEnvironmentPolicy::default(),
+            custom: custom::CustomPermissions::default(),
             windows_sandbox_mode: None,
             windows_sandbox_private_desktop: true,
         })
@@ -772,6 +777,9 @@ pub struct Config {
     /// Syntax highlighting theme override (kebab-case name).
     pub tui_theme: Option<String>,
 
+    /// Custom fork-specific diff color overrides for the TUI.
+    pub custom_theme_diff: Option<CustomThemeDiffToml>,
+
     /// Pet id preselected by the terminal pet picker.
     pub tui_pet: Option<String>,
 
@@ -852,6 +860,12 @@ pub struct Config {
 
     /// Additional filenames to try when looking for project-level docs.
     pub project_doc_fallback_filenames: Vec<String>,
+
+    /// Explicit project doc file paths to use instead of auto-discovery.
+    ///
+    /// When non-empty, Codex reads these files in order and skips
+    /// `AGENTS.md` path discovery.
+    pub project_doc_paths: Vec<AbsolutePathBuf>,
 
     /// Token budget applied when storing tool/function outputs in the context manager.
     pub tool_output_token_limit: Option<usize>,
@@ -958,6 +972,9 @@ pub struct Config {
 
     /// Whether Codex-owned clients should respect host system proxy settings.
     pub respect_system_proxy: bool,
+
+    /// Whether process-scoped PSP routing was requested for this session.
+    pub psp: bool,
 
     /// Optional product SKU forwarded to the host-owned apps MCP server.
     pub apps_mcp_product_sku: Option<String>,
@@ -1604,7 +1621,7 @@ impl Config {
             OutboundProxyPolicy::ReqwestDefault
         };
         let factory = HttpClientFactory::new(outbound_proxy_policy);
-        if self.features.enabled(Feature::Psp) {
+        if self.psp || self.features.enabled(Feature::Psp) {
             factory.with_chatgpt_cookies([HeaderValue::from_static("oai-chat-psp=true")])
         } else {
             factory
@@ -1816,6 +1833,7 @@ impl Config {
             ConfigOverrides {
                 cwd: Some(self.cwd.to_path_buf()),
                 default_zsh_path,
+                psp: Some(refreshed_config.psp),
                 ..Default::default()
             },
             refreshed_config.codex_home.clone(),
@@ -2565,6 +2583,8 @@ pub struct ConfigOverrides {
     pub tools_web_search_request: Option<bool>,
     pub ephemeral: Option<bool>,
     pub bypass_hook_trust: Option<bool>,
+    pub psp: Option<bool>,
+    pub project_doc_paths: Vec<PathBuf>,
     /// Additional directories that should be treated as writable roots for this session.
     pub additional_writable_roots: Vec<PathBuf>,
     /// Explicit absolute runtime workspace roots for this session. When set,
@@ -2891,6 +2911,47 @@ fn resolve_terminal_resize_reflow_config(config_toml: &ConfigToml) -> TerminalRe
     }
 }
 
+// Retained for upstream/custom branch alignment; the custom config path currently has no caller.
+#[allow(dead_code)]
+fn resolve_optional_prompt_text(
+    configured: Option<&Option<String>>,
+    default: Option<String>,
+) -> Option<String> {
+    match configured {
+        Some(Some(value)) if value.is_empty() => None,
+        Some(Some(value)) => Some(value.clone()),
+        Some(None) | None => default,
+    }
+}
+
+// Retained for upstream/custom branch alignment; the custom config path currently has no caller.
+#[allow(dead_code)]
+fn append_usage_hint_text(usage_hint_text: Option<&str>, additional_text: &str) -> String {
+    match usage_hint_text {
+        Some(usage_hint_text) => format!("{usage_hint_text}\n\n{additional_text}"),
+        None => additional_text.to_string(),
+    }
+}
+
+fn resolve_project_doc_paths(
+    paths: &[PathBuf],
+    cwd: &AbsolutePathBuf,
+) -> std::io::Result<Vec<AbsolutePathBuf>> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    paths
+        .iter()
+        .map(|path| {
+            if path.is_absolute() {
+                AbsolutePathBuf::try_from(path.clone())
+            } else {
+                AbsolutePathBuf::try_from(cwd.as_path().join(path))
+            }
+        })
+        .collect()
+}
 fn code_mode_toml_config(features: Option<&FeaturesToml>) -> Option<&CodeModeConfigToml> {
     match features?.code_mode.as_ref()? {
         FeatureToml::Enabled(_) => None,
@@ -3224,6 +3285,8 @@ impl Config {
             tools_web_search_request: override_tools_web_search_request,
             ephemeral,
             bypass_hook_trust,
+            psp,
+            project_doc_paths,
             additional_writable_roots,
             workspace_roots: workspace_roots_override,
         } = overrides;
@@ -3337,6 +3400,7 @@ impl Config {
                 }
             }
         }))?;
+        let project_doc_paths = resolve_project_doc_paths(&project_doc_paths, &resolved_cwd)?;
         let requested_additional_writable_roots: Vec<AbsolutePathBuf> = additional_writable_roots
             .into_iter()
             .map(|path| AbsolutePathBuf::resolve_path_against_base(path, resolved_cwd.as_path()))
@@ -3701,7 +3765,12 @@ impl Config {
             })?
             .clone();
 
-        let shell_environment_policy = cfg.shell_environment_policy.into();
+        let shell_environment_policy: ShellEnvironmentPolicy = cfg.shell_environment_policy.into();
+        let custom = custom::resolve_custom_config(
+            &cfg.custom,
+            &shell_environment_policy,
+            &mut startup_warnings,
+        )?;
         let allow_login_shell = cfg.allow_login_shell.unwrap_or(true);
 
         let history = cfg.history.unwrap_or_default();
@@ -4119,6 +4188,7 @@ impl Config {
                 network,
                 allow_login_shell,
                 shell_environment_policy,
+                custom,
                 windows_sandbox_mode,
                 windows_sandbox_private_desktop,
             },
@@ -4174,6 +4244,7 @@ impl Config {
                     }
                 })
                 .collect(),
+            project_doc_paths,
             tool_output_token_limit: cfg.tool_output_token_limit,
             agents_enabled,
             agent_max_threads,
@@ -4225,6 +4296,7 @@ impl Config {
                 .chatgpt_base_url
                 .unwrap_or("https://chatgpt.com/backend-api/".to_string()),
             respect_system_proxy,
+            psp: psp.unwrap_or_else(|| features.enabled(Feature::Psp)),
             apps_mcp_product_sku: cfg.apps_mcp_product_sku.clone(),
             responses_api_metadata: cfg.responses_api_metadata.unwrap_or_default(),
             realtime_audio: cfg
@@ -4316,6 +4388,7 @@ impl Config {
                 .unwrap_or(true),
             tui_terminal_title: cfg.tui.as_ref().and_then(|t| t.terminal_title.clone()),
             tui_theme: cfg.tui.as_ref().and_then(|t| t.theme.clone()),
+            custom_theme_diff: cfg.custom.theme.diff.clone(),
             tui_pet: cfg.tui.as_ref().and_then(|t| t.pet.clone()),
             tui_pet_anchor: cfg
                 .tui

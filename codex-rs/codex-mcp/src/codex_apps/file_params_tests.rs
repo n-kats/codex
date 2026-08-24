@@ -13,6 +13,7 @@ fn tool_info(tool: Tool) -> ToolInfo {
     ToolInfo {
         server_name: "codex_apps".to_string(),
         supports_parallel_tool_calls: false,
+        wait_for_mcp_tool_completion: false,
         server_origin: None,
         callable_name: tool.name.to_string(),
         callable_namespace: "codex_apps".to_string(),

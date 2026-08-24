@@ -398,6 +398,11 @@ impl SessionConfiguration {
         if let Some(personality) = updates.personality {
             next_configuration.personality = Some(personality);
         }
+        if let Some(project_doc_paths) = updates.project_doc_paths.clone() {
+            let mut config = (*next_configuration.original_config_do_not_use).clone();
+            config.project_doc_paths = project_doc_paths;
+            next_configuration.original_config_do_not_use = Arc::new(config);
+        }
         if let Some(approval_policy) = updates.approval_policy {
             next_configuration.approval_policy.set(approval_policy)?;
         }
@@ -594,6 +599,7 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) service_tier: Option<Option<String>>,
     pub(crate) final_output_json_schema: Option<Option<Value>>,
     pub(crate) personality: Option<Personality>,
+    pub(crate) project_doc_paths: Option<Vec<AbsolutePathBuf>>,
     pub(crate) app_server_client_name: Option<String>,
     pub(crate) app_server_client_version: Option<String>,
 }
@@ -1432,6 +1438,7 @@ impl Session {
                     session_configuration.session_source.clone(),
                     session_configuration.originator.clone(),
                     config.model_verbosity,
+                    config.features.enabled(Feature::ContentItemKinds),
                     config.features.enabled(Feature::EnableRequestCompression),
                     config.features.enabled(Feature::RuntimeMetrics),
                     Self::build_model_client_beta_features_header(config.as_ref()),

@@ -29,6 +29,8 @@ use codex_utils_path_uri::PathUri;
 use futures::TryStreamExt;
 use pretty_assertions::assert_eq;
 use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use tempfile::TempDir;
 use test_case::test_case;
 
@@ -39,6 +41,20 @@ use super::support::create_file_system_context;
 use super::support::is_unsupported_restricted_token_host;
 use super::support::read_only_sandbox;
 use super::support::workspace_write_sandbox;
+
+#[cfg(target_os = "linux")]
+fn should_skip_bwrap_tests() -> bool {
+    match Command::new("bwrap").arg("true").output() {
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            !output.status.success()
+                && (stderr.contains("No permissions to create a new namespace")
+                    || stderr.contains("Operation not permitted")
+                    || stderr.contains("Permission denied"))
+        }
+        Err(_) => true,
+    }
+}
 
 #[test]
 fn sandbox_context_from_profile_preserves_workspace_write_read_only_subpaths() -> Result<()> {
@@ -662,6 +678,12 @@ async fn file_system_walk_handles_invalid_roots_and_limits(
 async fn file_system_walk_honors_read_sandbox(
     implementation: FileSystemImplementation,
 ) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    if should_skip_bwrap_tests() {
+        eprintln!("skipping bwrap test: bwrap sandbox prerequisites are unavailable");
+        return Ok(());
+    }
+
     let context = create_file_system_context(implementation).await?;
     let file_system = context.file_system;
 

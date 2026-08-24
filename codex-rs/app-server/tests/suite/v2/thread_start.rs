@@ -1,11 +1,11 @@
 use anyhow::Context;
 use anyhow::Result;
-use app_test_support::ChatGptAuthFixture;
+// use app_test_support::ChatGptAuthFixture;
 use app_test_support::PathBufExt;
 use app_test_support::TestAppServer;
 use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::to_response;
-use app_test_support::write_chatgpt_auth;
+// use app_test_support::write_chatgpt_auth;
 use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ConfigWarningNotification;
@@ -36,11 +36,11 @@ use codex_app_server_protocol::TurnEnvironmentParams;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::UserInput as V2UserInput;
 use codex_config::loader::project_trust_key;
-use codex_config::types::AuthCredentialsStoreMode;
+// use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::config::set_project_trust_level;
 use codex_exec_server::LOCAL_FS;
 use codex_git_utils::resolve_root_git_project_for_trust;
-use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
+// use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_protocol::config_types::SERVICE_TIER_DEFAULT_REQUEST_VALUE;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::models::BUILT_IN_PERMISSION_PROFILE_WORKSPACE;
@@ -55,11 +55,11 @@ use tempfile::TempDir;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
-use wiremock::Mock;
-use wiremock::MockServer;
-use wiremock::ResponseTemplate;
-use wiremock::matchers::method;
-use wiremock::matchers::path;
+// use wiremock::Mock;
+// use wiremock::MockServer;
+// use wiremock::ResponseTemplate;
+// use wiremock::matchers::method;
+// use wiremock::matchers::path;
 
 use super::analytics::assert_basic_thread_initialized_event;
 use super::analytics::mount_analytics_capture;
@@ -1405,6 +1405,8 @@ async fn thread_start_does_not_wait_for_optional_http_mcp_auth_discovery() -> Re
 }
 
 #[tokio::test]
+// Cloud-managed config loading is disabled in the custom CLI.
+#[cfg(any())]
 async fn thread_start_surfaces_cloud_config_bundle_load_errors() -> Result<()> {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
