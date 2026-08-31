@@ -5,6 +5,7 @@ use crate::environment_selection::TurnEnvironmentSnapshot;
 use codex_extension_api::Instructions;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::protocol::TurnEnvironmentSelection;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use std::io;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -19,6 +20,7 @@ pub(crate) struct AgentsMdManager {
 struct AgentsMdCache {
     selections: Option<Vec<TurnEnvironmentSelection>>,
     active_project_trust_level: Option<TrustLevel>,
+    project_doc_paths: Option<Vec<AbsolutePathBuf>>,
     loaded: Option<Arc<LoadedAgentsMd>>,
 }
 
@@ -42,15 +44,18 @@ impl AgentsMdManager {
             .map(|environment| environment.selection.clone())
             .collect::<Vec<_>>();
         let active_project_trust_level = config.active_project.trust_level;
+        let project_doc_paths = config.project_doc_paths.clone();
         {
             let mut cache = self.cache.lock().await;
             if cache.selections.as_ref() == Some(&selections)
                 && cache.active_project_trust_level == active_project_trust_level
+                && cache.project_doc_paths.as_ref() == Some(&project_doc_paths)
             {
                 return Ok(());
             }
             cache.selections = None;
             cache.active_project_trust_level = None;
+            cache.project_doc_paths = None;
             cache.loaded = None;
         }
 
@@ -61,6 +66,7 @@ impl AgentsMdManager {
         let mut cache = self.cache.lock().await;
         cache.selections = Some(selections);
         cache.active_project_trust_level = active_project_trust_level;
+        cache.project_doc_paths = Some(project_doc_paths);
         cache.loaded = loaded;
         Ok(())
     }

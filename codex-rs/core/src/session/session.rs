@@ -369,6 +369,11 @@ impl SessionConfiguration {
                             }
                         )
                 });
+        if let Some(project_doc_paths) = updates.project_doc_paths.clone() {
+            let mut config = (*next_configuration.original_config_do_not_use).clone();
+            config.project_doc_paths = project_doc_paths;
+            next_configuration.original_config_do_not_use = Arc::new(config);
+        }
         if let Some(windows_sandbox_level) = updates.windows_sandbox_level {
             next_configuration.windows_sandbox_level = windows_sandbox_level;
         }
@@ -545,6 +550,7 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) active_permission_profile: Option<ActivePermissionProfile>,
     pub(crate) windows_sandbox_level: Option<WindowsSandboxLevel>,
     pub(crate) service_tier_for_turn: Option<String>,
+    pub(crate) project_doc_paths: Option<Vec<AbsolutePathBuf>>,
     pub(crate) app_server_client_name: Option<String>,
     pub(crate) app_server_client_version: Option<String>,
 }

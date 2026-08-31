@@ -72,6 +72,7 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
     cmd.arg0(arg0.map_or_else(|| program.to_string_lossy().to_string(), String::from));
     cmd.args(args);
     cmd.current_dir(cwd);
+
     if let Some(network) = network {
         network.apply_to_env(&mut env);
     }
@@ -132,6 +133,5 @@ pub(crate) async fn spawn_child_async(request: SpawnChildRequest<'_>) -> std::io
                 .stderr(Stdio::inherit());
         }
     }
-
     cmd.kill_on_drop(true).spawn()
 }

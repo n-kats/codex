@@ -317,6 +317,10 @@ async fn wait_for_analytics_events(
 }
 
 fn configure_catalog_test(config: &mut Config) {
+    // This suite asserts the warnings emitted by the skills extension. Keep
+    // unrelated startup warnings, including custom user-shell defaults, out
+    // of those exact warning comparisons.
+    config.startup_warnings.clear();
     config.include_skill_instructions = true;
     config
         .features

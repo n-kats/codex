@@ -190,6 +190,14 @@ async fn agents_md_paths(
     fs: &dyn ExecutorFileSystem,
     sandbox: Option<&FileSystemSandboxContext>,
 ) -> io::Result<Vec<PathUri>> {
+    if !config.project_doc_paths.is_empty() {
+        return Ok(config
+            .project_doc_paths
+            .iter()
+            .map(PathUri::from_abs_path)
+            .collect());
+    }
+
     let dir = cwd.clone();
 
     let mut merged = TomlValue::Table(toml::map::Map::new());

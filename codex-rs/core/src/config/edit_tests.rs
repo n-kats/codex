@@ -1198,6 +1198,7 @@ fn blocking_replace_mcp_servers_serializes_tool_approval_overrides(output_token_
                 McpServerToolConfig {
                     approval_mode: Some(AppToolApproval::Approve),
                     output_token_limit: std::num::NonZeroUsize::new(output_token_limit),
+                    wait_for_mcp_tool_completion: false,
                 },
             )]),
         },

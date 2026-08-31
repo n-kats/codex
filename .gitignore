@@ -1,3 +1,5 @@
+/_local/
+/_release/
 # deps
 # Node.js dependencies
 node_modules
@@ -36,6 +38,7 @@ AGENTS.override.md
 
 # caches
 .cache/
+_cache/
 .turbo/
 .parcel-cache/
 .eslintcache

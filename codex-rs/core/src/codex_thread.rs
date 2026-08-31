@@ -149,6 +149,7 @@ pub struct CodexThreadSettingsOverrides {
     pub service_tier: Option<Option<String>>,
     pub collaboration_mode: Option<CollaborationMode>,
     pub personality: Option<Personality>,
+    pub project_doc_paths: Option<Vec<AbsolutePathBuf>>,
 }
 
 /// One root conversation message exposed only to a worker's Guardian reviewers.
@@ -578,6 +579,7 @@ impl CodexThread {
             service_tier,
             collaboration_mode,
             personality,
+            project_doc_paths,
         } = overrides;
         SessionSettingsUpdate {
             step_settings: StepSettingsUpdate {
@@ -596,6 +598,7 @@ impl CodexThread {
             permission_profile,
             active_permission_profile,
             windows_sandbox_level,
+            project_doc_paths,
             ..Default::default()
         }
     }

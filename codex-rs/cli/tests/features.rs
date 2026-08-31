@@ -1,23 +1,9 @@
 use std::path::Path;
 
-use anyhow::Context;
 use anyhow::Result;
-use app_test_support::ChatGptAuthFixture;
-use app_test_support::write_chatgpt_auth;
-use codex_config::ConfigLoadOptions;
-use codex_config::types::AuthCredentialsStoreMode;
-use codex_core::config::load_config_toml_with_layer_stack;
-use codex_utils_absolute_path::AbsolutePathBuf;
 use predicates::str::contains;
 use pretty_assertions::assert_eq;
-use serde_json::json;
 use tempfile::TempDir;
-use wiremock::Mock;
-use wiremock::MockServer;
-use wiremock::ResponseTemplate;
-use wiremock::matchers::header;
-use wiremock::matchers::method;
-use wiremock::matchers::path;
 
 fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
@@ -115,6 +101,9 @@ url = "ws://127.0.0.1:4512"
 }
 
 #[test]
+// The custom CLI does not expose the upstream `cloud` command. Keep the
+// upstream regression test in the source, but exclude it from this test binary.
+#[cfg(any())]
 fn strict_config_is_not_supported_for_cloud_command() -> Result<()> {
     let codex_home = TempDir::new()?;
 
@@ -212,6 +201,8 @@ async fn features_list_is_sorted_alphabetically_by_feature_name() -> Result<()> 
     Ok(())
 }
 
+// Cloud-managed configuration is intentionally disabled in the custom CLI.
+#[cfg(any())]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn features_list_honors_cloud_managed_feature_requirements() -> Result<()> {
     let server = MockServer::start().await;

@@ -1,5 +1,5 @@
 pub(crate) fn is_newer(latest: &str, current: &str) -> Option<bool> {
-    match (parse_version(latest), parse_version(current)) {
+    match (parse_strict_version(latest), parse_current_version(current)) {
         (Some(l), Some(c)) => Some(l > c),
         _ => None,
     }
@@ -13,14 +13,32 @@ pub(crate) fn extract_version_from_latest_tag(latest_tag_name: &str) -> anyhow::
 }
 
 pub(crate) fn is_source_build_version(version: &str) -> bool {
-    parse_version(version) == Some((0, 0, 0))
+    parse_current_version(version) == Some((0, 0, 0))
 }
 
-fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
-    let mut iter = v.trim().split('.');
+fn parse_strict_version(v: &str) -> Option<(u64, u64, u64)> {
+    let trimmed = v.trim();
+    let without_build = trimmed.split_once('+').map_or(trimmed, |(core, _)| core);
+    parse_version_core(without_build)
+}
+
+fn parse_current_version(v: &str) -> Option<(u64, u64, u64)> {
+    let trimmed = v.trim();
+    let without_build = trimmed.split_once('+').map_or(trimmed, |(core, _)| core);
+    let without_suffix = without_build
+        .split_once('-')
+        .map_or(without_build, |(core, _)| core);
+    parse_version_core(without_suffix)
+}
+
+fn parse_version_core(v: &str) -> Option<(u64, u64, u64)> {
+    let mut iter = v.split('.');
     let maj = iter.next()?.parse::<u64>().ok()?;
     let min = iter.next()?.parse::<u64>().ok()?;
     let pat = iter.next()?.parse::<u64>().ok()?;
+    if iter.next().is_some() {
+        return None;
+    }
     Some((maj, min, pat))
 }
 
@@ -49,6 +67,13 @@ mod tests {
     }
 
     #[test]
+    fn custom_suffix_versions_are_comparable_against_plain_semver() {
+        assert_eq!(is_newer("1.2.4", "1.2.3-custom-2026-01-25"), Some(true));
+        assert_eq!(is_newer("1.2.4", "1.2.3+custom.2026-01-25"), Some(true));
+        assert_eq!(is_newer("1.2.3", "1.2.3-custom-2026-01-25"), Some(false));
+    }
+
+    #[test]
     fn plain_semver_comparisons_work() {
         assert_eq!(is_newer("0.11.1", "0.11.0"), Some(true));
         assert_eq!(is_newer("0.11.0", "0.11.1"), Some(false));
@@ -64,7 +89,7 @@ mod tests {
 
     #[test]
     fn whitespace_is_ignored() {
-        assert_eq!(parse_version(" 1.2.3 \n"), Some((1, 2, 3)));
+        assert_eq!(parse_strict_version(" 1.2.3 \n"), Some((1, 2, 3)));
         assert_eq!(is_newer(" 1.2.3 ", "1.2.2"), Some(true));
     }
 }

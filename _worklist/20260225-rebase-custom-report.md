@@ -1,0 +1,107 @@
+# 20260225 Rebase Custom Report
+
+このファイルは、`fork-origin/main` への `custom` rebase 後に「維持しているカスタム仕様」に欠損がないことを確認するためのチェックリストです。
+
+## range-diff
+
+- `git range-diff "$(git merge-base fork-origin/main tmp-rebase)"..tmp-rebase "$(git merge-base fork-origin/main custom)"..custom`
+  - 出力: `_tmp/range-diff/20260225-range-diff.txt`
+
+## カスタム仕様チェック
+
+- TUI の入力: Enter で改行、Ctrl+Enter / Ctrl+J で送信
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+  - ノート: `_docs/custom_notes/tui-enter-newline-ctrl-enter-send/README.md`
+- AGENTS.md の明示指定: `codex --agents-md <FILE>`（複数指定可）
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+- TUI の AGENTS.md 切替: `/custom-agents <path> [path...]` / `clear`
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+- TUI の更新チェック: `x.y.z-custom-...` のようなカスタム版バージョン文字列でも更新判定
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+  - ノート: `_docs/custom_notes/update_check_custom_version_suffix/README.md`
+- config.toml の読み込み制御: `codex --config <FILE>` / `codex --no-config`
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+- Codex home の上書き: `codex --codex-home PATH`（`CODEX_HOME` と同等）
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+  - ノート: `_docs/custom_notes/codex_home_cli_flag/README.md`
+- カスタムプロンプト: `CODEX_ADDITIONAL_PROMPT_DIRS`
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+  - ノート: `_docs/custom_notes/additional_prompt_dirs/README.md`
+- シェル初期化ファイル: `CODEX_SHELL_STARTUP_FILES=clean` / `codex --shell-startup-files=clean`
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+- `!` のユーザーコマンド login 制御: `CODEX_USER_SHELL_LOGIN=0`
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+  - ノート: `_docs/custom_notes/exec_command_default_login/README.md`
+- コマンド実行の権限分離: `custom.exec.*`（worker ユーザー固定など）
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+  - ノート: `_docs/custom_notes/command_exec_worker_user/README.md`
+- exec-server（elicitation）: `PATH` 解決 / `EscalateRequest.file` 絶対パス化（公式が直ったら削除予定）
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+- Shell snapshot: `exports` セクションを許可リストに限定
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+  - ノート: `_docs/custom_notes/shell_snapshot_redacted_exports/README.md`
+- テスト/ログの安全性: 失敗時 diff でホスト環境変数を全量出力しない
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+  - ノート: `_docs/custom_notes/test_output_redacts_host_env/README.md`
+- tool parallelism: 並列ツールテストの判定を「時間」→「tool出力」へ
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+  - ノート: `_docs/custom_notes/tool_parallelism_test/README.md`
+- exec-server: `dotslash` を Docker イメージに同梱
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+  - ノート: `_docs/custom_notes/exec_server_tests_dotslash/README.md`
+- 動作確認: `make verify-*` が `CODEX_HOME=.../_cache/codex_home_debug` を既定で使用
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+- 動作確認ログ: `make test-*` / `make verify-*` のログを `_tmp/*_test_result.txt` に保存
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+- rustfmt: `make fmt`（=`cargo +nightly fmt`）で実行
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: `make fmt`
+  - ノート: `_docs/custom_notes/release_versioning/README.md`
+- NOTICE: フォークで加えた変更の著作権表記を追記
+  - 実装: TODO
+  - テスト: なし
+  - 検証: `NOTICE` 目視
+- 既知の不安定テスト回避: `make almost`
+  - 実装: TODO
+  - テスト: なし
+  - 検証: `make almost`
+- Langfuse OTEL 連携（修正/機能追加）
+  - 実装: TODO
+  - テスト: TODO
+  - 検証: TODO
+  - ノート: `_docs/custom_notes/langfuse_logging/README.md`
