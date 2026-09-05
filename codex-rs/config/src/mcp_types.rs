@@ -83,6 +83,10 @@ pub struct McpServerToolConfig {
     /// Token budget for this tool's output, before the standard 20% serialization allowance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_token_limit: Option<NonZeroUsize>,
+
+    /// Wait for this MCP tool to complete before continuing the model stream.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub wait_for_mcp_tool_completion: bool,
 }
 
 impl McpServerToolConfig {

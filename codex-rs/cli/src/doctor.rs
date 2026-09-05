@@ -32,11 +32,12 @@ use codex_api::ApiError;
 use codex_api::ResponsesWebsocketClient;
 use codex_api::is_azure_responses_provider;
 use codex_arg0::Arg0DispatchPaths;
+use codex_config::LoaderOverrides;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerTransportConfig;
 use codex_core::config::Config;
+use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
-use codex_core::config::LoaderOverrides;
 use codex_core::config::find_codex_home;
 use codex_features::FEATURES;
 use codex_http_client::ClientRouteClass;
@@ -317,10 +318,18 @@ impl DoctorCheck {
 pub async fn run_doctor(
     command: DoctorCommand,
     root_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
     interactive: &TuiCli,
     arg0_paths: &Arg0DispatchPaths,
 ) -> anyhow::Result<()> {
-    let report = build_report(&command, root_config_overrides, interactive, arg0_paths).await;
+    let report = build_report(
+        &command,
+        root_config_overrides,
+        loader_overrides,
+        interactive,
+        arg0_paths,
+    )
+    .await;
 
     if command.json {
         println!(
@@ -344,6 +353,7 @@ pub async fn run_doctor(
 async fn build_report(
     command: &DoctorCommand,
     root_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
     interactive: &TuiCli,
     arg0_paths: &Arg0DispatchPaths,
 ) -> DoctorReport {
@@ -359,7 +369,13 @@ async fn build_report(
 
     progress.begin("config");
     let config_started = Instant::now();
-    let config_result = load_config(root_config_overrides, interactive, arg0_paths).await;
+    let config_result = load_config(
+        root_config_overrides,
+        loader_overrides,
+        interactive,
+        arg0_paths,
+    )
+    .await;
     let config_duration = config_started.elapsed();
     let cwd = config_result
         .as_ref()
@@ -571,14 +587,19 @@ async fn build_report(
 }
 
 async fn load_config(
-    mut root_config_overrides: CliConfigOverrides,
+    root_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
     interactive: &TuiCli,
     arg0_paths: &Arg0DispatchPaths,
 ) -> anyhow::Result<Config> {
+    let mut cli_kv_overrides = root_config_overrides
+        .parse_overrides()
+        .map_err(anyhow::Error::msg)?;
     if interactive.web_search {
-        root_config_overrides
-            .raw_overrides
-            .push("web_search=\"live\"".to_string());
+        cli_kv_overrides.push((
+            "web_search".to_string(),
+            toml::Value::String("live".to_string()),
+        ));
     }
 
     let overrides = ConfigOverrides {
@@ -586,15 +607,13 @@ async fn load_config(
         ..config_overrides_from_interactive(interactive, arg0_paths)
     };
 
-    crate::cloud_config::config_builder(
-        &root_config_overrides,
-        LoaderOverrides::default(),
-        overrides,
-    )
-    .await?
-    .build()
-    .await
-    .context("failed to load Codex config")
+    ConfigBuilder::default()
+        .loader_overrides(loader_overrides)
+        .cli_overrides(cli_kv_overrides)
+        .harness_overrides(overrides)
+        .build()
+        .await
+        .context("failed to load Codex config")
 }
 
 fn config_overrides_from_interactive(
@@ -624,6 +643,7 @@ fn config_overrides_from_interactive(
         codex_linux_sandbox_exe: arg0_paths.codex_linux_sandbox_exe.clone(),
         main_execve_wrapper_exe: arg0_paths.main_execve_wrapper_exe.clone(),
         show_raw_agent_reasoning: interactive.oss.then_some(true),
+        project_doc_paths: interactive.shared.agents_md.clone(),
         additional_writable_roots: interactive.add_dir.clone(),
         ..Default::default()
     }

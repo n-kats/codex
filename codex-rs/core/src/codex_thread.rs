@@ -151,6 +151,7 @@ pub struct CodexThreadSettingsOverrides {
     pub service_tier: Option<Option<String>>,
     pub collaboration_mode: Option<CollaborationMode>,
     pub personality: Option<Personality>,
+    pub project_doc_paths: Option<Vec<AbsolutePathBuf>>,
 }
 
 pub use codex_guardian_context::GuardianRootMessage;
@@ -544,6 +545,7 @@ impl CodexThread {
             service_tier,
             collaboration_mode,
             personality,
+            project_doc_paths,
         } = overrides;
         SessionSettingsUpdate {
             step_settings: StepSettingsUpdate {
@@ -562,6 +564,7 @@ impl CodexThread {
             permission_profile,
             active_permission_profile,
             windows_sandbox_level,
+            project_doc_paths,
             ..Default::default()
         }
     }

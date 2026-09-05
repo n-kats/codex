@@ -320,3 +320,7 @@ Tests and features must support Linux, macOS and Windows unless feature is expli
 
 Codex supports running connected app-server and exec-server on different operating systems. See the
 `$remote-tests` skill for details about integration testing these configurations.
+
+## カスタマイズ
+
+- 必ず `CUSTOM.md` を参照し、その方針に従うこと。

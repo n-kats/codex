@@ -242,6 +242,19 @@ impl ToolRouter {
         self.registry.tool(tool_name)
     }
 
+    // Retained for upstream/custom branch alignment; no current custom caller uses this hook.
+    #[allow(dead_code)]
+    pub fn tool_waits_for_runtime_cancellation(&self, call: &ToolCall) -> bool {
+        self.registry
+            .waits_for_runtime_cancellation(&call.tool_name)
+            .unwrap_or(false)
+    }
+
+    pub fn tool_waits_for_mcp_tool_completion(&self, call: &ToolCall) -> bool {
+        self.registry
+            .waits_for_mcp_tool_completion(&call.tool_name)
+            .unwrap_or(false)
+    }
     #[instrument(level = "trace", skip_all, err)]
     pub fn build_tool_call(item: ResponseItem) -> Result<Option<ToolCall>, FunctionCallError> {
         match item {

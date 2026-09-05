@@ -65,6 +65,7 @@ async fn goal_clock_refresh_redraws_only_when_elapsed_label_changes() {
 #[tokio::test]
 async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let _cwd = set_test_cwd(&mut chat, "project");
     let (frame_requester, mut draw_rx) = FrameRequester::test_channel();
     chat.frame_requester = frame_requester;
     chat.bottom_pane.set_task_running(/*running*/ true);
@@ -79,6 +80,13 @@ async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
         draw_rx.try_recv(),
         Err(tokio::sync::mpsc::error::TryRecvError::Empty)
     );
+    let expected_title = chat
+        .config
+        .cwd
+        .file_name()
+        .expect("cwd basename")
+        .to_string_lossy()
+        .to_string();
 
     let request = ExecApprovalRequestEvent {
         kind: Default::default(),
@@ -87,7 +95,7 @@ async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
         turn_id: "turn-action-required".into(),
         environment_id: None,
         command: vec!["bash".into(), "-lc".into(), "echo hello".into()],
-        cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+        cwd: chat.config.cwd.clone(),
         reason: Some("need confirmation".into()),
         network_approval_context: None,
         proposed_execpolicy_amendment: None,
@@ -111,7 +119,7 @@ async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
 
     assert_eq!(
         chat.last_terminal_title,
-        Some("[ ! ] Action Required | project".to_string())
+        Some(format!("[ ! ] Action Required | {expected_title}"))
     );
     assert!(!chat.should_animate_terminal_title_spinner());
 
@@ -122,7 +130,7 @@ async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
         .last_terminal_title
         .as_deref()
         .expect("terminal title should be restored after approval");
-    assert!(title.contains("project"));
+    assert!(title.contains(&expected_title));
     assert!(!title.contains("Action Required"));
     assert!(chat.should_animate_terminal_title_spinner());
 
@@ -142,7 +150,15 @@ async fn terminal_title_shows_action_required_while_exec_approval_is_pending() {
 #[tokio::test]
 async fn terminal_title_action_required_respects_spinner_setting() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    chat.local_settings.tui.terminal_title = Some(vec!["project".to_string()]);
+    let _cwd = set_test_cwd(&mut chat, "project");
+    let expected_title = chat
+        .config
+        .cwd
+        .file_name()
+        .expect("cwd basename")
+        .to_string_lossy()
+        .to_string();
+    chat.local_settings.tui.terminal_title = Some(vec!["project-name".to_string()]);
     chat.bottom_pane.set_task_running(/*running*/ true);
     chat.refresh_terminal_title();
 
@@ -153,7 +169,7 @@ async fn terminal_title_action_required_respects_spinner_setting() {
         turn_id: "turn-no-spinner".into(),
         environment_id: None,
         command: vec!["bash".into(), "-lc".into(), "echo hello".into()],
-        cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+        cwd: chat.config.cwd.clone(),
         reason: Some("need confirmation".into()),
         network_approval_context: None,
         proposed_execpolicy_amendment: None,
@@ -165,15 +181,23 @@ async fn terminal_title_action_required_respects_spinner_setting() {
 
     chat.pre_draw_tick();
 
-    assert_eq!(chat.last_terminal_title, Some("project".to_string()));
+    assert_eq!(chat.last_terminal_title, Some(expected_title.clone()));
     assert!(!chat.should_animate_terminal_title_action_required());
 }
 
 #[tokio::test]
 async fn terminal_title_action_required_blinks_when_animations_are_enabled() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let _cwd = set_test_cwd(&mut chat, "project");
     chat.bottom_pane.set_task_running(/*running*/ true);
     chat.refresh_terminal_title();
+    let expected_title = chat
+        .config
+        .cwd
+        .file_name()
+        .expect("cwd basename")
+        .to_string_lossy()
+        .to_string();
 
     let request = ExecApprovalRequestEvent {
         kind: Default::default(),
@@ -182,7 +206,7 @@ async fn terminal_title_action_required_blinks_when_animations_are_enabled() {
         turn_id: "turn-blink".into(),
         environment_id: None,
         command: vec!["bash".into(), "-lc".into(), "echo hello".into()],
-        cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+        cwd: chat.config.cwd.clone(),
         reason: Some("need confirmation".into()),
         network_approval_context: None,
         proposed_execpolicy_amendment: None,
@@ -198,7 +222,7 @@ async fn terminal_title_action_required_blinks_when_animations_are_enabled() {
 
     assert_eq!(
         chat.last_terminal_title,
-        Some("[ . ] Action Required | project".to_string())
+        Some(format!("[ . ] Action Required | {expected_title}"))
     );
     assert!(chat.should_animate_terminal_title_action_required());
 }
@@ -206,12 +230,20 @@ async fn terminal_title_action_required_blinks_when_animations_are_enabled() {
 #[tokio::test]
 async fn terminal_title_activity_indicators_do_not_animate_when_animations_are_disabled() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let _cwd = set_test_cwd(&mut chat, "project");
     chat.local_settings.tui.animations = false;
     chat.bottom_pane.set_task_running(/*running*/ true);
     chat.terminal_title_animation_origin = Instant::now() - std::time::Duration::from_millis(1500);
     chat.refresh_terminal_title();
+    let expected_title = chat
+        .config
+        .cwd
+        .file_name()
+        .expect("cwd basename")
+        .to_string_lossy()
+        .to_string();
 
-    assert_eq!(chat.last_terminal_title, Some("project".to_string()));
+    assert_eq!(chat.last_terminal_title, Some(expected_title.clone()));
     assert!(!chat.should_animate_terminal_title_spinner());
 
     let request = ExecApprovalRequestEvent {
@@ -221,7 +253,7 @@ async fn terminal_title_activity_indicators_do_not_animate_when_animations_are_d
         turn_id: "turn-no-animations".into(),
         environment_id: None,
         command: vec!["bash".into(), "-lc".into(), "echo hello".into()],
-        cwd: AbsolutePathBuf::current_dir().expect("current dir"),
+        cwd: chat.config.cwd.clone(),
         reason: Some("need confirmation".into()),
         network_approval_context: None,
         proposed_execpolicy_amendment: None,
@@ -235,7 +267,7 @@ async fn terminal_title_activity_indicators_do_not_animate_when_animations_are_d
 
     assert_eq!(
         chat.last_terminal_title,
-        Some("[ ! ] Action Required | project".to_string())
+        Some(format!("[ ! ] Action Required | {expected_title}"))
     );
     assert!(!chat.should_animate_terminal_title_action_required());
 }

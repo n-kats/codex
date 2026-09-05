@@ -494,6 +494,7 @@ fn deserialize_server_config_with_default_tool_approval_mode() {
         Some(&McpServerToolConfig {
             approval_mode: Some(AppToolApproval::Prompt),
             output_token_limit: std::num::NonZeroUsize::new(30_000),
+            wait_for_mcp_tool_completion: false,
         })
     );
 
@@ -516,6 +517,31 @@ fn deserialize_rejects_nonpositive_mcp_tool_output_limits() {
             .expect_err("MCP tool output limit must be positive");
         assert!(error.to_string().contains("output_token_limit"));
     }
+}
+
+#[test]
+fn deserialize_server_config_with_tool_stream_wait() {
+    let cfg: McpServerConfig = toml::from_str(
+        r#"
+            command = "echo"
+
+            [tools.search]
+            wait_for_mcp_tool_completion = true
+        "#,
+    )
+    .expect("should deserialize MCP tool stream wait setting");
+
+    assert_eq!(
+        cfg.tools.get("search"),
+        Some(&McpServerToolConfig {
+            approval_mode: None,
+            output_token_limit: None,
+            wait_for_mcp_tool_completion: true,
+        })
+    );
+
+    let serialized = toml::to_string(&cfg).expect("should serialize MCP tool stream wait setting");
+    assert!(serialized.contains("wait_for_mcp_tool_completion = true"));
 }
 
 #[test]

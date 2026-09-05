@@ -1,0 +1,114 @@
+# flaky / timing-sensitive
+session::turn::tests::post_sampling_token_estimate_is_disabled_by_always_on_sinks
+suite::conversation_summary::get_conversation_summary_by_relative_rollout_path_resolves_from_codex_home
+suite::conversation_summary::get_conversation_summary_by_thread_id_reads_rollout
+suite::fuzzy_file_search::test_fuzzy_file_search_accepts_cancellation_token
+suite::fuzzy_file_search::test_fuzzy_file_search_query_cleared_sends_blank_snapshot
+suite::fuzzy_file_search::test_fuzzy_file_search_session_multiple_query_updates_work
+suite::fuzzy_file_search::test_fuzzy_file_search_session_no_updates_after_complete_until_query_edited
+suite::fuzzy_file_search::test_fuzzy_file_search_session_stops_sending_updates_after_stop
+suite::multi_agent_resume::cold_root_resume_restores_agent_identity_and_role_on_followup
+suite::focus_palette::focus_gained_with_unanswered_palette_queries_preserves_immediate_input
+suite::v2::plugin_list::plugin_list_fetches_workspace_directory_kind_when_remote_plugin_disabled
+suite::shell_snapshot::shell_command_snapshot_still_intercepts_apply_patch
+suite::network_approval::guardian_receives_exact_trigger_for_single_network_request
+suite::network_approval::guardian_receives_exact_triggers_for_concurrent_network_requests
+suite::request_user_input::request_user_input_interrupt_emits_deferred_token_count
+suite::model_switching::thread_rollback_after_generated_image_drops_entire_image_turn_history
+suite::realtime_conversation::conversation_webrtc_close_while_sideband_connecting_drops_pending_join
+suite::realtime_conversation::conversation_close_routes_only_remaining_transcript_tail_once
+suite::auth::get_auth_status_returns_token_after_proactive_refresh_recovery
+suite::code_mode::code_mode_nested_tool_calls_can_run_in_parallel
+suite::pending_input::any_new_input_interrupts_sleep
+suite::unified_exec::unified_exec_timeout_and_followup_poll
+suite::v2::app_list::list_apps_emits_updates_and_returns_after_both_lists_load
+suite::v2::app_list::list_apps_force_refetch_patches_updates_from_cached_snapshots
+suite::v2::mcp_server_status::mcp_server_status_list_tools_and_auth_only_skips_slow_inventory_calls
+suite::v2::thread_name_websocket::thread_name_updated_broadcasts_for_loaded_threads
+suite::v2::thread_name_websocket::thread_name_updated_broadcasts_for_not_loaded_threads
+runtime::tests::runtime_thread_panic_before_initialization_is_reported_directly
+runtime::tests::runtime_thread_panic_is_forwarded_without_owner_supervision
+suite::rollout_budget::restates_the_current_remainder_after_rollback
+transport::remote_control::tests::remote_control_waits_for_account_id_before_enrolling
+# Cloud-managed sandbox is intentionally disabled in the CLI; keep the upstream test registered but skipped.
+sandbox_fetches_and_enforces_cloud_managed_permission_profile
+# Full-workspace test concurrency can reuse the just-closed descriptor number before the assertion.
+fd_mount::tests::duplicate_mount_descriptors_are_rejected
+# Full-workspace network/proxy activity can prevent the closed-listener upload fixture from reaching the blob stage.
+files::tests::upload_openai_file_reports_blob_transport_diagnostics_without_sas
+# Full-suite timing is unstable; keep the focused test available for separate verification.
+suite::v2::app_installed::installed_apps_failed_force_refresh_retains_previous_snapshot
+client::tests::process_start_propagates_caller_trace_context_across_background_task
+suite::model_switching::rollback_first_turn_model_change_removes_its_instructions::retry_switched_model_after_cold_resume
+suite::model_switching::rollback_first_turn_model_change_removes_its_instructions::return_to_startup_model
+# Full-suite model-switching requests can time out; focused execution passes.
+suite::model_switching::rollback_first_turn_model_change_removes_its_instructions::retry_switched_model
+suite::v2::attestation::attestation_generate_round_trip_adds_header_to_responses_websocket_handshake
+bottom_pane::chat_composer::tests::non_ascii_burst_buffers_large_multiline_mixed_ascii_and_unicode
+suite::otlp_http_loopback::otlp_http_exporter_sends_traces_to_collector
+# Full-suite remote-control startup can race the test backend; focused execution passes.
+suite::v2::remote_control::stdio_eof_exits_with_remote_control_connection
+suite::v2::thread_resume::thread_resume_preserves_acknowledged_model_effort_and_approvals_reviewer_update
+suite::v2::executor_mcp::selected_executor_plugin_exposes_its_mcps_only_to_that_thread
+environment_selection::tests::blocking_snapshot_waits_for_starting_environment
+suite::network_approval::disconnected_network_request_explains_failure_to_model::plain_http
+suite::network_approval::background_network_approval_uses_active_turn_after_original_turn_completes
+suite::turn_state::websocket_turn_state_persists_within_turn_and_resets_after
+suite::network_approval::strict_auto_review_routes_network_approval_to_guardian_when_user_reviewer_is_selected
+suite::v2::plugin_list::app_server_startup_refreshes_cached_remote_catalog_without_blocking_plugin_list
+transport::tests::enabled_request_logging_emits_transport_url_and_body
+app::tests::background_exit_tests::exit_interrupts_before_requesting_shutdown
+# Full-suite remote-environment websocket timing can flake; focused execution passes.
+suite::remote_env::deferred_executor_spawn_agent_inherits_ready_step_environments::v1
+# Full-suite hook execution can race marker-file cleanup; focused execution passes.
+suite::hooks::permission_request_hook_allows_exec_command_without_user_approval
+# Full-suite executor startup can race the mocked websocket; focused execution passes.
+suite::hooks_executor::executor_stop_hook_rejects_mismatched_environment
+# Full-suite system-bwrap capability probing can race under load; focused execution passes.
+launcher::tests::detects_fd_backed_read_only_mount_support_in_system_bwrap_help
+# Full-suite npm packaging can race a temporary executable cleanup; focused execution passes.
+npm_source::tests::materialize_npm_plugin_source_uses_packed_package_root
+# Full-suite TUI approval-pager rendering can race terminal/app state; focused execution passes.
+app::tests::patch_approval_tests::active_patch_approval_pager_preserves_changes_and_accepts_once
+# Full-suite MCP tool calls can hit the deadline under load; focused execution passes.
+suite::v2::mcp_tool::mcp_server_tool_call_round_trips_user_input_in_full_access_for_user_thread_with_form_input_capability
+# Full-suite agent spawning can race Tokio runtime shutdown; focused execution passes.
+agent::control::tests::spawn_agent_creates_thread_and_sends_prompt
+# Full-suite grandchild context-baseline spawning can hit the per-agent deadline; focused execution passes.
+suite::subagent_notifications::grandchild_full_fork_preserves_context_baseline::legacy_full_history
+suite::subagent_notifications::grandchild_full_fork_preserves_context_baseline::legacy_no_history
+suite::subagent_notifications::grandchild_full_fork_preserves_context_baseline::legacy_last_turn
+# Full-suite stopwatch tests can hit a Tokio I/O-driver EINVAL under load; focused execution passes.
+unix::stopwatch::tests::overlapping_pauses_only_resume_once
+# Full-suite curated-plugin validation can race parallel plugin activity; focused execution passes.
+startup_sync::tests::sync_openai_plugins_repo_via_git_preserves_existing_snapshot_on_validation_failure
+# Full-suite network-proxy teardown timing can race inherited stream cleanup; focused execution passes.
+local_process::tests::exited_process_keeps_network_proxy_until_inherited_streams_close
+# Full-suite PTY startup can exceed the reconnect fixture's 30-second startup deadline; focused execution passes.
+suite::reconnect::automatic_reconnect_restores_draft_and_routes_new_notifications
+# Full-suite exec-server concurrency can lose the inbound request span; focused execution passes.
+client::tests::network_policy_tests::policy_requests_use_process_decider_and_cancel_on_unregister
+# Full-suite network-approval concurrency can finish before the mocked approval request arrives; focused execution passes.
+suite::network_approval::failed_network_policy_amendment_denies_request_and_does_not_approve_host
+# Full-suite MCP startup-grace refresh can miss the initial notification deadline; focused execution passes.
+suite::mcp_optional_startup_grace::running_thread_uses_refreshed_optional_mcp_startup_grace::runtime_configuration_refresh
+# Nested bwrap cannot reliably resolve the external CARGO_TARGET_DIR path in this MCP/host mount environment; focused landlock execution passes.
+suite::landlock::sandbox_blocks_curl
+suite::landlock::sandbox_blocks_dev_tcp_redirection
+suite::landlock::sandbox_blocks_getent
+suite::landlock::sandbox_blocks_nc
+suite::landlock::sandbox_blocks_ping
+suite::landlock::sandbox_blocks_ssh
+suite::landlock::sandbox_blocks_wget
+suite::landlock::sandbox_inner_stage_rejects_retained_capabilities
+suite::landlock::sandbox_rejects_symlinked_synthetic_mount_registry
+suite::landlock::sandbox_reports_codex_symlink_build_failure_without_panicking
+suite::landlock::sandbox_starts_with_denied_tmp_without_exposing_registry
+suite::landlock::sandboxed_command_has_no_effective_or_permitted_capabilities
+suite::managed_proxy::managed_proxy_bridges_release_command_output_after_exit
+suite::managed_proxy::managed_proxy_commands_have_a_seccomp_filtered_namespace_reaper
+suite::managed_proxy::managed_proxy_full_filesystem_uses_minimal_dev_nodes
+suite::managed_proxy::managed_proxy_readiness_survives_closed_standard_descriptors
+suite::managed_proxy::namespace_reaper_collects_orphaned_descendants
+suite::managed_proxy::sandboxed_commands_have_a_seccomp_filtered_namespace_reaper
+suite::managed_proxy::unsupported_system_bwrap_falls_back_to_bundled_bwrap

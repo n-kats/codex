@@ -201,6 +201,9 @@ fn serialize_mcp_server_tool(config: &McpServerToolConfig) -> anyhow::Result<Tom
                 .context("output_token_limit exceeds the TOML integer range")?,
         );
     }
+    if config.wait_for_mcp_tool_completion {
+        entry["wait_for_mcp_tool_completion"] = value(true);
+    }
     Ok(TomlItem::Table(entry))
 }
 

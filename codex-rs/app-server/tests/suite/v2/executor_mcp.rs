@@ -76,7 +76,7 @@ const HOST_OAUTH_ACCESS_TOKEN: &str = "host-access-token";
 const EXECUTOR_OAUTH_ACCESS_TOKEN: &str = "executor-access-token";
 const EXECUTOR_ENV_NAME: &str = "MCP_EXECUTOR_MARKER";
 const EXECUTOR_ENV_VALUE: &str = "executor-only";
-const EXECUTOR_HTTP_AUTH_ENV_NAME: &str = "NODE_REPL_AUTH_TOKEN";
+const EXECUTOR_HTTP_AUTH_ENV_NAME: &str = "MCP_EXECUTOR_HTTP_AUTH_TOKEN";
 const EXECUTOR_HTTP_AUTH_ENV_VALUE: &str = "executor-only-http-token";
 const EXECUTOR_ID: &str = "executor-1";
 const EXECUTOR_DISABLED_PLUGIN_SERVER_NAME: &str = "executor_disabled_plugin";
@@ -668,20 +668,14 @@ async fn selected_executor_plugin_exposes_its_mcps_only_to_that_thread() -> Resu
         &oauth_credentials_path,
         serde_json::to_vec(&json!({"host": host_oauth_credential.clone()}))?,
     )?;
-    let mut executor = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
-        .args(["exec-server", "--listen", "ws://127.0.0.1:0"])
-        .stdout(Stdio::piped())
-        .kill_on_drop(true)
-        .env("CODEX_HOME", executor_home.path())
-        .env(EXECUTOR_ENV_NAME, EXECUTOR_ENV_VALUE)
-        .env(EXECUTOR_HTTP_AUTH_ENV_NAME, EXECUTOR_HTTP_AUTH_ENV_VALUE)
-        .env("HTTP_PROXY", format!("http://{http_addr}"))
-        .spawn()?;
-    let stdout = executor.stdout.take().expect("executor stdout is piped");
-    let mut lines = BufReader::new(stdout).lines();
-    let executor_url = timeout(DEFAULT_READ_TIMEOUT, lines.next_line())
-        .await??
-        .expect("executor emits its websocket URL");
+    let codex_bin = toml::Value::String(
+        codex_utils_cargo_bin::cargo_bin("codex")?
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let executor_home_value =
+        toml::Value::String(executor_home.path().to_string_lossy().into_owned());
+    let http_proxy = toml::Value::String(format!("http://{http_addr}"));
     std::fs::write(
         codex_home.path().join("environments.toml"),
         format!(
@@ -690,7 +684,14 @@ include_local = true
 
 [[environments]]
 id = "{EXECUTOR_ID}"
-url = "{executor_url}"
+program = {codex_bin}
+args = ["exec-server", "--listen", "stdio"]
+initialize_timeout_sec = 30.0
+[environments.env]
+CODEX_HOME = {executor_home_value}
+{EXECUTOR_ENV_NAME} = "{EXECUTOR_ENV_VALUE}"
+{EXECUTOR_HTTP_AUTH_ENV_NAME} = "{EXECUTOR_HTTP_AUTH_ENV_VALUE}"
+HTTP_PROXY = {http_proxy}
 "#
         ),
     )?;

@@ -13,6 +13,8 @@ use crate::Cli;
 use crate::app_server_session::AppServerSession;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
+#[cfg(feature = "cloud")]
+use crate::legacy_core::config::bootstrap_auth_config;
 use crate::legacy_core::config::load_config_toml_with_layer_stack;
 use crate::legacy_core::config::resolve_oss_provider;
 use crate::legacy_core::config::resolve_profile_v2_config_path;
@@ -22,6 +24,8 @@ use crate::named_session_lookup::SessionNameLookupMode;
 use crate::named_session_lookup::current_name_is_compatible;
 use codex_app_server_protocol::Thread as AppServerThread;
 use codex_arg0::Arg0DispatchPaths;
+#[cfg(feature = "cloud")]
+use codex_cloud_config::cloud_config_bundle_loader_for_storage;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::ConfigLoadOptions;
 use codex_config::LoaderOverrides;
@@ -400,12 +404,17 @@ pub(super) async fn start_app_server_for_session_command(
     .await
     .wrap_err("failed to load config.toml")?;
     let config_toml = &bootstrap_config.config_toml;
-    let cloud_config_bundle = super::cloud_config_bundle_for_app_server_target(
-        &app_server_target,
-        &bootstrap_config,
-        codex_home.as_path(),
+    #[cfg(feature = "cloud")]
+    let cloud_config_bundle = cloud_config_bundle_loader_for_storage(
+        app_server_target.auth_config_for_cloud_loader(bootstrap_auth_config(
+            codex_home.as_path(),
+            &bootstrap_config,
+        )?),
+        /*enable_codex_api_key_env*/ false,
     )
-    .await?;
+    .await;
+    #[cfg(not(feature = "cloud"))]
+    let cloud_config_bundle = CloudConfigBundleLoader::default();
 
     let model_provider = if cli.oss {
         resolve_oss_provider(cli.oss_provider.as_deref(), config_toml)

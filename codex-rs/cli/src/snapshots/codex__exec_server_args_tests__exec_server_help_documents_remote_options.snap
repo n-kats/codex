@@ -1,5 +1,6 @@
 ---
 source: cli/src/exec_server_args_tests.rs
+assertion_line: 36
 expression: help_text
 ---
 [EXPERIMENTAL] Run the standalone exec-server service
@@ -21,9 +22,6 @@ Options:
           'sandbox_permissions=["disk-full-read-access"]'` - `-c
           shell_environment_policy.inherit=all`
 
-      --enable <FEATURE>
-          Enable a feature (repeatable). Equivalent to `-c features.<name>=true`
-
       --strict-config
           Error out when config.toml contains fields that are not recognized by
           this version of Codex
@@ -32,6 +30,9 @@ Options:
           Maximum number of requests to process concurrently on each connection
 
           [default: 1]
+
+      --enable <FEATURE>
+          Enable a feature (repeatable). Equivalent to `-c features.<name>=true`
 
       --disable <FEATURE>
           Disable a feature (repeatable). Equivalent to `-c
@@ -54,12 +55,24 @@ Options:
       --environment-id <ID>
           Environment id to attach to when registering remotely
 
+      --codex-home <DIR>
+          Override the Codex home directory used for config, logs, and caches
+
       --name <NAME>
           Human-readable environment name
+
+      --codex-memory <DIR>
+          Override the Codex memories directory used for writable memory roots
 
       --use-agent-identity-auth
           Use Agent Identity auth from CODEX_ACCESS_TOKEN for remote
           registration
+
+      --agents-md <FILE>
+          Use these project doc files instead of auto-discovering `AGENTS.md`.
+
+          When provided, Codex reads these files in order and errors if any path
+          is missing.
 
       --aws-sigv4
           Sign Direct registration and WebSocket handshake requests with AWS
@@ -68,8 +81,14 @@ Options:
       --aws-profile <PROFILE>
           AWS profile used for SigV4 authentication
 
+      --config-file <FILE>
+          Read user config from this file instead of `$CODEX_HOME/config.toml`
+
       --aws-region <REGION>
           AWS signing region. Uses the SDK region chain when omitted
+
+      --no-config-file
+          Skip user and project config layers for this invocation
 
       --aws-service <SERVICE>
           AWS signing service
