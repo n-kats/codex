@@ -57,6 +57,7 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStartedNotification;
 use codex_arg0::Arg0DispatchPaths;
+#[cfg(feature = "cloud")]
 use codex_cloud_config::cloud_config_bundle_loader_for_storage;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::ConfigLoadError;
@@ -69,6 +70,7 @@ use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::ConfigTomlLoadResult;
+#[cfg(feature = "cloud")]
 use codex_core::config::bootstrap_auth_config;
 use codex_core::config::find_codex_home;
 use codex_core::config::load_config_toml_with_layer_stack;
@@ -256,12 +258,32 @@ fn exec_stderr_env_filter() -> EnvFilter {
         .unwrap_or_else(|_| EnvFilter::new("error"))
 }
 
+fn apply_bootstrap_env(
+    codex_home: &Option<PathBuf>,
+    codex_memory: &Option<PathBuf>,
+) -> anyhow::Result<()> {
+    if let Some(codex_home) = codex_home.as_ref() {
+        let resolved = AbsolutePathBuf::relative_to_current_dir(codex_home)?;
+        unsafe {
+            std::env::set_var("CODEX_HOME", resolved.as_path());
+        }
+    }
+    if let Some(codex_memory) = codex_memory.as_ref() {
+        let resolved = AbsolutePathBuf::relative_to_current_dir(codex_memory)?;
+        unsafe {
+            std::env::set_var("CODEX_MEMORIES_HOME", resolved.as_path());
+        }
+    }
+    Ok(())
+}
+
 pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     if let Err(err) = set_default_originator("codex_exec".to_string()) {
         tracing::warn!(?err, "Failed to set codex exec originator override {err:?}");
     }
 
     let Cli {
+        psp,
         mut command,
         strict_config,
         shared,
@@ -280,6 +302,11 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     let mut shared = shared.into_inner();
     shared.take_auto_review_config_overrides(&mut config_overrides);
     let SharedCliOptions {
+        codex_home,
+        codex_memory,
+        agents_md,
+        config_toml_file,
+        no_config,
         images,
         model: model_cli_arg,
         oss,
@@ -311,6 +338,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
             Some(ExecCommand::Fork(_)) | None => {}
         }
     }
+    apply_bootstrap_env(&codex_home, &codex_memory)?;
 
     let (_stdout_with_ansi, stderr_with_ansi) = match color {
         cli::Color::Always => (true, true),
@@ -358,16 +386,27 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
             std::process::exit(1);
         }
     };
-    let user_config_path = config_profile_v2
-        .as_ref()
-        .map(|profile_v2| resolve_profile_v2_config_path(&codex_home, profile_v2));
-    let loader_overrides = LoaderOverrides {
-        user_config_path,
-        user_config_profile: config_profile_v2,
-        ignore_user_config,
+    let mut loader_overrides = LoaderOverrides {
+        ignore_user_config: ignore_user_config || no_config,
+        ignore_project_config: no_config,
         ignore_user_and_project_exec_policy_rules: ignore_rules,
         ..Default::default()
     };
+    if let Some(config_toml_file) = config_toml_file {
+        loader_overrides.user_config_path = Some(
+            AbsolutePathBuf::relative_to_current_dir(&config_toml_file)
+                .map_err(anyhow::Error::msg)?,
+        );
+    }
+    if let Some(profile_v2) = config_profile_v2.as_ref()
+        && !loader_overrides.ignore_user_config
+        && loader_overrides.user_config_path.is_none()
+    {
+        loader_overrides.user_config_path =
+            Some(resolve_profile_v2_config_path(&codex_home, profile_v2));
+        loader_overrides.user_config_profile = Some(profile_v2.clone());
+    }
+
     if worktree
         && EnvironmentManager::prepare_from_codex_home(&codex_home)
             .await?
@@ -379,6 +418,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     let managed_worktree = if worktree {
         let embedded_network_policy =
             codex_app_server_client::EmbeddedNetworkPolicy::load(&loader_overrides).await;
+        #[cfg(feature = "cloud")]
         let gate_bootstrap = load_bootstrap_config_or_exit(
             &codex_home,
             /*cwd*/ None,
@@ -388,12 +428,15 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
             CloudConfigBundleLoader::default(),
         )
         .await;
+        #[cfg(feature = "cloud")]
         let gate_cloud_config = cloud_config_bundle_loader_for_storage(
             embedded_network_policy
                 .bind_bootstrap_auth(bootstrap_auth_config(&codex_home, &gate_bootstrap)?),
             /*enable_codex_api_key_env*/ false,
         )
         .await?;
+        #[cfg(not(feature = "cloud"))]
+        let gate_cloud_config = CloudConfigBundleLoader::default();
         let gate_config = ConfigBuilder::default()
             .codex_home(codex_home.to_path_buf())
             .cli_overrides(cli_kv_overrides.clone())
@@ -488,16 +531,20 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     )
     .await;
     let bootstrap_config_toml = &bootstrap_config.config_toml;
+    #[cfg(feature = "cloud")]
     let bootstrap_auth_config = embedded_network_policy
         .bind_bootstrap_auth(bootstrap_auth_config(&codex_home, &bootstrap_config)?);
     // API keys cannot fetch workspace-managed configuration. Preserve the
     // existing ChatGPT bootstrap identity even when model requests allow
     // CODEX_API_KEY.
+    #[cfg(feature = "cloud")]
     let cloud_config_bundle = cloud_config_bundle_loader_for_storage(
         bootstrap_auth_config,
         /*enable_codex_api_key_env*/ false,
     )
     .await?;
+    #[cfg(not(feature = "cloud"))]
+    let cloud_config_bundle = CloudConfigBundleLoader::default();
     if let Some(worktree) = managed_worktree.as_ref() {
         // Destination auth can fetch source policy that the host bootstrap could not.
         let source_config = ConfigBuilder::default()
@@ -595,6 +642,8 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         tools_web_search_request: None,
         ephemeral: ephemeral.then_some(true),
         bypass_hook_trust: bypass_hook_trust.then_some(true),
+        psp: Some(psp),
+        project_doc_paths: agents_md,
         additional_writable_roots: add_dir,
     };
 
@@ -2348,3 +2397,6 @@ fn build_review_request(args: &ReviewArgs) -> anyhow::Result<ReviewRequest> {
 #[cfg(test)]
 #[path = "lib_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod custom_tests;

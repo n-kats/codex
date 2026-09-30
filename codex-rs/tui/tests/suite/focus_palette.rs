@@ -366,6 +366,7 @@ impl PtyCodex {
             .env_remove("TERM_PROGRAM_VERSION")
             .env("OPENAI_API_KEY", "focus-palette-test")
             .env("CODEX_HOME", codex_home.path())
+            .env("RUST_BACKTRACE", "0")
             .stdin(stdin)
             .stdout(stdout)
             .stderr(slave)

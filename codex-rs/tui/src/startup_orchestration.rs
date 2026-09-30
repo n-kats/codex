@@ -453,18 +453,18 @@ pub(super) async fn run_main_inner(
     }
     startup_draft.apply_config(&config);
 
-    let mut cloud_config_bundle = if workload_identity_selected {
-        cloud_config_bundle
-    } else {
-        startup_draft
+    let mut cloud_config_bundle = cloud_config_bundle;
+    #[cfg(feature = "cloud")]
+    if !workload_identity_selected {
+        cloud_config_bundle = startup_draft
             .run_until(cloud_config_bundle_loader_for_storage(
                 embedded_network_policy.bind_bootstrap_auth(
                     app_server_target.auth_config_for_cloud_loader(config.auth_config()),
                 ),
                 /*enable_codex_api_key_env*/ false,
             ))
-            .await??
-    };
+            .await??;
+    }
     let managed_worktree = if cli.shared.worktree {
         let (destination, bundle, worktree) = startup_draft
             .run_until(worktree_startup::prepare(

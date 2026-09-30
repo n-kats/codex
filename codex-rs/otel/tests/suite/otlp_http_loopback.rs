@@ -324,6 +324,9 @@ fn otlp_http_exporter_sends_metrics_to_collector() -> Result<()> {
 #[test]
 fn otlp_http_exporter_sends_logs_to_collector()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let _global_state_guard = super::GLOBAL_OTEL_STATE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let addr = listener.local_addr().expect("local_addr");
     listener.set_nonblocking(true).expect("set_nonblocking");
@@ -447,6 +450,9 @@ fn otel_provider_rejects_header_unsafe_configured_tracestate() {
 #[test]
 fn otlp_http_exporter_sends_traces_to_collector()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let _global_state_guard = super::GLOBAL_OTEL_STATE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _trace_context_config_guard = TRACE_CONTEXT_CONFIG_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -593,6 +599,9 @@ fn otlp_http_exporter_sends_traces_to_collector()
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn otlp_http_exporter_sends_traces_to_collector_with_bounded_shutdown_in_tokio_runtime()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let _global_state_guard = super::GLOBAL_OTEL_STATE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _trace_context_config_guard = TRACE_CONTEXT_CONFIG_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -699,6 +708,9 @@ async fn otlp_http_exporter_sends_traces_to_collector_with_bounded_shutdown_in_t
 
 #[test]
 fn otlp_http_exporter_times_out_when_collector_stalls_during_bounded_shutdown() {
+    let _global_state_guard = super::GLOBAL_OTEL_STATE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _trace_context_config_guard = TRACE_CONTEXT_CONFIG_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -779,6 +791,9 @@ fn otlp_http_exporter_times_out_when_collector_stalls_during_bounded_shutdown() 
 #[test]
 fn otlp_http_exporter_sends_traces_to_collector_in_current_thread_tokio_runtime()
 -> std::result::Result<(), Box<dyn std::error::Error>> {
+    let _global_state_guard = super::GLOBAL_OTEL_STATE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let _trace_context_config_guard = TRACE_CONTEXT_CONFIG_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

@@ -19,7 +19,6 @@ use codex_mcp::ToolInfo;
 use codex_otel::auth_storage::AuthStorageOriginator;
 use codex_protocol::capabilities::SelectedCapabilityRoot;
 use std::collections::HashSet;
-
 pub(super) struct McpDesiredState {
     pub(super) config: Arc<Config>,
     pub(super) auth: Option<CodexAuth>,

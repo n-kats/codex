@@ -872,6 +872,12 @@ impl MessageProcessor {
         session_state.rpc_gate.close().await;
         self.account_processor
             .gateway_connection_closed(connection_id);
+        self.command_exec_processor
+            .connection_closed(connection_id)
+            .await;
+        self.process_exec_processor
+            .connection_closed(connection_id)
+            .await;
         self.request_serialization_queues.discard_closed().await;
         self.outgoing
             .disconnect_user_verification_connection(connection_id)
@@ -892,12 +898,6 @@ impl MessageProcessor {
         }
         self.outgoing.connection_closed(connection_id).await;
         self.fs_processor.connection_closed(connection_id).await;
-        self.command_exec_processor
-            .connection_closed(connection_id)
-            .await;
-        self.process_exec_processor
-            .connection_closed(connection_id)
-            .await;
         self.thread_processor.connection_closed(connection_id).await;
     }
 

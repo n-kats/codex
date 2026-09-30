@@ -49,6 +49,9 @@ use tempfile::TempDir;
 use tokio::sync::Notify;
 use tokio::sync::Semaphore;
 
+#[path = "agents_md_custom_tests.rs"]
+mod custom_tests;
+
 #[derive(Clone, Copy)]
 enum InjectedFailure {
     MetadataNotFound,

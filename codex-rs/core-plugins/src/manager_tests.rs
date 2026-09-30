@@ -1171,6 +1171,7 @@ output_token_limit = 12000
         Some(&McpServerToolConfig {
             approval_mode: Some(AppToolApproval::Approve),
             output_token_limit: std::num::NonZeroUsize::new(8_000),
+            wait_for_mcp_tool_completion: false,
         })
     );
 }

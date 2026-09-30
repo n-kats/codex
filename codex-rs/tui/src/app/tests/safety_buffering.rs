@@ -397,7 +397,9 @@ stream_max_retries = 0
         None
     );
 
-    insta::assert_snapshot!(app.chat_widget.composer_text_with_pending(), @"");
+    insta::allow_duplicates! {
+        insta::assert_snapshot!(app.chat_widget.composer_text_with_pending(), @"");
+    }
     assert!(
         std::iter::from_fn(|| app_event_rx.try_recv().ok())
             .all(|event| !matches!(event, AppEvent::CodexOp(AppCommand::UserTurn { .. })))
@@ -518,6 +520,7 @@ async fn run_safety_retry(
     let (server, _completions) = start_streaming_sse_server(response_sequences).await;
 
     let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    app.config.startup_warnings.clear();
     let codex_home = tempdir()?;
     // Keep text-only retry fixtures independent of the optional Code Mode host.
     let mut model_catalog = codex_models_manager::bundled_models_response()?;
@@ -538,6 +541,7 @@ async fn run_safety_retry(
 model = "{CURRENT_MODEL}"
 model_provider = "{MODEL_PROVIDER_ID}"
 model_catalog_json = {model_catalog_path}
+custom.user_shell.no_inject = true
 
 [model_providers.{MODEL_PROVIDER_ID}]
 name = "Safety retry test"

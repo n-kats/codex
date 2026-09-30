@@ -377,7 +377,23 @@ async fn cached_legacy_resume_revalidates_history_across_migration_settings() ->
             );
             resume.await?
         };
-        assert_eq!(app_server.next_request_id, next_request_id + 2);
+        let request_count = app_server.next_request_id - next_request_id;
+        let history_mode = app_server
+            .history_pagination
+            .get(&legacy_thread_id)
+            .map(|state| state.history_mode);
+        // With startup migration enabled, either the resume or the startup worker may win the
+        // maintenance lock after the test releases it. Both serialized outcomes preserve the
+        // legacy history; the request count and resulting mode must agree with the winner.
+        assert!(
+            matches!(
+                (startup_enabled, request_count, history_mode),
+                (false, 2, Some(ThreadHistoryMode::Legacy))
+                    | (true, 2, Some(ThreadHistoryMode::Legacy))
+                    | (true, 3, Some(ThreadHistoryMode::Paginated))
+            ),
+            "unexpected resume outcome for startup_enabled={startup_enabled}, workspace_enabled={workspace_enabled}: request_count={request_count}, history_mode={history_mode:?}",
+        );
         assert!(!legacy.turns.is_empty());
         app_server.shutdown().await?;
     }

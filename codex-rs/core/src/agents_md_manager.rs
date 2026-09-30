@@ -12,6 +12,7 @@ use codex_protocol::config_types::TrustLevel;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::protocol::TurnEnvironmentSelection;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_string::approx_bytes_for_tokens;
 use codex_utils_string::approx_tokens_from_byte_count;
 use std::sync::Arc;
@@ -42,6 +43,7 @@ struct AgentsMdState {
 struct AgentsMdCache {
     selections: Option<Vec<TurnEnvironmentSelection>>,
     active_project_trust_level: Option<TrustLevel>,
+    project_doc_paths: Option<Vec<AbsolutePathBuf>>,
     loaded: Option<Arc<LoadedAgentsMd>>,
 }
 
@@ -81,10 +83,12 @@ impl AgentsMdManager {
             .map(|environment| environment.selection.clone())
             .collect::<Vec<_>>();
         let active_project_trust_level = config.active_project.trust_level;
+        let project_doc_paths = config.project_doc_paths.clone();
         let (mut instructions, cached, refresh_repository) = {
             let mut state = self.state.lock().await;
             let refresh_repository = state.cache.selections.as_ref() != Some(&selections)
-                || state.cache.active_project_trust_level != active_project_trust_level;
+                || state.cache.active_project_trust_level != active_project_trust_level
+                || state.cache.project_doc_paths.as_ref() != Some(&project_doc_paths);
             if refresh_repository {
                 // Tightened read permissions must not leave inaccessible instructions visible,
                 // even if discovery fails or the caller cancels the refresh.
@@ -135,6 +139,7 @@ impl AgentsMdManager {
             state.cache = AgentsMdCache {
                 selections: Some(selections),
                 active_project_trust_level,
+                project_doc_paths: Some(project_doc_paths),
                 loaded: loaded.clone(),
             };
             Ok(loaded)

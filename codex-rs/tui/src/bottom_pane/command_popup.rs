@@ -645,3 +645,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "command_popup_custom_tests.rs"]
+mod custom_tests;

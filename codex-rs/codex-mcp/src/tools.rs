@@ -28,6 +28,9 @@ pub struct ToolInfo {
     /// Whether calls routed to this server may run in parallel.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
+    /// Whether the model stream must wait for this MCP tool to complete.
+    #[serde(default)]
+    pub wait_for_mcp_tool_completion: bool,
     /// MCP server origin used for telemetry and diagnostics, when known.
     #[serde(default)]
     pub server_origin: Option<String>,

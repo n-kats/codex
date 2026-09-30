@@ -380,11 +380,6 @@ fn create_bwrap_flags(
     if options.network_mode.should_unshare_network() {
         args.push("--unshare-net".to_string());
     }
-    // Mount a fresh /proc unless the caller explicitly disables it.
-    if options.mount_proc {
-        args.push("--proc".to_string());
-        args.push("/proc".to_string());
-    }
     if normalized_command_cwd.as_path() != command_cwd {
         // Bubblewrap otherwise inherits the helper's logical cwd, which can be
         // a symlink alias that disappears once the sandbox only mounts
@@ -596,6 +591,7 @@ fn create_filesystem_args(
         synthetic_mount_targets: Vec::new(),
         protected_create_targets: Vec::new(),
     };
+    let mut proc_mount_added = false;
     let mut allowed_write_paths = Vec::with_capacity(writable_roots.len());
     for writable_root in &writable_roots {
         let root = writable_root.root.as_path();
@@ -629,6 +625,12 @@ fn create_filesystem_args(
     unreadable_ancestors_of_writable_roots.sort_by_key(|path| path_depth(path));
 
     for unreadable_root in &unreadable_ancestors_of_writable_roots {
+        append_proc_mount_before_path_mask(
+            &mut bwrap_args,
+            options,
+            &mut proc_mount_added,
+            unreadable_root,
+        );
         append_unreadable_root_args(&mut bwrap_args, unreadable_root, &allowed_write_paths)?;
     }
 
@@ -733,6 +735,12 @@ fn create_filesystem_args(
             if deferred_read_only_subpaths.contains(&subpath) {
                 continue;
             }
+            append_proc_mount_before_path_mask(
+                &mut bwrap_args,
+                options,
+                &mut proc_mount_added,
+                &subpath,
+            );
             append_read_only_subpath_args(
                 &mut bwrap_args,
                 &subpath,
@@ -769,6 +777,12 @@ fn create_filesystem_args(
         }
         nested_unreadable_roots.sort_by_key(|path| path_depth(path));
         for unreadable_root in nested_unreadable_roots {
+            append_proc_mount_before_path_mask(
+                &mut bwrap_args,
+                options,
+                &mut proc_mount_added,
+                &unreadable_root,
+            );
             append_unreadable_root_args(&mut bwrap_args, &unreadable_root, &allowed_write_paths)?;
         }
     }
@@ -785,6 +799,12 @@ fn create_filesystem_args(
         .collect();
     rootless_unreadable_roots.sort_by_key(|path| path_depth(path));
     for unreadable_root in rootless_unreadable_roots {
+        append_proc_mount_before_path_mask(
+            &mut bwrap_args,
+            options,
+            &mut proc_mount_added,
+            &unreadable_root,
+        );
         append_unreadable_root_args(&mut bwrap_args, &unreadable_root, &allowed_write_paths)?;
     }
 
@@ -811,7 +831,50 @@ fn create_filesystem_args(
         ]);
     }
 
+    // Keep the existing ordering for ordinary policies, but make procfs
+    // available before a deny mask such as `/dev/fd` follows its symlink to
+    // `/proc/self/fd`.
+    if options.mount_proc && !proc_mount_added {
+        bwrap_args
+            .args
+            .extend(["--proc".to_string(), "/proc".to_string()]);
+    }
+
     Ok(bwrap_args)
+}
+
+fn append_proc_mount_before_path_mask(
+    bwrap_args: &mut BwrapArgs,
+    options: BwrapOptions,
+    proc_mount_added: &mut bool,
+    path: &Path,
+) {
+    let needs_proc_mount = path == Path::new("/proc")
+        || path.starts_with("/proc/")
+        || path == Path::new("/dev/fd")
+        || path.starts_with("/dev/fd/");
+    if !needs_proc_mount || *proc_mount_added {
+        return;
+    }
+    if options.mount_proc {
+        bwrap_args
+            .args
+            .extend(["--proc".to_string(), "/proc".to_string()]);
+    }
+    *proc_mount_added = true;
+}
+
+fn bwrap_mask_path(path: &Path) -> &Path {
+    if path == Path::new("/dev/fd") || path.starts_with("/dev/fd/") {
+        // `--dev /dev` creates `/dev/fd` as an absolute symlink to
+        // `/proc/self/fd`. During bubblewrap setup, path arguments are rooted
+        // at `/newroot`, but that symlink is resolved from the setup process's
+        // root and therefore cannot be mounted through. Mask its target
+        // directly so the result is the same after the final pivot.
+        Path::new("/proc/self/fd")
+    } else {
+        path
+    }
 }
 
 fn append_protected_create_targets_for_writable_root(
@@ -1244,10 +1307,11 @@ fn append_read_only_subpath_args(
     }
 
     if is_within_allowed_write_paths(subpath, allowed_write_paths) {
+        let mask_path = bwrap_mask_path(subpath);
         bwrap_args.args.push("--ro-bind".to_string());
-        bwrap_args.args.push(path_to_string(subpath));
-        bwrap_args.args.push(path_to_string(subpath));
-        append_daemon_socket_masks(&mut bwrap_args.args, subpath, daemon_directories)?;
+        bwrap_args.args.push(path_to_string(mask_path));
+        bwrap_args.args.push(path_to_string(mask_path));
+        append_daemon_socket_masks(&mut bwrap_args.args, mask_path, daemon_directories)?;
     }
     Ok(())
 }
@@ -1348,7 +1412,11 @@ fn append_unreadable_root_args(
         return Ok(());
     }
 
-    append_existing_unreadable_path_args(bwrap_args, unreadable_root, allowed_write_paths)
+    append_existing_unreadable_path_args(
+        bwrap_args,
+        bwrap_mask_path(unreadable_root),
+        allowed_write_paths,
+    )
 }
 
 fn append_existing_unreadable_path_args(

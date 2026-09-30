@@ -286,11 +286,32 @@ impl ShellSnapshotCache {
             ShellType::Sh => ("-c", ""),
             ShellType::PowerShell | ShellType::Cmd => unreachable!(),
         };
-        prepared.command[shell_start + 1] = shell_flag.to_string();
-        prepared.command[shell_start + 2] = format!(
+        let restored_command = format!(
             "{startup}if ! {restore} >/dev/null; then printf 'failed to restore shell snapshot\\n' >&2; fi\n{}",
             params.argv[2]
         );
+        match shell_type {
+            ShellType::Bash => {
+                prepared.command.splice(
+                    shell_start + 1..shell_start + 3,
+                    [
+                        "--noprofile".to_string(),
+                        "--norc".to_string(),
+                        shell_flag.to_string(),
+                        restored_command,
+                    ],
+                );
+            }
+            ShellType::Zsh => {
+                prepared.command[shell_start + 1] = shell_flag.to_string();
+                prepared.command[shell_start + 2] = restored_command;
+            }
+            ShellType::Sh => {
+                prepared.command[shell_start + 1] = "-c".to_string();
+                prepared.command[shell_start + 2] = restored_command;
+            }
+            ShellType::PowerShell | ShellType::Cmd => unreachable!(),
+        }
 
         Ok(reader)
     }

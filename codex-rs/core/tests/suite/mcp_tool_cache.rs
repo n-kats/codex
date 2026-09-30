@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -50,13 +51,13 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
 use test_case::test_case;
+use tracing::Event;
+use tracing::Metadata;
 use tracing::Subscriber;
 use tracing::span::Attributes;
 use tracing::span::Id;
-use tracing_subscriber::Layer;
-use tracing_subscriber::layer::Context as LayerContext;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
+use tracing::span::Record;
+use tracing::subscriber::Interest;
 
 use super::rmcp_client::remote_aware_environment_id;
 use super::rmcp_client::remote_aware_stdio_server_bin;
@@ -64,16 +65,42 @@ use super::rmcp_client::remote_aware_stdio_server_bin;
 const SERVER_NAME: &str = "cached_rmcp";
 const NAMESPACE: &str = "mcp__cached_rmcp";
 
-struct McpBindingCaptureCounter(Arc<AtomicUsize>);
+struct McpBindingCaptureSubscriber {
+    binding_captures: Arc<AtomicUsize>,
+    next_span_id: AtomicU64,
+}
 
-impl<S: Subscriber> Layer<S> for McpBindingCaptureCounter {
-    fn on_new_span(&self, attributes: &Attributes<'_>, _id: &Id, _context: LayerContext<'_, S>) {
+impl Subscriber for McpBindingCaptureSubscriber {
+    fn enabled(&self, _metadata: &Metadata<'_>) -> bool {
+        true
+    }
+
+    fn register_callsite(&self, _metadata: &'static Metadata<'static>) -> Interest {
+        Interest::always()
+    }
+
+    fn max_level_hint(&self) -> Option<tracing::level_filters::LevelFilter> {
+        Some(tracing::level_filters::LevelFilter::TRACE)
+    }
+
+    fn new_span(&self, attributes: &Attributes<'_>) -> Id {
         if attributes.metadata().target() == "codex_mcp::connection_manager::tool_catalog"
             && attributes.metadata().name() == "capture_binding_with_metadata"
         {
-            self.0.fetch_add(1, Ordering::SeqCst);
+            self.binding_captures.fetch_add(1, Ordering::SeqCst);
         }
+        Id::from_u64(self.next_span_id.fetch_add(1, Ordering::Relaxed) + 1)
     }
+
+    fn record(&self, _span: &Id, _values: &Record<'_>) {}
+
+    fn record_follows_from(&self, _span: &Id, _follows_from: &Id) {}
+
+    fn event(&self, _event: &Event<'_>) {}
+
+    fn enter(&self, _span: &Id) {}
+
+    fn exit(&self, _span: &Id) {}
 }
 
 fn user_turn(prompt: &str) -> TurnInputRequest {
@@ -589,9 +616,10 @@ async fn cached_mcp_startup_is_eager_for_root_and_lazy_for_subagents() -> anyhow
     skip_if_no_network!(Ok(()));
 
     let binding_captures = Arc::new(AtomicUsize::new(0));
-    let _tracing = tracing_subscriber::registry()
-        .with(McpBindingCaptureCounter(Arc::clone(&binding_captures)))
-        .set_default();
+    let _tracing = tracing::subscriber::set_default(McpBindingCaptureSubscriber {
+        binding_captures: Arc::clone(&binding_captures),
+        next_span_id: AtomicU64::new(0),
+    });
 
     let responses_server = responses::start_mock_server().await;
     let command = remote_aware_stdio_server_bin()?;

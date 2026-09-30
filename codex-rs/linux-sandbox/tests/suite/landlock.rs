@@ -20,6 +20,7 @@ use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Output;
 use std::time::Duration;
@@ -59,11 +60,19 @@ fn create_env_from_core_vars() -> HashMap<String, String> {
 }
 
 fn codex_linux_sandbox_exe() -> PathBuf {
-    let sandbox_program = PathBuf::from(env!("CARGO_BIN_EXE_codex-linux-sandbox"));
-    match sandbox_program.canonicalize() {
-        Ok(path) => path,
-        Err(_) => sandbox_program,
-    }
+    let test_executable =
+        std::env::current_exe().expect("integration test executable path should be available");
+    let debug_dir = test_executable
+        .parent()
+        .and_then(Path::parent)
+        .expect("integration test executable should be under target/debug/deps");
+    let runtime_path = debug_dir.join("codex-linux-sandbox");
+    assert!(
+        runtime_path.is_file(),
+        "sandbox helper should exist at {}",
+        runtime_path.display()
+    );
+    runtime_path
 }
 
 #[expect(clippy::print_stdout)]

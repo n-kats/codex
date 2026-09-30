@@ -26,7 +26,15 @@ fn daemon_handoff_uses_selected_executable_and_propagates_failure() -> anyhow::R
         run_update_action(UpdateAction::Daemon(source), Some(&executable))?;
         assert_eq!(std::fs::read_to_string(&receipt)?, expected);
     }
-    std::fs::write(&executable, "#!/bin/sh\nexit 7\n")?;
+    let replacement = executable.with_extension("replacement");
+    std::fs::write(&replacement, "#!/bin/sh\nexit 7\n")?;
+    std::fs::set_permissions(
+        &replacement,
+        std::fs::Permissions::from_mode(/*mode*/ 0o700),
+    )?;
+    // Replace the fixture atomically so a just-finished shell cannot leave the
+    // old executable inode temporarily busy on Linux.
+    std::fs::rename(replacement, &executable)?;
     let error = run_update_action(
         UpdateAction::Daemon(DaemonUpdateSource::ThisCli),
         Some(&executable),

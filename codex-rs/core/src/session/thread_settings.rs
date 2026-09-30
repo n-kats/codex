@@ -59,6 +59,7 @@ pub(super) fn prepare_update(overrides: ThreadSettingsOverrides) -> SessionSetti
         collaboration_mode,
         personality,
         disabled_plugin_ids,
+        project_doc_paths,
     } = overrides;
     SessionSettingsUpdate {
         step_settings: StepSettingsUpdate {
@@ -79,6 +80,7 @@ pub(super) fn prepare_update(overrides: ThreadSettingsOverrides) -> SessionSetti
         active_permission_profile,
         windows_sandbox_level,
         disabled_plugin_ids,
+        project_doc_paths,
         ..Default::default()
     }
 }

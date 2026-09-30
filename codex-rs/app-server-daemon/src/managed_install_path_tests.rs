@@ -117,11 +117,15 @@ async fn older_managed_binary_does_not_claim_updater_support() {
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempfile::TempDir::new().expect("home");
-    let binary = temp.path().join("codex");
-    std::fs::write(&binary, b"#!/bin/sh\nexit 2\n").expect("older binary");
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
+    let older_binary = temp.path().join("older-codex");
+    std::fs::write(&older_binary, b"#!/bin/sh\nexit 2\n").expect("older binary");
+    std::fs::set_permissions(&older_binary, std::fs::Permissions::from_mode(0o755))
         .expect("executable binary");
-    assert!(!super::supports_daemon_update_loop(&binary).await);
-    std::fs::write(&binary, b"#!/bin/sh\nexit 0\n").expect("newer binary");
-    assert!(super::supports_daemon_update_loop(&binary).await);
+    assert!(!super::supports_daemon_update_loop(&older_binary).await);
+
+    let newer_binary = temp.path().join("newer-codex");
+    std::fs::write(&newer_binary, b"#!/bin/sh\nexit 0\n").expect("newer binary");
+    std::fs::set_permissions(&newer_binary, std::fs::Permissions::from_mode(0o755))
+        .expect("executable binary");
+    assert!(super::supports_daemon_update_loop(&newer_binary).await);
 }

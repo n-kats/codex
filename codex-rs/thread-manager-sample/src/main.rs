@@ -296,6 +296,7 @@ async fn new_config(
         tui_status_line_use_colors: true,
         tui_terminal_title: None,
         tui_theme: None,
+        custom_theme_diff: None,
         tui_raw_output_mode: false,
         tui_pet: None,
         tui_pet_anchor: TuiPetAnchor::Composer,
@@ -317,6 +318,7 @@ async fn new_config(
         mcp_oauth_callback_url: None,
         mcp_optional_startup_grace: std::time::Duration::from_secs(1),
         model_providers,
+        project_doc_paths: Vec::new(),
         project_doc_max_bytes: 32 * 1024,
         project_doc_fallback_filenames: Vec::new(),
         tool_output_token_limit: None,
@@ -349,6 +351,7 @@ async fn new_config(
             .clone()
             .unwrap_or_else(|| "https://chatgpt.com/backend-api/".to_string()),
         respect_system_proxy,
+        psp: false,
         apps_mcp_product_sku: None,
         responses_api_metadata: BTreeMap::new(),
         realtime_audio: RealtimeAudioConfig::default(),
