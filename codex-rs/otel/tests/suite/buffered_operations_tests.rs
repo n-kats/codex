@@ -63,6 +63,9 @@ fn totals(metrics: &MetricsClient) -> (u64, u64, f64) {
 
 #[test]
 fn shutdown_buffers_until_replacement_and_preserves_newer_installations() {
+    let _global_state_guard = super::GLOBAL_OTEL_STATE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let first = install();
     first.shutdown().unwrap();
     observe();
@@ -78,6 +81,9 @@ fn shutdown_buffers_until_replacement_and_preserves_newer_installations() {
 
 #[test]
 fn rejected_opt_out_preserves_recording_and_accepted_opt_out_survives_shutdown() {
+    let _global_state_guard = super::GLOBAL_OTEL_STATE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let metrics = install();
     let mut settings = OtelSettings {
         http_client_factory: HttpClientFactory::new(OutboundProxyPolicy::ReqwestDefault),

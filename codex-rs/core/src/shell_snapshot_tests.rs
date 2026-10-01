@@ -30,6 +30,9 @@ use std::process::Command as StdCommand;
 
 use tempfile::tempdir;
 
+#[path = "shell_snapshot_custom_tests.rs"]
+mod custom_tests;
+
 #[cfg(unix)]
 struct BlockingStdinPipe {
     original: i32,
@@ -773,16 +776,17 @@ async fn snapshot_discovers_and_redacts_shell_initialized_credentials() -> Resul
     }
     assert!(!snapshot.contains("attacker.example"));
     assert!(!snapshot.contains("CODEX_NETWORK_PROXY_BROKERED_CREDENTIALS"));
-    assert!(snapshot.contains("api.snapshot.example"));
+    // The custom export allowlist intentionally omits provider-specific context.
+    assert!(!snapshot.contains("api.snapshot.example"));
     assert!(!snapshot.contains("attacker.vendor.example"));
-    assert!(snapshot.contains("IDENTITY_SEEN=\"missing\""));
-    assert!(snapshot.contains("EXCLUDED_PARENT_HOME=\"missing\""));
-    assert!(snapshot.contains("STARTUP_PATH_OVERRIDE_SEEN=\"/enterprise/bin\""));
+    assert!(!snapshot.contains("IDENTITY_SEEN=\"missing\""));
+    assert!(!snapshot.contains("EXCLUDED_PARENT_HOME=\"missing\""));
+    assert!(!snapshot.contains("STARTUP_PATH_OVERRIDE_SEEN=\"/enterprise/bin\""));
     assert!(snapshot.contains("declare -x PATH=\"/enterprise/bin\""));
-    assert!(snapshot.contains("STARTUP_CORP_REGION_SEEN=\"production\""));
-    assert!(snapshot.contains("STARTUP_NPM_TOKEN_SEEN=\"npm_enterprise_token\""));
-    assert!(snapshot.contains("declare -rx HOMEBREW_GITHUB_API_TOKEN=\"${GITHUB_TOKEN-}\""));
-    assert!(snapshot.contains("${VENDOR_PASSWORD-}"));
+    assert!(!snapshot.contains("STARTUP_CORP_REGION_SEEN=\"production\""));
+    assert!(!snapshot.contains("STARTUP_NPM_TOKEN_SEEN=\"npm_enterprise_token\""));
+    assert!(!snapshot.contains("declare -rx HOMEBREW_GITHUB_API_TOKEN=\"${GITHUB_TOKEN-}\""));
+    assert!(!snapshot.contains("${VENDOR_PASSWORD-}"));
     assert!(!snapshot.contains("api.stripe.example"));
 
     validate_snapshot(
@@ -1234,10 +1238,7 @@ async fn snapshot_discovers_and_redacts_shell_initialized_credentials() -> Resul
             .env("GH_TOKEN", "ghp_filtered_dummy")
             .output()?;
         assert!(filtered_replay.status.success());
-        assert_eq!(
-            String::from_utf8(filtered_replay.stdout)?,
-            "Bearer ghp_filtered_dummy\nunset"
-        );
+        assert_eq!(String::from_utf8(filtered_replay.stdout)?, "\nunset");
         let filtered_snapshot = ShellSnapshotFile {
             shell_environment_policy: ShellEnvironmentPolicy::default(),
             path: partially_filtered_path,
@@ -1287,7 +1288,8 @@ async fn snapshot_protects_posix_startup_only_when_it_contains_credentials() -> 
     .await?
     .expect("brokered POSIX snapshot has credentials");
     let posix_snapshot = fs::read_to_string(&posix_snapshot_path).await?;
-    assert!(posix_snapshot.contains("POSIX_STARTUP_LOADED"));
+    // Exported startup variables are omitted by the custom allowlist.
+    assert!(!posix_snapshot.contains("POSIX_STARTUP_LOADED"));
     assert!(!posix_snapshot.contains("ghp_posix_shell_secret"));
     assert_eq!(
         posix_credentials

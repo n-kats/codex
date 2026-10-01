@@ -1,4 +1,5 @@
 use anyhow::Result;
+#[cfg(feature = "cloud")]
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
@@ -16,6 +17,7 @@ use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::rollout_path;
 use app_test_support::test_absolute_path;
 use app_test_support::to_response;
+#[cfg(feature = "cloud")]
 use app_test_support::write_chatgpt_auth;
 use chrono::Utc;
 use codex_app_server_protocol::ActivePermissionProfile;
@@ -78,10 +80,12 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
+#[cfg(feature = "cloud")]
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_exec_server::LOCAL_ENVIRONMENT_ID;
 use codex_features::Feature;
+#[cfg(feature = "cloud")]
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
@@ -142,10 +146,15 @@ use tempfile::TempDir;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use uuid::Uuid;
+#[cfg(feature = "cloud")]
 use wiremock::Mock;
+#[cfg(feature = "cloud")]
 use wiremock::MockServer;
+#[cfg(feature = "cloud")]
 use wiremock::ResponseTemplate;
+#[cfg(feature = "cloud")]
 use wiremock::matchers::method;
+#[cfg(feature = "cloud")]
 use wiremock::matchers::path;
 
 use super::analytics::assert_basic_thread_initialized_event;
@@ -5894,6 +5903,7 @@ required = true"#,
     Ok(())
 }
 
+#[cfg(feature = "cloud")]
 #[tokio::test]
 async fn thread_resume_surfaces_cloud_config_bundle_load_errors() -> Result<()> {
     let server = MockServer::start().await;

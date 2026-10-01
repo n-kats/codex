@@ -204,10 +204,12 @@ async fn exec_server_sigv4_does_not_enable_aws_auth_for_noise() {
         args.extend(options);
         let command = exec_server_from_args(&args);
         // Unset runtime paths prove validation runs before startup or credential loading.
+        let loader_overrides = LoaderOverrides::default();
         let error = command
             .run(
                 &Arg0DispatchPaths::default(),
                 &CliConfigOverrides::default(),
+                &loader_overrides,
             )
             .await
             .expect_err("Noise auth is unchanged");
@@ -254,10 +256,12 @@ async fn exec_server_direct_forwarding_remains_rejected() {
             "bedrock-mantle"
         ),
     );
+    let loader_overrides = LoaderOverrides::default();
     let error = command
         .run(
             &Arg0DispatchPaths::default(),
             &CliConfigOverrides::default(),
+            &loader_overrides,
         )
         .await
         .expect_err("Direct forwarding is unsupported before startup");

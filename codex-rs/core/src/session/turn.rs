@@ -2691,6 +2691,8 @@ async fn try_run_sampling_request(
                 }
             }
             ResponseEvent::OutputItemDone(mut item) => {
+                let wait_for_mcp_tool_completion =
+                    tool_runtime.waits_for_mcp_tool_completion(&item);
                 assign_missing_streamed_response_item_id(&mut item, active_item.as_ref());
                 sess.reserve_assistant_message_order(&turn_context, &item)
                     .await;
@@ -2791,6 +2793,12 @@ async fn try_run_sampling_request(
                     };
                 if let Some(tool_future) = output_result.tool_future {
                     in_flight.push_back(tool_future);
+                    if wait_for_mcp_tool_completion {
+                        break Ok(SamplingRequestResult {
+                            needs_follow_up: true,
+                            last_agent_message,
+                        });
+                    }
                 }
                 if let Some(agent_message) = output_result.last_agent_message {
                     last_agent_message = Some(agent_message);

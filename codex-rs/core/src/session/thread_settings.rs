@@ -66,6 +66,7 @@ pub(super) fn prepare_update(
         collaboration_mode,
         personality,
         disabled_plugin_ids,
+        project_doc_paths,
     } = overrides;
     SessionSettingsUpdate {
         turn_extension_init,
@@ -87,6 +88,7 @@ pub(super) fn prepare_update(
         active_permission_profile,
         windows_sandbox_level,
         disabled_plugin_ids,
+        project_doc_paths,
         ..Default::default()
     }
 }

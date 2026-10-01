@@ -1,0 +1,57 @@
+# 20261001 rebase custom
+
+- `AGENTS.md`
+  - Line: deleted.
+  - Resolution: upstream deletionを採用。利用者の指示により削除前の内容は復元しない。
+- `CUSTOM_AGENTS.md`
+  - Line: deleted.
+  - Resolution: 利用者の指示により削除。
+- `codex-rs/app-server-protocol/schema/precomputed/app-server-exports-experimental.json.zst`
+  - Location: `ThreadSettingsUpdateParams.projectDocPaths` の JSON schema export 4箇所と TypeScript export。
+  - Resolution: upstream生成物を基礎にcustomの`projectDocPaths`を保持した後、公式生成関数からexperimental fixtureを再生成。差分原因は`ClientRequest.json`内の36個の`minimum`値が、既存fixtureの整数`0`に対し生成結果で浮動小数`0.0`となっていたこと。
+- `codex-rs/core/config.schema.json`
+  - Lines: 6825, 6841.
+  - Resolution: custom の `custom` 設定と upstream の `daybreak` 設定を両方保持。
+- `codex-rs/tui/src/app/config_persistence.rs`
+  - Lines: 258, 908, 1311.
+  - Resolution: upstream の `OverrideTurnContext` 引数に合わせ、custom の `project_doc_paths` を渡す。
+- `codex-rs/tui/src/app/event_dispatch.rs`
+  - Line: 2387.
+  - Resolution: `project_doc_paths` を渡し、upstream の Daybreak event 処理も保持。
+- `codex-rs/tui/src/app/tests.rs`
+  - Lines: 3405, 3498, 3592, 3672, 3731, 9142.
+  - Resolution: 期待値と呼び出しを `project_doc_paths` に合わせる。upstream の `personality` を含まない TUI command shapeを採用。
+- `codex-rs/tui/src/app/thread_settings.rs`
+  - Lines: 164, 183, 287.
+  - Resolution: `project_doc_paths` を `ThreadSettingsUpdateParams` へ伝播し、変更判定に含める。upstream の command shapeを保持。
+- `codex-rs/tui/src/app_command.rs`
+  - Lines: 143, 257, 270.
+  - Resolution: custom の `project_doc_paths` を保持し、upstream の `OverrideTurnContext` shapeに合わせる。
+- `codex-rs/tui/src/chatwidget/permission_popups.rs`
+  - Line: 287.
+  - Resolution: 呼び出しに `project_doc_paths: None` を追加。
+- `codex-rs/tui/src/chatwidget/rate_limits.rs`
+  - Line: 479.
+  - Resolution: 呼び出しに `project_doc_paths: None` を追加。
+- `codex-rs/tui/src/chatwidget/service_tiers.rs`
+  - Line: 113.
+  - Resolution: 呼び出しに `project_doc_paths: None` を追加。
+- `codex-rs/tui/src/chatwidget/settings.rs`
+  - Line: 737.
+  - Resolution: 呼び出しに `project_doc_paths: None` を追加。
+- `codex-rs/tui/src/chatwidget/tests/permissions.rs`
+  - Line: 1403.
+  - Resolution: 期待値に `project_doc_paths: None` を追加。
+- `codex-rs/tui/src/slash_command.rs`
+  - Lines: 272-273.
+  - Resolution: upstream `Daybreak` と custom `CustomAgents` を両方 task 中に利用可能にする。
+- `codex-rs/tui/src/chatwidget/slash_dispatch.rs`
+  - Line: 1191.
+  - Resolution: upstream の現行引数に合わせ、custom `project_doc_paths` は維持。
+
+## 確認
+
+- Rust/JSON の競合マーカーなし。`codex-rs/core/config.schema.json` は `jq empty` を通過。
+- MCP `run_cargo_test_selected` で `schema_fixtures_tests::experimental_precomputed_exports_match_generated` が成功。
+- MCP `run_make_almost_equivalent`: fmt、linux-sandbox build、test-almost が終了コード0。test-almostのログに失敗結果なし。
+- `git add` は `.git/index.lock` を作成できず失敗（read-only filesystem）。index の競合状態は未解決のまま。

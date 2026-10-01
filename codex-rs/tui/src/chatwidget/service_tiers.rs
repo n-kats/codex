@@ -110,6 +110,7 @@ impl ChatWidget {
                 /*summary*/ None,
                 Some(service_tier.clone()),
                 /*collaboration_mode*/ None,
+                /*project_doc_paths*/ None,
             )));
         self.app_event_tx
             .send(AppEvent::PersistServiceTierSelection { service_tier });

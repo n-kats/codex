@@ -272,8 +272,8 @@ async fn seed_recent_thread(
 async fn conversation_start_audio_text_close_round_trip() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    let api_server = start_mock_server().await;
-    let server = start_websocket_server(vec![vec![
+    let startup_server = start_websocket_server(vec![vec![]]).await;
+    let realtime_server = start_websocket_server(vec![vec![
         vec![json!({
             "type": "session.updated",
             "session": { "id": "sess_1", "instructions": "backend prompt" }
@@ -299,18 +299,18 @@ async fn conversation_start_audio_text_close_round_trip() -> Result<()> {
     .await;
 
     let mut builder = test_codex().with_config({
-        let provider_base_url = format!("{}/v1", server.uri());
+        let realtime_base_url = realtime_server.uri().to_string();
         move |config| {
-            // Exercise the default Realtime endpoint without Responses prewarm
-            // connections competing for this server's scripted replies.
-            config.model_provider.base_url = Some(provider_base_url);
-            config.model_provider.supports_websockets = false;
-            config.experimental_realtime_ws_base_url = None;
-            config.experimental_realtime_ws_model = Some("realtime-test-model".to_string());
+            config.experimental_realtime_ws_base_url = Some(realtime_base_url);
             config.realtime.version = RealtimeWsVersion::V1;
         }
     });
-    let test = builder.build_with_auto_env(&api_server).await?;
+    let test = builder.build_with_websocket_server(&startup_server).await?;
+    assert!(
+        startup_server
+            .wait_for_handshakes(/*expected*/ 1, Duration::from_secs(2))
+            .await
+    );
 
     test.codex
         .submit(Op::RealtimeConversationStart(ConversationStartParams {
@@ -387,7 +387,7 @@ async fn conversation_start_audio_text_close_round_trip() -> Result<()> {
     .await;
     assert_eq!(audio_out.data, "AQID");
 
-    let connections = server.connections();
+    let connections = realtime_server.connections();
     assert_eq!(connections.len(), 1);
     let connection = &connections[0];
     assert_eq!(connection.len(), 3);
@@ -403,7 +403,7 @@ async fn conversation_start_audio_text_close_round_trip() -> Result<()> {
         .expect("initial session update instructions");
     assert!(initial_instructions.starts_with("backend prompt"));
     assert_eq!(
-        server.handshakes()[0]
+        realtime_server.handshakes()[0]
             .header("x-session-id")
             .expect("session.update x-session-id header"),
         started
@@ -412,11 +412,13 @@ async fn conversation_start_audio_text_close_round_trip() -> Result<()> {
             .expect("started session id should be present")
     );
     assert_eq!(
-        server.handshakes()[0].header("authorization").as_deref(),
+        realtime_server.handshakes()[0]
+            .header("authorization")
+            .as_deref(),
         Some("Bearer dummy")
     );
     assert_eq!(
-        server.handshakes()[0].uri(),
+        realtime_server.handshakes()[0].uri(),
         "/v1/realtime?intent=quicksilver&model=realtime-test-model"
     );
     let mut request_types = [
@@ -458,7 +460,8 @@ async fn conversation_start_audio_text_close_round_trip() -> Result<()> {
             .any(|item| matches!(item, RolloutItem::RealtimeItem(_)))
     );
 
-    server.shutdown().await;
+    realtime_server.shutdown().await;
+    startup_server.shutdown().await;
     Ok(())
 }
 
@@ -2740,20 +2743,20 @@ async fn conversation_uses_experimental_realtime_ws_base_url_override() -> Resul
 async fn conversation_uses_default_realtime_backend_prompt() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    // Responses prewarm can reconnect; give realtime its own scripted connections.
     let startup_server = start_websocket_server(vec![vec![]]).await;
-    let server = start_websocket_server(vec![vec![vec![json!({
+    let realtime_server = start_websocket_server(vec![vec![vec![json!({
         "type": "session.updated",
         "session": { "id": "sess_default", "instructions": "default" }
     })]]])
     .await;
 
     let mut builder = test_codex().with_config({
-        let realtime_base_url = server.uri().to_string();
+        let realtime_base_url = realtime_server.uri().to_string();
         move |config| {
             config.experimental_realtime_ws_base_url = Some(realtime_base_url);
             config.experimental_realtime_ws_startup_context =
                 Some("controlled startup context".to_string());
+            config.realtime.version = RealtimeWsVersion::V1;
         }
     });
     let test = builder.build_with_websocket_server(&startup_server).await?;
@@ -2801,7 +2804,7 @@ async fn conversation_uses_default_realtime_backend_prompt() -> Result<()> {
     .await;
     assert_eq!(session_updated, "sess_default");
 
-    let connections = server.connections();
+    let connections = realtime_server.connections();
     assert_eq!(connections.len(), 1);
     let instructions =
         websocket_request_instructions(&connections[0][0]).expect("default session instructions");
@@ -2813,8 +2816,8 @@ async fn conversation_uses_default_realtime_backend_prompt() -> Result<()> {
         )
     );
 
+    realtime_server.shutdown().await;
     startup_server.shutdown().await;
-    server.shutdown().await;
     Ok(())
 }
 
@@ -2822,9 +2825,8 @@ async fn conversation_uses_default_realtime_backend_prompt() -> Result<()> {
 async fn conversation_uses_empty_instructions_for_null_or_empty_prompt() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
-    // Responses prewarm can reconnect; give realtime its own scripted connections.
     let startup_server = start_websocket_server(vec![vec![]]).await;
-    let server = start_websocket_server(vec![
+    let realtime_server = start_websocket_server(vec![
         vec![vec![json!({
             "type": "session.updated",
             "session": { "id": "sess_null", "instructions": "" }
@@ -2837,10 +2839,11 @@ async fn conversation_uses_empty_instructions_for_null_or_empty_prompt() -> Resu
     .await;
 
     let mut builder = test_codex().with_config({
-        let realtime_base_url = server.uri().to_string();
+        let realtime_base_url = realtime_server.uri().to_string();
         move |config| {
             config.experimental_realtime_ws_base_url = Some(realtime_base_url);
             config.experimental_realtime_ws_startup_context = Some(String::new());
+            config.realtime.version = RealtimeWsVersion::V1;
         }
     });
     let test = builder.build_with_websocket_server(&startup_server).await?;
@@ -2900,7 +2903,7 @@ async fn conversation_uses_empty_instructions_for_null_or_empty_prompt() -> Resu
         .await;
     }
 
-    let connections = server.connections();
+    let connections = realtime_server.connections();
     assert_eq!(connections.len(), 2);
     let null_instructions =
         websocket_request_instructions(&connections[0][0]).expect("null prompt instructions");
@@ -2909,8 +2912,8 @@ async fn conversation_uses_empty_instructions_for_null_or_empty_prompt() -> Resu
     assert_eq!(null_instructions, "");
     assert_eq!(empty_instructions, "");
 
+    realtime_server.shutdown().await;
     startup_server.shutdown().await;
-    server.shutdown().await;
     Ok(())
 }
 

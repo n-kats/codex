@@ -1558,13 +1558,79 @@ async fn denying_network_policy_amendment_persists_and_blocks_request() -> Resul
 
     let server = start_mock_server().await;
     let test = managed_network_unified_exec_test(&server).await?;
-    let responses = mount_exec_network_turn(
+    let call_id = "network-deny-amendment";
+    mount_sse_once_match(
         &server,
-        "resp-network-deny-amendment",
-        "network-deny-amendment",
-        network_fetch_args(LOCAL_ENVIRONMENT_ID),
+        |request: &wiremock::Request| {
+            !is_guardian_request(request)
+                && request_body_contains(request, "persist a deny rule for this host")
+        },
+        sse(vec![
+            ev_response_created("resp-network-deny-amendment"),
+            ev_function_call(
+                call_id,
+                "exec_command",
+                &serde_json::to_string(&network_fetch_args(LOCAL_ENVIRONMENT_ID))?,
+            ),
+            ev_completed("resp-network-deny-amendment"),
+        ]),
     )
-    .await?;
+    .await;
+    let _parent = wiremock::Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/v1/responses"))
+        .and(move |request: &wiremock::Request| {
+            !is_guardian_request(request)
+                && request_body_contains(request, call_id)
+                && !request_body_contains(request, "rejected by user")
+        })
+        .respond_with(move |request: &wiremock::Request| {
+            let body: Value = serde_json::from_slice(
+                &decoded_request_body(request).expect("decode parent request"),
+            )
+            .expect("parse parent request");
+            let input = body["input"].as_array().expect("parent input");
+            let output = input
+                .iter()
+                .rev()
+                .find(|item| item["type"] == "function_call_output")
+                .and_then(|item| item["output"].as_str())
+                .expect("network command or poll output");
+            let response_id = format!("resp-network-deny-amendment-{}", input.len());
+            let event = if let Some(session_id) = output
+                .lines()
+                .find_map(|line| line.strip_prefix("Process running with session ID "))
+            {
+                ev_function_call(
+                    &format!("{response_id}-stdin"),
+                    "write_stdin",
+                    &json!({
+                        "session_id": session_id.parse::<i32>().expect("session id"),
+                        "chars": "",
+                        "yield_time_ms": 1_000,
+                    })
+                    .to_string(),
+                )
+            } else {
+                ev_assistant_message(&response_id, "done")
+            };
+            sse_response(sse(vec![event, ev_completed(&response_id)]))
+        })
+        .mount_as_scoped(&server)
+        .await;
+    let responses = mount_sse_once_match(
+        &server,
+        move |request: &wiremock::Request| {
+            !is_guardian_request(request)
+                && request_body_contains(request, call_id)
+                && request_body_contains(request, "rejected by user")
+        },
+        sse(vec![
+            ev_response_created("resp-network-deny-amendment-final"),
+            ev_assistant_message("resp-network-deny-amendment-final-msg", "done"),
+            ev_completed("resp-network-deny-amendment-final"),
+        ]),
+    )
+    .await;
     submit_managed_network_turn(
         &test,
         "persist a deny rule for this host",
@@ -2072,6 +2138,11 @@ async fn guardian_receives_exact_triggers_for_concurrent_network_requests() -> R
 
     let server = start_mock_server().await;
     let test = managed_network_unified_exec_test(&server).await?;
+    if codex_core::config::system_bwrap_warning(test.config.permissions.permission_profile())
+        .is_some()
+    {
+        return Ok(());
+    }
     let barrier_dir = TempDir::new_in(test.cwd.path())?;
     let first_marker = barrier_dir.path().join("first");
     let second_marker = barrier_dir.path().join("second");
@@ -2226,6 +2297,11 @@ async fn guardian_receives_exact_trigger_for_single_network_request() -> Result<
 
     let server = start_mock_server().await;
     let test = managed_network_unified_exec_test(&server).await?;
+    if codex_core::config::system_bwrap_warning(test.config.permissions.permission_profile())
+        .is_some()
+    {
+        return Ok(());
+    }
     let command = "python3 -c \"import urllib.request; opener = urllib.request.build_opener(urllib.request.ProxyHandler()); print('OK:' + opener.open('http://1.1.1.1', timeout=10).read().decode(errors='replace'))\"".to_string();
     let call_id = "exec-network-single";
     mount_sse_once_match(
@@ -3043,6 +3119,11 @@ async fn approved_network_host_for_one_environment_still_prompts_in_another() ->
 
     let server = start_mock_server().await;
     let test = managed_network_unified_exec_test(&server).await?;
+    if codex_core::config::system_bwrap_warning(test.config.permissions.permission_profile())
+        .is_some()
+    {
+        return Ok(());
+    }
     let local_cwd = TempDir::new()?;
     let remote_cwd = PathBuf::from(format!(
         "/tmp/codex-network-approval-{}",
@@ -3388,19 +3469,24 @@ fn guardian_network_triggers(responses: &[&ResponseMock]) -> Result<Vec<(String,
     responses
         .iter()
         .flat_map(|responses| responses.requests())
-        .filter(|request| {
-            request.body_json()["client_metadata"]["x-openai-subagent"].as_str() == Some("guardian")
-        })
+        .filter(is_guardian_network_response_request)
         .map(|request| {
-            let user_texts = request.message_input_texts("user");
-            let action: Value = serde_json::from_str(
-                user_texts
-                    .iter()
-                    .rev()
-                    .find(|text| text.contains("\"tool\": \"network_access\""))
-                    .context("expected network access JSON in Guardian request")?
-                    .trim(),
-            )?;
+            let user_message = request
+                .message_input_text_groups("user")
+                .into_iter()
+                .rev()
+                .find(|texts| texts.join("").contains("Network access JSON:"))
+                .context("expected network access JSON in Guardian request")?
+                .join("");
+            let action_text = user_message
+                .split_once("Network access JSON:\n")
+                .map(|(_, json)| json)
+                .context("expected Guardian network access JSON payload")?;
+            let action_text = action_text
+                .split_once("\n>>> APPROVAL REQUEST END")
+                .map_or(action_text, |(json, _)| json)
+                .trim();
+            let action: Value = serde_json::from_str(action_text)?;
             Ok((
                 action
                     .pointer("/trigger/callId")
@@ -3417,28 +3503,46 @@ fn guardian_network_triggers(responses: &[&ResponseMock]) -> Result<Vec<(String,
         .collect()
 }
 
+fn is_guardian_response_request(request: &core_test_support::responses::ResponsesRequest) -> bool {
+    request
+        .body_json()
+        .pointer("/client_metadata/x-openai-subagent")
+        .and_then(Value::as_str)
+        == Some("guardian")
+}
+
+fn is_guardian_network_response_request(
+    request: &core_test_support::responses::ResponsesRequest,
+) -> bool {
+    is_guardian_response_request(request)
+        && request
+            .message_input_text_groups("user")
+            .into_iter()
+            .any(|texts| texts.join("").contains("Network access JSON:"))
+}
+
 fn guardian_network_actions(responses: &ResponseMock) -> Result<Vec<Value>> {
     responses
         .requests()
         .into_iter()
-        .filter(|request| {
-            request.body_json()["client_metadata"]["x-openai-subagent"].as_str() == Some("guardian")
-                && request
-                    .message_input_texts("user")
-                    .iter()
-                    .any(|text| text.contains("\"tool\": \"network_access\""))
-        })
+        .filter(is_guardian_network_response_request)
         .map(|request| {
-            let user_texts = request.message_input_texts("user");
-            serde_json::from_str(
-                user_texts
-                    .iter()
-                    .rev()
-                    .find(|text| text.contains("\"tool\": \"network_access\""))
-                    .context("expected network access JSON in Guardian request")?
-                    .trim(),
-            )
-            .context("parse Guardian network action")
+            let user_message = request
+                .message_input_text_groups("user")
+                .into_iter()
+                .rev()
+                .find(|texts| texts.join("").contains("Network access JSON:"))
+                .context("expected network access JSON in Guardian request")?
+                .join("");
+            let action_text = user_message
+                .split_once("Network access JSON:\n")
+                .map(|(_, json)| json)
+                .context("expected Guardian network access JSON payload")?;
+            let action_text = action_text
+                .split_once("\n>>> APPROVAL REQUEST END")
+                .map_or(action_text, |(json, _)| json)
+                .trim();
+            serde_json::from_str(action_text).context("parse Guardian network action")
         })
         .collect()
 }

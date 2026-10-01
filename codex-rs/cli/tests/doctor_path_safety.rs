@@ -12,7 +12,6 @@ use codex_app_server_protocol::RequestId;
 use codex_config::loader::project_trust_key;
 use codex_state::SqliteConfig;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use codex_utils_cargo_bin::copy_executable;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
@@ -43,25 +42,13 @@ impl Fixture {
             .path()
             .join(format!("codex{}", std::env::consts::EXE_SUFFIX));
         let source = codex_utils_cargo_bin::cargo_bin("codex")?;
-        // Hard-link setup and teardown invalidate other tests' Rosetta translations.
-        #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-        {
-            copy_executable(&source, &program)?;
-            // Translate the fixture before the timed diagnostic command.
-            anyhow::ensure!(
-                std::process::Command::new(&program)
-                    .env("CODEX_HOME", &home)
-                    .arg("--version")
-                    .output()?
-                    .status
-                    .success(),
-                "failed to prepare diagnostic test executable"
-            );
-        }
-        #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
-        if std::fs::hard_link(&source, &program).is_err() {
-            copy_executable(&source, &program)?;
-        }
+        // Keep the fixture independent of Cargo's target binary. A hard link
+        // would share its inode and can make exec fail with ETXTBSY while a
+        // concurrent build is replacing the target executable.
+        // Write the standalone copy explicitly so the file is closed before it
+        // is run, and preserve the source executable permissions.
+        std::fs::write(&program, std::fs::read(&source)?)?;
+        std::fs::set_permissions(&program, std::fs::metadata(&source)?.permissions())?;
         let workspace = root.path().join("workspace");
         let bin = workspace.join("node_modules/.bin");
         let marker = root.path().join("helper-ran");
@@ -375,7 +362,7 @@ fn doctor_reports_only_safe_config_error_metadata() -> Result<()> {
             ),
         ),
         (
-            "doctor_config_invalid_data",
+            "doctor_config_invalid_header",
             user_config_file.clone(),
             original.replace(
                 "wire_api = \"responses\"",

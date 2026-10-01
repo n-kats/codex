@@ -2384,6 +2384,7 @@ impl App {
                                         /*summary*/ None,
                                         /*service_tier*/ None,
                                         /*collaboration_mode*/ None,
+                                        /*project_doc_paths*/ None,
                                     ),
                                 ));
                                 self.app_event_tx.send(AppEvent::UpdateAskForApprovalPolicy(

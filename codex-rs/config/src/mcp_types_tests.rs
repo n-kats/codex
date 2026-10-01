@@ -4,6 +4,9 @@ use pretty_assertions::assert_eq;
 use std::collections::HashMap;
 use std::path::Path;
 
+#[path = "mcp_types_custom_tests.rs"]
+mod custom_tests;
+
 #[test]
 fn app_tool_approval_restrictions_never_weaken_either_policy() {
     use AppToolApproval::Approve;
@@ -573,6 +576,7 @@ fn deserialize_server_config_with_default_tool_approval_mode() {
         Some(&McpServerToolConfig {
             approval_mode: Some(AppToolApproval::Prompt),
             output_token_limit: std::num::NonZeroUsize::new(30_000),
+            wait_for_mcp_tool_completion: false,
         })
     );
 

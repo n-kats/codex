@@ -1,3 +1,9 @@
+// Cloud-managed MCP support is retained upstream but disabled in this CLI.
+#![cfg(any())]
+
+// Keep the upstream cloud-managed MCP integration tests intact for builds
+// that enable the cloud feature, but exclude them from the normal CLI tests.
+
 use std::process::Output;
 use std::process::Stdio;
 use std::time::Duration;

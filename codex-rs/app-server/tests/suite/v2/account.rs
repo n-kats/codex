@@ -2246,12 +2246,27 @@ async fn login_account_chatgpt_device_code_succeeds_and_notifies() -> Result<()>
 #[derive(Clone, Copy)]
 enum LoginRefreshTrigger {
     AuthStatus,
+    #[cfg(feature = "cloud")]
     UnauthorizedConfig,
 }
 
-#[test_case("/backend-api/wham/config/bundle", LoginRefreshTrigger::AuthStatus; "refresh_during_requirements")]
 #[test_case("/backend-api/wham/accounts/check", LoginRefreshTrigger::AuthStatus; "refresh_during_routing")]
-#[test_case("/backend-api/wham/config/bundle", LoginRefreshTrigger::UnauthorizedConfig; "refresh_during_account_read_requirements")]
+#[cfg_attr(
+    feature = "cloud",
+    test_case(
+        "/backend-api/wham/config/bundle",
+        LoginRefreshTrigger::AuthStatus;
+        "refresh_during_requirements"
+    )
+)]
+#[cfg_attr(
+    feature = "cloud",
+    test_case(
+        "/backend-api/wham/config/bundle",
+        LoginRefreshTrigger::UnauthorizedConfig;
+        "refresh_during_account_read_requirements"
+    )
+)]
 #[tokio::test]
 async fn login_survives_same_owner_token_refresh(
     delayed_path: &str,
@@ -2317,6 +2332,7 @@ async fn login_survives_same_owner_token_refresh(
                     request_started.notify_one();
                     ResponseTemplate::new(match refresh_trigger {
                         LoginRefreshTrigger::AuthStatus => 200,
+                        #[cfg(feature = "cloud")]
                         LoginRefreshTrigger::UnauthorizedConfig => 401,
                     })
                     .set_delay(Duration::from_secs(/*secs*/ 2))
@@ -2374,6 +2390,7 @@ async fn login_survives_same_owner_token_refresh(
                 Some("refreshed-access-token")
             );
         }
+        #[cfg(feature = "cloud")]
         LoginRefreshTrigger::UnauthorizedConfig => {
             assert_eq!(read_account(&mut server).await?, expected_account);
         }
@@ -2418,11 +2435,11 @@ async fn login_survives_same_owner_token_refresh(
                 .expect("routing authorization header")
         })
         .collect::<Vec<_>>();
-    assert_eq!(
-        routing_tokens,
-        if delayed_path == "/backend-api/wham/accounts/check" {
-            vec!["Bearer access-token-123", "Bearer refreshed-access-token"]
-        } else if matches!(refresh_trigger, LoginRefreshTrigger::UnauthorizedConfig) {
+    let expected_routing_tokens = if delayed_path == "/backend-api/wham/accounts/check" {
+        vec!["Bearer access-token-123", "Bearer refreshed-access-token"]
+    } else {
+        #[cfg(feature = "cloud")]
+        if matches!(refresh_trigger, LoginRefreshTrigger::UnauthorizedConfig) {
             vec![
                 "Bearer refreshed-access-token",
                 "Bearer refreshed-access-token",
@@ -2430,7 +2447,12 @@ async fn login_survives_same_owner_token_refresh(
         } else {
             vec!["Bearer refreshed-access-token"]
         }
-    );
+        #[cfg(not(feature = "cloud"))]
+        {
+            vec!["Bearer refreshed-access-token"]
+        }
+    };
+    assert_eq!(routing_tokens, expected_routing_tokens);
     backend.verify().await;
     Ok(())
 }

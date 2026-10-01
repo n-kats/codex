@@ -56,6 +56,7 @@ fn create_config_toml(codex_home: &Path) -> std::io::Result<()> {
 model = "mock-model"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
+cli_auth_credentials_store = "file"
 
 [features]
 shell_snapshot = false
@@ -403,6 +404,7 @@ async fn get_auth_status_omits_token_after_permanent_refresh_failure() -> Result
     Ok(())
 }
 
+#[cfg(feature = "cloud")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_auth_status_omits_token_after_proactive_refresh_failure() -> Result<()> {
     let codex_home = TempDir::new()?;

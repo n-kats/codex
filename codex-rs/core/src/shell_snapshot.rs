@@ -556,6 +556,8 @@ async fn write_shell_snapshot(
         sandbox,
     )
     .await?;
+    let snapshot =
+        redact_snapshot_exports(&snapshot, shell_environment_policy, credentials.is_none());
 
     if let Some(parent) = output_path.parent() {
         let parent_display = parent.display();
@@ -997,6 +999,126 @@ enum SnapshotShellMode<'a> {
     Login,
     NonLogin,
     Validation(&'a AbsolutePathBuf),
+}
+
+fn redact_snapshot_exports(
+    snapshot: &str,
+    policy: &ShellEnvironmentPolicy,
+    allow_policy_includes: bool,
+) -> String {
+    let keep_trailing_newline = snapshot.ends_with('\n');
+    let mut lines = snapshot.lines().map(str::to_string).collect::<Vec<_>>();
+
+    let Some(exports_idx) = lines
+        .iter()
+        .rposition(|line| line == "# exports (native declarations)")
+        .or_else(|| {
+            lines
+                .iter()
+                .rposition(|line| line.starts_with("# exports "))
+        })
+    else {
+        return snapshot.to_string();
+    };
+
+    let export_lines = lines.drain((exports_idx + 1)..).collect::<Vec<_>>();
+    let mut kept = Vec::new();
+    for line in export_lines {
+        let Some(key) = extract_export_key(&line) else {
+            continue;
+        };
+        if is_allowed_export_key(key, policy, allow_policy_includes) {
+            kept.push(line);
+        }
+    }
+
+    lines[exports_idx] = format!("# exports {}", kept.len());
+    lines.extend(kept);
+
+    let mut redacted = lines.join("\n");
+    if keep_trailing_newline {
+        redacted.push('\n');
+    }
+    redacted
+}
+
+fn extract_export_key(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let rest = match trimmed.split_whitespace().next() {
+        Some("export" | "declare" | "typeset" | "set" | "setenv") => {
+            let mut tokens = trimmed.split_whitespace();
+            let _cmd = tokens.next()?;
+            tokens.find(|token| !token.starts_with('-'))?
+        }
+        _ => trimmed,
+    };
+
+    let rest = rest.trim_start_matches('\'').trim_start_matches('"');
+    let mut end = 0;
+    for (idx, ch) in rest.char_indices() {
+        if (idx == 0 && (ch.is_ascii_alphabetic() || ch == '_'))
+            || (idx > 0 && (ch.is_ascii_alphanumeric() || ch == '_'))
+        {
+            end = idx + ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+    if end == 0 {
+        return None;
+    }
+    Some(&rest[..end])
+}
+
+fn is_allowed_export_key(
+    key: &str,
+    policy: &ShellEnvironmentPolicy,
+    allow_policy_includes: bool,
+) -> bool {
+    let allowed_by_policy = create_env_from_vars(
+        std::iter::once((key.to_string(), String::new())),
+        policy,
+        /*thread_id*/ None,
+    )
+    .contains_key(key);
+    if !allowed_by_policy {
+        return false;
+    }
+
+    let safe_default = if key.starts_with("XDG_") {
+        true
+    } else {
+        matches!(
+            key,
+            "PATH"
+                | "HOME"
+                | "USER"
+                | "LOGNAME"
+                | "SHELL"
+                | "TERM"
+                | "TMPDIR"
+                | "TMP"
+                | "TEMP"
+                | "LANG"
+                | "LC_ALL"
+                | "LC_CTYPE"
+                | "COLORTERM"
+                | "PAGER"
+                | "GIT_PAGER"
+                | "EDITOR"
+                | "VISUAL"
+                | "CODEX_HOME"
+        )
+    };
+    if policy.r#set.contains_key(key) {
+        return safe_default;
+    }
+
+    let explicitly_included = policy
+        .include_only
+        .iter()
+        .any(|pattern| pattern.matches(key));
+    allow_policy_includes && explicitly_included || safe_default
 }
 
 async fn validate_snapshot(

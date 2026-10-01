@@ -1467,6 +1467,10 @@ pub fn test_codex() -> TestCodexBuilder {
                 .features
                 .disable(Feature::ShellSnapshot)
                 .expect("test config should allow ShellSnapshot override");
+            config
+                .features
+                .enable(Feature::ContentItemKinds)
+                .expect("test config should allow ContentItemKinds override");
         })],
         auth: TestAuth::Cached(CodexAuth::from_api_key("dummy")),
         analytics_events_client: None,

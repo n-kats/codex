@@ -8,6 +8,7 @@ use crate::legacy_core::config::Config;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
 use crate::legacy_core::config::ConfigTomlLoadResult;
+#[cfg(feature = "cloud")]
 use crate::legacy_core::config::bootstrap_auth_config;
 use crate::legacy_core::config::load_config_toml_with_layer_stack;
 #[cfg(test)]
@@ -45,6 +46,7 @@ use codex_app_server_protocol::ThreadListCwdFilter;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadSortKey as AppServerThreadSortKey;
 use codex_app_server_protocol::ThreadSourceKind;
+#[cfg(feature = "cloud")]
 use codex_cloud_config::cloud_config_bundle_loader_for_storage;
 use codex_config::CloudConfigBundleLoader;
 use codex_config::ConfigLoadError;
@@ -54,6 +56,7 @@ use codex_config::types::ResumeCwdMode;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimeOptions;
 use codex_features::Feature;
+#[cfg(feature = "cloud")]
 use codex_login::AuthConfig;
 use codex_login::default_client::originator;
 use codex_login::default_client::set_default_client_residency_requirement;
@@ -361,6 +364,7 @@ impl AppServerTarget {
         }
     }
 
+    #[cfg(feature = "cloud")]
     fn auth_config_for_cloud_loader(&self, mut auth_config: AuthConfig) -> AuthConfig {
         if self.uses_remote_workspace() {
             // Remove local auth restrictions before loading credentials for a remote
@@ -1039,6 +1043,7 @@ fn app_server_target_for_launch(
     })
 }
 
+#[cfg(feature = "cloud")]
 async fn cloud_config_bundle_for_app_server_target(
     app_server_target: &AppServerTarget,
     bootstrap_config: &ConfigTomlLoadResult,
@@ -1053,6 +1058,16 @@ async fn cloud_config_bundle_for_app_server_target(
         /*enable_codex_api_key_env*/ false,
     )
     .await
+}
+
+#[cfg(not(feature = "cloud"))]
+async fn cloud_config_bundle_for_app_server_target(
+    _app_server_target: &AppServerTarget,
+    _bootstrap_config: &ConfigTomlLoadResult,
+    _codex_home: &Path,
+    _embedded_network_policy: &codex_app_server_client::EmbeddedNetworkPolicy,
+) -> std::io::Result<CloudConfigBundleLoader> {
+    Ok(CloudConfigBundleLoader::default())
 }
 
 fn loader_overrides_are_default(loader_overrides: &LoaderOverrides) -> bool {
@@ -1133,6 +1148,7 @@ async fn run_ratatui_app(
     manually_selected_oss_provider: Option<String>,
     overrides: ConfigOverrides,
     cli_kv_overrides: Vec<(String, toml::Value)>,
+    #[cfg_attr(not(feature = "cloud"), allow(unused_mut))]
     mut cloud_config_bundle: CloudConfigBundleLoader,
     feedback: codex_feedback::CodexFeedback,
     log_db: Option<log_db::LogDbLayer>,
@@ -1354,7 +1370,8 @@ async fn run_ratatui_app(
                 // If this onboarding run included the login step, always refresh the cloud config
                 // bundle and rebuild config. This avoids missing newly available cloud-managed
                 // policy due to login status detection edge cases.
-                if show_login_screen && !uses_remote_workspace && !workload_identity_selected {
+                #[cfg(feature = "cloud")]
+                if show_login_screen && !uses_remote_workspace {
                     cloud_config_bundle = cloud_config_bundle_loader_for_storage(
                         embedded_network_policy.bind_bootstrap_auth(initial_config.auth_config()),
                         /*enable_codex_api_key_env*/ false,
@@ -1960,6 +1977,11 @@ async fn run_ratatui_app(
     ) {
         config.startup_warnings.push(w);
     }
+    config
+        .startup_warnings
+        .extend(crate::diff_render::set_custom_diff_theme_override(
+            config.custom_theme_diff.as_ref(),
+        ));
 
     set_default_client_residency_requirement(config.enforce_residency.value());
     let is_first_run = config.active_project.trust_level.is_none();
@@ -3993,13 +4015,11 @@ trust_level = "untrusted"
             config.startup_warnings.push(w);
         }
 
-        assert_eq!(
-            config.startup_warnings.len(),
-            1,
-            "warning from final config's invalid theme should be present"
-        );
         assert!(
-            config.startup_warnings[0].contains("bogus-theme"),
+            config
+                .startup_warnings
+                .iter()
+                .any(|warning| warning.contains("bogus-theme")),
             "warning should reference the final config's theme name"
         );
         Ok(())
