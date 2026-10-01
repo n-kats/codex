@@ -12,8 +12,7 @@ sandbox_mode = "danger-full-access"
 custom.user_shell.no_inject=true
 default_permissions = "test_config"
 
-project_doc_paths = ["/workspace/AGENTS.md"]
-model = "gpt-5.6-luna"
+model = "gpt-6-luna"
 model_reasoning_effort = "max"
 [memories]
 generate_memories = false
@@ -43,6 +42,11 @@ UV_LINK_MODE = "copy"
 [features]
 unified_exec = true
 
+[tui]
+screen_reader_detection_done = true
+alternate_screen = "never"
+auto_recap = false
+
 [tui.keymap.composer]
 submit = ["ctrl-enter", "ctrl-j"]
 
@@ -52,6 +56,7 @@ insert_newline = "enter"
 [tui.model_availability_nux]
 "gpt-5.5" = 4
 "gpt-5.6-sol" = 4
+"gpt-6.1-sol" = 4
 
 [custom.theme.diff]
 # Optional: tweak TUI diff background colors while running `make run-tui`.
@@ -71,3 +76,6 @@ description = "Broad docker-internal access with explicit denials for the lab fi
 "/workspace/_local/codex_homes/auth.json" = "deny"
 "/workspace/_custom_tests/not_allowed_dir" = "deny"
 "/workspace/_custom_tests/not_allowed_file" = "deny"
+
+[notice.model_migrations]
+"gpt-5.6-luna" = "gpt-6-luna"
