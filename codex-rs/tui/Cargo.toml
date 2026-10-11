@@ -21,6 +21,9 @@ doctest = false
 [lints]
 workspace = true
 
+[features]
+cloud = ["dep:codex-cloud-config"]
+
 [dependencies]
 codex-build-info = { workspace = true }
 anyhow = { workspace = true }
@@ -35,7 +38,7 @@ codex-app-server-protocol = { workspace = true }
 codex-arg0 = { workspace = true }
 codex-backend-client = { workspace = true }
 codex-install-context = { workspace = true }
-codex-cloud-config = { workspace = true }
+codex-cloud-config = { workspace = true, optional = true }
 codex-config = { workspace = true }
 codex-context-fragments = { workspace = true }
 codex-connectors = { workspace = true }

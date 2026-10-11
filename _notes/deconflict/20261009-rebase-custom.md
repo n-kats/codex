@@ -1,0 +1,59 @@
+# 20261009 rebase custom
+
+- File: `codex-rs/app-server-daemon/src/managed_install_path_tests.rs(116)`
+  - Resolution: custom 維持
+  - Note: 実行ファイル作成を `codex_utils_cargo_bin::write_executable` に統一し、直接の書き込みと権限設定を避けた。
+- File: `codex-rs/app-server-protocol/schema/precomputed/app-server-exports-experimental.json.zst`
+  - Resolution: 手動マージ
+  - Note: upstream 生成物を基礎にして upstream-only の export を保持し、custom の `ThreadSettingsUpdateParams.projectDocPaths` を TypeScript 1箇所、JSON schema 4箇所へ戻した。
+- File: `codex-rs/cli/src/cloud_config.rs(85)`
+  - Resolution: custom 維持 + upstream の bootstrap 構成読み込みを保持
+  - Note: CLI での cloud-managed config と embedded network policy の有効化は戻さず、custom の default `CloudConfigBundleLoader` を採用した。
+- File: `codex-rs/cli/src/daemon_update_tests.rs(29)`
+  - Resolution: custom 維持
+  - Note: 直前のプロセスが実行中の inode を保持する競合を避けるため、置換用ファイルを作って atomic rename する処理を残した。
+- File: `codex-rs/cli/src/main.rs(1667)`
+  - Resolution: custom 維持 + upstream の loader override 対応を保持
+  - Note: 削除済みの Cloud と Sandbox uninstall command / wrapper は戻さず、Sandbox の profile loader に root loader overrides を渡す。
+- File: `codex-rs/cli/src/remote_control_cmd.rs(88)`
+  - Resolution: 手動マージ
+  - Note: upstream の daemon 起動経路と fallback を残し、custom の PSP override と foreground 起動への loader overrides 伝播を統合した。user config / no-config 指定がある場合は、それを無視する daemon 起動を避けて foreground にする。
+- File: `codex-rs/core/src/session/mod.rs(1950)`
+  - Resolution: 手動マージ
+  - Note: project doc paths 変更時の context refresh に加え、upstream の Windows sandbox change 記録と credential masking warning を残した。
+- File: `codex-rs/core/src/tools/spec_plan.rs(1046)`
+  - Resolution: upstream の tool 選択処理 + custom の MCP wait 対応
+  - Note: upstream の `code_mode_tools` による選択を使い、選択された tool 群から `contains_waiting_mcp_tool` を算出する。
+- File: `codex-rs/core/tests/suite/approvals.rs(3475)`
+  - Resolution: custom 維持 + upstream の mode 拡張を保持
+  - Note: enabled / flat_feature / flat_managed の各 mode で、snapshot allowlist により条件付き shell 出力が空になる custom 期待値を残した。
+- File: `codex-rs/linux-sandbox/tests/suite/managed_proxy.rs(471)`
+  - Resolution: custom 維持
+  - Note: Cargo が生成した実行ファイルを hard-link せず byte copy し、ETXTBSY 回避の custom 対応を残した。
+- File: `codex-rs/sandboxing/src/bwrap_tests.rs(352)`
+  - Resolution: custom 維持
+  - Note: `noexec` の OS temp を避けて cwd を先に使い、空の一時 inode を削除して `write_executable` で fake bwrap を作る。
+- File: `codex-rs/tui/src/chatwidget/tests/helpers.rs(6)`
+  - Resolution: 手動マージ
+  - Note: upstream の `assert_eq` import と custom の filesystem / `TempDir` imports を両方残した。
+- File: `codex-rs/tui/src/chatwidget/tests/status_surface_previews.rs(451)`
+  - Resolution: 手動マージ
+  - Note: status preview では upstream の feature enable と custom の project root fixture を、terminal title preview では feature enable と custom の cwd fixture を両方設定する。
+- File: `codex-rs/app-server/src/request_processors/turn_processor.rs(850)`
+  - Resolution: テストで検出したコンパイル修正
+  - Note: 存在しない `environments` 参照を `environment_requests` に修正した。
+- File: `codex-rs/core/tests/suite/network_approval.rs(2143)`
+  - Resolution: テストで検出した上流 API 追従
+  - Note: 3箇所の `system_bwrap_warning` 呼び出しに `test.config.cwd` を渡す。
+- File: `codex-rs/linux-sandbox/src/bundled_bwrap.rs(314)`
+  - Resolution: テストで検出した上流 API 追従
+  - Note: `find_legacy_for_exe` に `bazel_candidate: None` を渡す。
+
+## 確認
+
+- 13件の競合対象から Rust の競合マーカーを除去した。
+- 圧縮 schema を展開して custom `projectDocPaths` と upstream export の両方を含めて再圧縮した。
+- `git add` は `/workspace/.git/index.lock` を作成できず Read-only file system で失敗。rebase index は未解消のままで、`git rebase --continue` は未実行。
+- MCP `schema_fixtures_tests::experimental_precomputed_exports_match_generated`: 1 passed。
+- MCP `bundled_bwrap::tests::finds_parent_dev_bwrap_for_cargo_test_binary`: 1 passed。
+- MCP `run_make_almost_equivalent` は `fmt` と sandbox build を通過。最終実行は `test-almost` 中に約61分で timeout（exit 124）し、suite の最終結果は得られなかった。

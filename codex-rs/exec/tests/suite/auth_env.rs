@@ -4,11 +4,16 @@ use core_test_support::responses::mount_sse_once_match;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::test_codex_exec::test_codex_exec;
+#[cfg(feature = "cloud")]
 use serde_json::json;
+#[cfg(feature = "cloud")]
 use wiremock::Mock;
+#[cfg(feature = "cloud")]
 use wiremock::ResponseTemplate;
 use wiremock::matchers::header;
+#[cfg(feature = "cloud")]
 use wiremock::matchers::method;
+#[cfg(feature = "cloud")]
 use wiremock::matchers::path;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -36,6 +41,7 @@ async fn exec_uses_codex_api_key_env_var() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "cloud")]
 async fn exec_api_key_cannot_discard_stored_workspace_network_policy() -> anyhow::Result<()> {
     let test = test_codex_exec();
     let policy_server = start_mock_server().await;
@@ -96,6 +102,7 @@ async fn exec_api_key_cannot_discard_stored_workspace_network_policy() -> anyhow
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[cfg(feature = "cloud")]
 async fn exec_bootstrap_rejects_redirected_oauth_and_cloud_policy() -> anyhow::Result<()> {
     for redirect_oauth in [true, false] {
         let test = test_codex_exec();

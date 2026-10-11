@@ -1,5 +1,6 @@
 ---
 source: cli/src/exec_server_args_tests.rs
+assertion_line: 41
 expression: help_text
 ---
 [EXPERIMENTAL] Run the standalone exec-server service
@@ -21,16 +22,12 @@ Options:
           'sandbox_permissions=["disk-full-read-access"]'` - `-c
           shell_environment_policy.inherit=all`
 
-      --enable <FEATURE>
-          Enable a feature (repeatable). Equivalent to `-c features.<name>=true`
-
       --strict-config
           Error out when config.toml contains fields that are not recognized by
           this version of Codex
 
-      --disable <FEATURE>
-          Disable a feature (repeatable). Equivalent to `-c
-          features.<name>=false`
+      --enable <FEATURE>
+          Enable a feature (repeatable). Equivalent to `-c features.<name>=true`
 
       --linux-sandbox-pid-namespace <MODE>
           Linux PID namespace: isolate (default) or inherit. Inherit allows
@@ -38,6 +35,10 @@ Options:
           dedicated environment
 
           [default: isolate]
+
+      --disable <FEATURE>
+          Disable a feature (repeatable). Equivalent to `-c
+          features.<name>=false`
 
       --proxy-private-ips-via-upstream
           Allow permitted private IP destinations to use the configured upstream
@@ -61,17 +62,35 @@ Options:
 
           [possible values: capability-token, signed-bearer-token]
 
+      --codex-home <DIR>
+          Override the Codex home directory used for config, logs, and caches
+
       --ws-token-file <PATH>
           Absolute path to the capability-token file
+
+      --codex-memory <DIR>
+          Override the Codex memories directory used for writable memory roots
 
       --ws-token-sha256 <HEX>
           Hex-encoded SHA-256 digest of the capability token
 
+      --agents-md <FILE>
+          Use these project doc files instead of auto-discovering `AGENTS.md`.
+
+          When provided, Codex reads these files in order and errors if any path
+          is missing.
+
       --ws-shared-secret-file <PATH>
           Absolute path to the shared secret file for signed JWT bearer tokens
 
+      --config-file <FILE>
+          Read user config from this file instead of `$CODEX_HOME/config.toml`
+
       --ws-issuer <ISSUER>
           Expected issuer for signed JWT bearer tokens
+
+      --no-config-file
+          Skip user and project config layers for this invocation
 
       --ws-audience <AUDIENCE>
           Expected audience for signed JWT bearer tokens

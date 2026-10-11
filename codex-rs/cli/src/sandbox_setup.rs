@@ -4,6 +4,7 @@ use anyhow::Context;
 use clap::ArgAction;
 use clap::ArgGroup;
 use clap::Parser;
+use codex_config::LoaderOverrides;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
@@ -95,6 +96,7 @@ async fn run_elevated(
         .loader_overrides(super::loader_overrides_for_profile_at_codex_home(
             config_profile.as_ref(),
             &identity.codex_home,
+            LoaderOverrides::default(),
         ))
         .cli_overrides(cli_overrides)
         .build()

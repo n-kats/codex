@@ -1947,6 +1947,7 @@ impl Session {
         should_commit: impl FnOnce(&SessionConfiguration, &SessionConfiguration) -> bool + Send,
     ) -> ConstraintResult<Option<SessionSettingsCommit>> {
         let notify_config_contributors = !self.services.extensions.config_contributors().is_empty();
+        let project_doc_paths_changed = updates.project_doc_paths.is_some();
         let windows_sandbox_changed;
         let (
             commit,
@@ -2051,6 +2052,23 @@ impl Session {
         }
         if mcp_inputs_changed {
             self.schedule_mcp_prewarm();
+        }
+        if project_doc_paths_changed {
+            let environments = self.services.turn_environments.snapshot().await;
+            let config = {
+                let state = self.state.lock().await;
+                state
+                    .session_configuration
+                    .original_config_do_not_use
+                    .clone()
+            };
+            let _ = self
+                .services
+                .agents_md_manager
+                .refresh(config.as_ref(), &environments)
+                .await;
+            let mut state = self.state.lock().await;
+            state.set_reference_context_item(/*item*/ None);
         }
         Ok(Some(commit))
     }

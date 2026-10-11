@@ -560,9 +560,13 @@ async fn metrics_exporters_respect_analytics_preferences() -> Result<()> {
                     default_analytics_enabled,
                 )
                 .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+                let actual_metrics = provider.as_ref().and_then(|otel| otel.metrics()).is_some();
+                if let Some(otel) = provider {
+                    // Keep this preference test bounded; Drop performs a synchronous flush.
+                    let _ = otel.shutdown_with_timeout(Duration::from_secs(2)).await;
+                }
                 assert_eq!(
-                    provider.as_ref().and_then(|otel| otel.metrics()).is_some(),
-                    expected_metrics,
+                    actual_metrics, expected_metrics,
                     "exporter={:?}, analytics={analytics_enabled:?}, default={default_analytics_enabled}",
                     config.otel.metrics_exporter,
                 );

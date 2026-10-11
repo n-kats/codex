@@ -1043,11 +1043,13 @@ fn register_code_mode_executors(
     let mut exec_prompt_tool_specs = Vec::new();
     let mut deferred_exec_prompt_tool_specs = Vec::new();
     let mut included_deferred_mcp_output_schema = false;
+    let mut contains_waiting_mcp_tool = false;
     let deferred_tools_guidance_enabled = model_info.supports_search_tool;
     for (name, spec, tool) in code_mode_tools(turn_context, model_info, registry) {
         code_mode_tool_names.insert(name, tool.runtime.tool_name());
         let exposure = tool.exposure;
         let cached_runtime = tool.cached_runtime().cloned();
+        contains_waiting_mcp_tool |= tool.runtime.waits_for_mcp_tool_completion();
 
         if exposure == ToolExposure::Deferred {
             if deferred_tools_guidance_enabled
@@ -1106,6 +1108,7 @@ fn register_code_mode_executors(
     let execute_handler = CodeModeExecuteHandler::new(
         create_code_mode_tool(exec_description),
         code_mode_nested_tool_specs,
+        contains_waiting_mcp_tool,
     );
 
     registry.prepend_trusted(Arc::new(CodeModeWaitHandler::new(

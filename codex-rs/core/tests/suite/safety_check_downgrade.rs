@@ -208,9 +208,7 @@ async fn response_model_field_mismatch_emits_warning_when_header_matches_request
         matches!(
             event,
             EventMsg::Warning(warning)
-                if warning
-                    .message
-                    .contains("flagged for potentially high-risk cyber activity")
+                if warning.message.contains("flagged for potentially high-risk cyber activity")
         )
     })
     .await;

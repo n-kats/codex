@@ -88,7 +88,10 @@ fn routing(account: &str, origin: &str, routing: &str) -> Value {
 
 #[test_case(0, 0, "pro"; "immediate_responses")]
 #[test_case(6, 0, "pro"; "slow_accounts_response")]
-#[test_case(0, 12, "enterprise"; "slow_cloud_bundle_response")]
+#[cfg_attr(
+    feature = "cloud",
+    test_case(0, 12, "enterprise"; "slow_cloud_bundle_response")
+)]
 #[tokio::test]
 async fn saved_workspace_is_discovered_once_and_not_the_default_account(
     accounts_delay_secs: u64,
@@ -244,6 +247,7 @@ async fn stable_clients_do_not_treat_failed_workspace_discovery_as_unrestricted(
     Ok(())
 }
 
+#[cfg(feature = "cloud")]
 #[tokio::test]
 async fn login_and_workspace_switch_notify_after_routing_is_ready_then_logout_clears_it()
 -> Result<()> {
@@ -395,6 +399,7 @@ async fn api_only_login_does_not_discover_chatgpt_routing() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "cloud")]
 #[tokio::test]
 async fn failed_workspace_requirements_do_not_fall_back_to_startup_config() -> Result<()> {
     let backend = MockServer::start().await;

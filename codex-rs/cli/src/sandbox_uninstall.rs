@@ -1,16 +1,17 @@
 //! Uninstalls the legacy Windows sandbox without loading config or removing user data.
 
-use clap::Args;
+use clap::Parser;
 
-#[derive(Debug, Args)]
+#[derive(Debug, Parser)]
 #[command(
+    name = "uninstall",
     about = "Remove the legacy Windows sandbox's machine-wide accounts and network rules",
     after_help = "Run as administrator after stopping apps using the legacy sandbox and its provisioning service, if installed.\nPreserves Codex home, including sandbox directories and filesystem permissions."
 )]
-pub(crate) struct SandboxUninstallCommand {}
+pub struct SandboxUninstallCommand {}
 
 impl SandboxUninstallCommand {
-    pub(crate) fn run(self) -> anyhow::Result<()> {
+    pub fn run(self) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
             codex_windows_sandbox::clean_up_legacy_windows_sandbox()

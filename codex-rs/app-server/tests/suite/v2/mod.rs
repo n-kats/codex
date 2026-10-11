@@ -1,5 +1,6 @@
 mod account;
 #[path = "account_system_proxy_tests.rs"]
+#[cfg(feature = "cloud")]
 mod account_system_proxy;
 mod account_thread_usage;
 mod agent_message_board;

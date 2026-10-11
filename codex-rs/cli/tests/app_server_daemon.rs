@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use std::process::Child;
 use std::process::Command;
 use std::process::Stdio;
+use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -15,14 +17,23 @@ use pretty_assertions::assert_eq;
 use serde_json::Value;
 use tempfile::TempDir;
 
+static APP_SERVER_DAEMON_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 struct TestDaemon {
     home: TempDir,
     codex: PathBuf,
     unmanaged: Option<Child>,
+    _test_lock: MutexGuard<'static, ()>,
 }
 
 impl TestDaemon {
     fn new() -> Result<Self> {
+        // These tests launch real app-server and updater processes. Keep them
+        // serialized within this test binary so startup deadlines measure the
+        // daemon rather than contention from sibling fixtures.
+        let test_lock = APP_SERVER_DAEMON_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let home = tempfile::Builder::new().tempdir_in("/tmp")?;
         let codex = codex_utils_cargo_bin::cargo_bin("codex")?;
         let codex_source = std::fs::canonicalize(&codex)?;
@@ -70,12 +81,14 @@ impl TestDaemon {
             home,
             codex,
             unmanaged: None,
+            _test_lock: test_lock,
         })
     }
 
     fn command(&self) -> Command {
         let mut command = Command::new(&self.codex);
         command.env("CODEX_HOME", self.home.path());
+        command.env("RUST_BACKTRACE", "0");
         command
     }
 

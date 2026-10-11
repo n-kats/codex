@@ -10,6 +10,7 @@ use std::time::Instant;
 use tempfile::tempdir;
 
 #[test]
+#[serial_test::serial]
 fn system_bwrap_warning_reports_missing_system_bwrap() {
     assert_eq!(
         system_bwrap_warning_for_path(/*system_bwrap_path*/ None),
@@ -18,6 +19,7 @@ fn system_bwrap_warning_reports_missing_system_bwrap() {
 }
 
 #[test]
+#[serial_test::serial]
 fn system_bwrap_warning_reports_user_namespace_failures() {
     for failure in USER_NAMESPACE_FAILURES {
         let fake_bwrap = write_fake_bwrap(&format!(
@@ -37,6 +39,7 @@ exit 1
 }
 
 #[test]
+#[serial_test::serial]
 fn system_bwrap_warning_skips_unrelated_bwrap_failures() {
     let fake_bwrap = write_fake_bwrap(
         r#"#!/bin/sh
@@ -50,6 +53,7 @@ exit 1
 }
 
 #[test]
+#[serial_test::serial]
 fn system_bwrap_probe_times_out_without_reporting_a_warning() {
     let fake_bwrap = write_fake_bwrap(
         r#"#!/bin/sh
@@ -68,6 +72,7 @@ exit 0
 }
 
 #[test]
+#[serial_test::serial]
 fn system_bwrap_probe_does_not_wait_for_descendants_holding_stderr_open() {
     let fake_bwrap = write_fake_bwrap(
         r#"#!/bin/sh

@@ -3467,15 +3467,33 @@ GH_TOKEN = "{REAL_GITHUB_TOKEN}"
     }
     if matches!(mode, "enabled" | "flat_feature" | "flat_managed") {
         assert_eq!(result.exit_code, Some(0), "command failed: {result:?}");
-        let values = result.stdout.lines().collect::<Vec<_>>();
-        assert_eq!(values.len(), if mode == "flat_managed" { 3 } else { 2 });
-        assert_eq!(values[0], "west");
-        assert!(values[1].starts_with("ghp_"));
-        assert_ne!(values[1], REAL_GITHUB_TOKEN);
+        // The custom snapshot allowlist removes CORP_REGION and the credential
+        // export. The function and alias remain in the snapshot, but their
+        // allowlist-dependent branch has no output. flat_managed also prints
+        // CUSTOM_API_KEY, which the broker replaces with a safe dummy value.
         if mode == "flat_managed" {
-            assert!(values[2].starts_with("custom_"));
-            assert_eq!(values[2].len(), REAL_CUSTOM_TOKEN.len());
-            assert_ne!(values[2], REAL_CUSTOM_TOKEN);
+            let credential = result.stdout.trim_end();
+            assert_eq!(
+                result.stdout.lines().count(),
+                1,
+                "unexpected output: {result:?}"
+            );
+            assert!(
+                credential.starts_with("custom_"),
+                "unexpected output: {result:?}"
+            );
+            assert_eq!(credential.len(), REAL_CUSTOM_TOKEN.len());
+            assert!(
+                credential[7..]
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase())
+            );
+            assert_ne!(credential, REAL_CUSTOM_TOKEN);
+        } else {
+            assert!(
+                result.stdout.lines().next().is_none(),
+                "unexpected snapshot output: {result:?}"
+            );
         }
         return Ok(());
     }
@@ -3603,7 +3621,7 @@ ENV = "{}"
             } else {
                 startup.to_str().unwrap()
             },
-            "west"
+            if credential_startup { "" } else { "west" }
         ]
     );
     Ok(())

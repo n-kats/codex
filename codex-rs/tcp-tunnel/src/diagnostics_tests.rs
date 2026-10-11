@@ -110,10 +110,10 @@ fn legacy_errors_and_successful_shutdown_produce_no_json() {
 }
 
 #[test]
-fn handshake_timeout_preserves_legacy_debug_output() {
+fn handshake_timeout_preserves_legacy_error_text() {
     let error = anyhow!(Code::HandshakeTimeout);
     assert_eq!(
-        format!("{error:?}"),
+        format!("{error:#}"),
         "QUIC handshake failed: QUIC handshake timed out"
     );
     let mut output = Vec::new();

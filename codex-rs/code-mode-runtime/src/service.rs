@@ -29,6 +29,23 @@ use crate::session_runtime::SessionRuntime;
 const YIELD_GRACE_PERIOD: Duration = Duration::from_secs(1);
 const MIN_YIELD_TIME_FOR_GRACE: Duration = Duration::from_secs(10);
 
+fn yield_timeout(yield_time_ms: u64) -> Duration {
+    let yield_time = Duration::from_millis(yield_time_ms);
+    if yield_time >= MIN_YIELD_TIME_FOR_GRACE {
+        yield_time.saturating_add(YIELD_GRACE_PERIOD)
+    } else {
+        yield_time
+    }
+}
+
+fn observe_mode(yield_time_ms: u64, timeout: Duration) -> runtime::ObserveMode {
+    if yield_time_ms == u64::MAX {
+        runtime::ObserveMode::UntilCompletion
+    } else {
+        runtime::ObserveMode::YieldAfter(timeout)
+    }
+}
+
 pub struct InProcessCodeModeSession {
     runtime: SessionRuntime,
     cell_execution_limits: CodeModeSessionCellExecutionLimits,
@@ -69,12 +86,12 @@ impl InProcessCodeModeSession {
         preempt: Option<CancellationToken>,
     ) -> Result<StartedCell, String> {
         let yield_time_ms = request.yield_time_ms.unwrap_or(DEFAULT_EXEC_YIELD_TIME_MS);
+        let observe_mode = observe_mode(yield_time_ms, self.resolve_yield_timeout(yield_time_ms));
         let started = self
             .runtime
             .execute(
                 runtime_request(request),
-                runtime::ObserveMode::YieldAfter(self.resolve_yield_timeout(yield_time_ms))
-                    .with_yield_signal(preempt.unwrap_or_default()),
+                observe_mode.with_yield_signal(preempt.unwrap_or_default()),
                 Arc::new(ProtocolDelegate { delegate }),
             )
             .await
@@ -199,12 +216,7 @@ impl InProcessCodeModeSession {
     }
 
     fn resolve_yield_timeout(&self, yield_time_ms: u64) -> Duration {
-        let yield_time = Duration::from_millis(yield_time_ms);
-        let timeout = if yield_time >= MIN_YIELD_TIME_FOR_GRACE {
-            yield_time.saturating_add(YIELD_GRACE_PERIOD)
-        } else {
-            yield_time
-        };
+        let timeout = yield_timeout(yield_time_ms);
 
         self.cell_execution_limits
             .max_yield_time_ms
@@ -431,3 +443,7 @@ mod tests;
 #[cfg(test)]
 #[path = "service_contract_tests.rs"]
 mod contract_tests;
+
+#[cfg(test)]
+#[path = "service_custom_tests.rs"]
+mod custom_tests;

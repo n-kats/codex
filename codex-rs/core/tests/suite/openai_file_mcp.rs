@@ -44,6 +44,8 @@ use serde_json::json;
 use wiremock::Mock;
 use wiremock::MockServer;
 use wiremock::ResponseTemplate;
+// Retained to match the upstream test imports; this custom test path does not use it.
+#[allow(unused_imports)]
 use wiremock::matchers::body_json;
 use wiremock::matchers::body_partial_json;
 use wiremock::matchers::header;
