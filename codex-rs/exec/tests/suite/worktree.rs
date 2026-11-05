@@ -255,125 +255,128 @@ async fn worktree_start_and_fork_use_host_pool_and_preserve_legacy_resume() -> a
     }
     assert!(!home.join("worktrees").exists());
 
-    // Synthetic enterprise claims let the cloud bundle, not a local project entry,
-    // supply the source's distrust decision.
-    fs::write(
-        home.join("auth.json"),
-        serde_json::to_vec(&serde_json::json!({
-            "auth_mode": "chatgpt",
-            "tokens": {
-                "id_token": "e30.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9wbGFuX3R5cGUiOiJlbnRlcnByaXNlIiwiY2hhdGdwdF9hY2NvdW50X2lkIjoid29ya3NwYWNlLTEyMyIsImNoYXRncHRfdXNlcl9pZCI6InVzZXItMTIzIn19.signature",
-                "access_token": "test-access-token",
-                "refresh_token": "test-refresh-token",
-                "account_id": "workspace-123"
-            }
-        }))?,
-    )?;
-    fs::write(
-        home.join("config.toml"),
-        format!(
-            "features.worktrees=true\ncli_auth_credentials_store=\"file\"\nchatgpt_base_url=\"{}/backend-api\"\n",
-            server.uri(),
-        ),
-    )?;
-    wiremock::Mock::given(wiremock::matchers::method("GET"))
-        .and(wiremock::matchers::path("/backend-api/wham/config/bundle"))
-        .respond_with(
-            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "config_toml": { "enterprise_managed": [{
-                    "id": "source-trust", "name": "Source trust",
-                    "contents": format!(
-                        "[projects.{}]\ntrust_level=\"untrusted\"\n[projects.{}]\ntrust_level=\"untrusted\"\n",
+    #[cfg(feature = "cloud")]
+    {
+        // Synthetic enterprise claims let the cloud bundle, not a local project entry,
+        // supply the source's distrust decision.
+        fs::write(
+            home.join("auth.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "auth_mode": "chatgpt",
+                "tokens": {
+                    "id_token": "e30.eyJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9wbGFuX3R5cGUiOiJlbnRlcnByaXNlIiwiY2hhdGdwdF9hY2NvdW50X2lkIjoid29ya3NwYWNlLTEyMyIsImNoYXRncHRfdXNlcl9pZCI6InVzZXItMTIzIn19.signature",
+                    "access_token": "test-access-token",
+                    "refresh_token": "test-refresh-token",
+                    "account_id": "workspace-123"
+                }
+            }))?,
+        )?;
+        fs::write(
+            home.join("config.toml"),
+            format!(
+                "features.worktrees=true\ncli_auth_credentials_store=\"file\"\nchatgpt_base_url=\"{}/backend-api\"\n",
+                server.uri(),
+            ),
+        )?;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/backend-api/wham/config/bundle"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "config_toml": { "enterprise_managed": [{
+                        "id": "source-trust", "name": "Source trust",
+                        "contents": format!(
+                            "[projects.{}]\ntrust_level=\"untrusted\"\n[projects.{}]\ntrust_level=\"untrusted\"\n",
+                            serde_json::to_string(&source)?,
+                            serde_json::to_string(&legacy.cwd.join("extra"))?,
+                        )
+                    }] }
+                })),
+            )
+            .mount(&server)
+            .await;
+        for args in [vec!["prompt"], vec!["fork", legacy_id.as_str(), "prompt"]] {
+            let request_count = if args.first() == Some(&"fork") {
+                // The saved checkout can choose file auth even when the launcher does not.
+                fs::remove_file(source.join(".codex/config.toml"))?;
+                fs::create_dir_all(legacy.cwd.join(".codex"))?;
+                fs::write(
+                    legacy.cwd.join(".codex/config.toml"),
+                    "cli_auth_credentials_store=\"file\"\n",
+                )?;
+                git(&legacy.cwd, &["add", ".codex/config.toml"])?;
+                git(
+                    &legacy.cwd,
+                    &["commit", "--quiet", "--no-gpg-sign", "-m", "file auth"],
+                )?;
+                fs::write(
+                    home.join("config.toml"),
+                    format!(
+                        "features.worktrees=true\ncli_auth_credentials_store=\"ephemeral\"\nchatgpt_base_url=\"{}/backend-api\"\n[projects.{}]\ntrust_level=\"trusted\"\n",
+                        server.uri(),
                         serde_json::to_string(&source)?,
-                        serde_json::to_string(&legacy.cwd.join("extra"))?,
-                    )
-                }] }
-            })),
-        )
-        .mount(&server)
-        .await;
-    for args in [vec!["prompt"], vec!["fork", legacy_id.as_str(), "prompt"]] {
-        let request_count = if args.first() == Some(&"fork") {
-            // The saved checkout can choose file auth even when the launcher does not.
-            fs::remove_file(source.join(".codex/config.toml"))?;
-            fs::create_dir_all(legacy.cwd.join(".codex"))?;
-            fs::write(
-                legacy.cwd.join(".codex/config.toml"),
-                "cli_auth_credentials_store=\"file\"\n",
-            )?;
-            git(&legacy.cwd, &["add", ".codex/config.toml"])?;
-            git(
-                &legacy.cwd,
-                &["commit", "--quiet", "--no-gpg-sign", "-m", "file auth"],
-            )?;
-            fs::write(
-                home.join("config.toml"),
-                format!(
-                    "features.worktrees=true\ncli_auth_credentials_store=\"ephemeral\"\nchatgpt_base_url=\"{}/backend-api\"\n[projects.{}]\ntrust_level=\"trusted\"\n",
-                    server.uri(),
-                    serde_json::to_string(&source)?,
-                ),
-            )?;
-            let cache = home.join("cloud-config-bundle-cache.json");
-            if cache.exists() {
-                fs::remove_file(&cache)?;
-            }
-            Some(server.received_requests().await.context("requests")?.len())
-        } else {
-            None
-        };
-        let output = test
-            .cmd()
-            .current_dir(if request_count.is_some() {
-                launcher.path()
+                    ),
+                )?;
+                let cache = home.join("cloud-config-bundle-cache.json");
+                if cache.exists() {
+                    fs::remove_file(&cache)?;
+                }
+                Some(server.received_requests().await.context("requests")?.len())
             } else {
-                &source
-            })
-            .env_remove("CODEX_API_KEY")
-            .env_remove("OPENAI_API_KEY")
-            .env_remove("CODEX_ACCESS_TOKEN")
-            .args(["--json", "--worktree", "--strict-config"])
-            .args(args)
-            .output()?;
-        assert!(
-            !output.status.success()
-                && String::from_utf8_lossy(&output.stderr).contains("explicitly untrusted"),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        if let Some(request_count) = request_count {
-            assert!(!String::from_utf8_lossy(&output.stdout).contains("thread.started"));
-            let denied_manager =
-                WorktreeManager::new(WorktreeSettings::for_cli(&home, /*desktop*/ None)?);
-            let checkout = denied_manager
-                .list(&legacy.cwd)?
-                .into_iter()
-                .next()
-                .context("denied checkout remains for manual removal")?;
-            assert_eq!(denied_manager.owner(&checkout.root)?, None);
-            let stderr = String::from_utf8_lossy(&output.stderr);
+                None
+            };
+            let output = test
+                .cmd()
+                .current_dir(if request_count.is_some() {
+                    launcher.path()
+                } else {
+                    &source
+                })
+                .env_remove("CODEX_API_KEY")
+                .env_remove("OPENAI_API_KEY")
+                .env_remove("CODEX_ACCESS_TOKEN")
+                .args(["--json", "--worktree", "--strict-config"])
+                .args(args)
+                .output()?;
             assert!(
-                stderr.contains(
-                    checkout
-                        .root
-                        .file_name()
-                        .context("checkout name")?
-                        .to_string_lossy()
-                        .as_ref()
-                )
+                !output.status.success()
+                    && String::from_utf8_lossy(&output.stderr).contains("explicitly untrusted"),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
             );
-            assert!(stderr.contains("Remove it manually with `git worktree remove`"));
-            assert!(
-                server
-                    .received_requests()
-                    .await
-                    .context("requests")?
-                    .iter()
-                    .skip(request_count)
-                    .any(|request| request.url.path() == "/backend-api/wham/config/bundle")
-            );
-        } else {
-            assert!(!home.join("worktrees").exists());
+            if let Some(request_count) = request_count {
+                assert!(!String::from_utf8_lossy(&output.stdout).contains("thread.started"));
+                let denied_manager =
+                    WorktreeManager::new(WorktreeSettings::for_cli(&home, /*desktop*/ None)?);
+                let checkout = denied_manager
+                    .list(&legacy.cwd)?
+                    .into_iter()
+                    .next()
+                    .context("denied checkout remains for manual removal")?;
+                assert_eq!(denied_manager.owner(&checkout.root)?, None);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                assert!(
+                    stderr.contains(
+                        checkout
+                            .root
+                            .file_name()
+                            .context("checkout name")?
+                            .to_string_lossy()
+                            .as_ref()
+                    )
+                );
+                assert!(stderr.contains("Remove it manually with `git worktree remove`"));
+                assert!(
+                    server
+                        .received_requests()
+                        .await
+                        .context("requests")?
+                        .iter()
+                        .skip(request_count)
+                        .any(|request| request.url.path() == "/backend-api/wham/config/bundle")
+                );
+            } else {
+                assert!(!home.join("worktrees").exists());
+            }
         }
     }
     Ok(())

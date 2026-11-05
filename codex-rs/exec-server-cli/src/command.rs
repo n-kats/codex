@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use codex_arg0::Arg0DispatchPaths;
+use codex_config::LoaderOverrides;
 use codex_core::config::Config;
 use codex_exec_server::ExecServerRuntimeOptions;
 use codex_http_client::HttpClientFactory;
@@ -186,6 +187,7 @@ impl ExecServerCommand {
         mut self,
         arg0_paths: &Arg0DispatchPaths,
         root_config_overrides: &CliConfigOverrides,
+        root_loader_overrides: &LoaderOverrides,
     ) -> anyhow::Result<()> {
         let strict_config = self.strict_config;
         self.validate_remote_transport()?;
@@ -230,6 +232,7 @@ impl ExecServerCommand {
             };
             let config = load_exec_server_config(
                 root_config_overrides,
+                root_loader_overrides,
                 strict_config,
                 enable_cloud_config,
                 stdin_auth.as_ref(),
@@ -355,6 +358,7 @@ impl ExecServerCommand {
         } else {
             let config_result = load_exec_server_config(
                 root_config_overrides,
+                root_loader_overrides,
                 strict_config,
                 enable_cloud_config,
                 /*stdin_auth*/ None,

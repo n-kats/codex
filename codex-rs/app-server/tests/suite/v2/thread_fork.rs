@@ -1,4 +1,5 @@
 use anyhow::Result;
+#[cfg(feature = "cloud")]
 use app_test_support::ChatGptAuthFixture;
 use app_test_support::MockResponsesConfig;
 use app_test_support::TestAppServer;
@@ -9,6 +10,7 @@ use app_test_support::create_mock_responses_server_repeating_assistant;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::rollout_path;
 use app_test_support::to_response;
+#[cfg(feature = "cloud")]
 use app_test_support::write_chatgpt_auth;
 use app_test_support::write_models_cache;
 use codex_app_server_protocol::ActivePermissionProfile;
@@ -61,11 +63,13 @@ use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
+#[cfg(feature = "cloud")]
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_core::config::ConfigBuilder;
 use codex_core::test_support::all_model_presets;
 use codex_core::test_support::construct_model_info_offline;
 use codex_features::Feature;
+#[cfg(feature = "cloud")]
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
@@ -2342,6 +2346,7 @@ async fn thread_fork_with_empty_path_uses_thread_id() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "cloud")]
 #[tokio::test]
 async fn thread_fork_surfaces_cloud_config_bundle_load_errors() -> Result<()> {
     let server = MockServer::start().await;

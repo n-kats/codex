@@ -247,6 +247,7 @@ async fn exec_server_sigv4_does_not_enable_aws_auth_for_noise() {
             .run(
                 &Arg0DispatchPaths::default(),
                 &CliConfigOverrides::default(),
+                &LoaderOverrides::default(),
             )
             .await
             .expect_err("Noise auth is unchanged");
@@ -297,6 +298,7 @@ async fn exec_server_direct_forwarding_remains_rejected() {
         .run(
             &Arg0DispatchPaths::default(),
             &CliConfigOverrides::default(),
+            &LoaderOverrides::default(),
         )
         .await
         .expect_err("Direct forwarding is unsupported before startup");

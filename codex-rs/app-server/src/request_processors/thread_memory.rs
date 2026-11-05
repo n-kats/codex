@@ -15,8 +15,7 @@ impl ThreadRequestProcessor {
             if config.features.enabled(Feature::MemoryTool) && config.memories.use_memories {
                 tokio::fs::read_to_string(
                     config
-                        .codex_home
-                        .join(config.memories.version.directory_name())
+                        .memory_root_for_version(config.memories.version)
                         .join("memory_summary.md"),
                 )
                 .await

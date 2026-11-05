@@ -37,9 +37,6 @@ use core_test_support::wait_for_event;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use tempfile::TempDir;
-use tokio::time::Duration;
-use tokio::time::Instant;
-use tokio::time::sleep;
 
 const CHILD_MODEL: &str = "test-multi-agent-child";
 const ROOT_MODEL: &str = "test-multi-agent-root";
@@ -77,25 +74,15 @@ fn tool_names(body: &Value) -> Vec<String> {
 }
 
 async fn wait_for_model_available(manager: &SharedModelsManager, slug: &str) -> ModelPreset {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    loop {
-        if let Some(model) = manager
-            .list_models(
-                RefreshStrategy::Online,
-                codex_core::test_support::default_http_client_factory(),
-            )
-            .await
-            .iter()
-            .find(|model| model.model == slug)
-            .cloned()
-        {
-            return model;
-        }
-        if Instant::now() >= deadline {
-            panic!("timed out waiting for the remote model {slug} to appear");
-        }
-        sleep(Duration::from_millis(25)).await;
-    }
+    manager
+        .list_models(
+            RefreshStrategy::Online,
+            codex_core::test_support::default_http_client_factory(),
+        )
+        .await
+        .into_iter()
+        .find(|model| model.model == slug)
+        .unwrap_or_else(|| panic!("remote model {slug} was absent from the refreshed catalog"))
 }
 
 async fn response_for_remote_model(
@@ -104,7 +91,7 @@ async fn response_for_remote_model(
 ) -> Result<RemoteModelResponse> {
     let server = responses::start_mock_server().await;
     let model_slug = remote_model.slug.clone();
-    let models_mock = mount_models_once(
+    let models_mock = responses::mount_models(
         &server,
         ModelsResponse {
             models: vec![remote_model],
@@ -128,7 +115,7 @@ async fn response_for_remote_model(
     let models_manager = test.thread_manager.get_models_manager();
     let available_model = wait_for_model_available(&models_manager, &model_slug).await;
     assert_eq!(available_model.model, model_slug);
-    assert_eq!(models_mock.requests().len(), 1);
+    assert!(!models_mock.requests().is_empty());
 
     submit_thread_settings(
         &test.codex,

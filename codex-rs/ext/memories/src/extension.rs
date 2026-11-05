@@ -19,7 +19,7 @@ use codex_protocol::MemoryVersion;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 use crate::local::LocalMemoriesBackend;
-use crate::prompts::build_memory_tool_developer_instructions;
+use crate::prompts::build_memory_tool_developer_instructions_at;
 use crate::tools;
 
 /// Contributes Codex memory read-path prompt context and memory read tools.
@@ -38,7 +38,7 @@ impl MemoriesExtension {
 pub(crate) struct MemoriesExtensionConfig {
     pub(crate) enabled: bool,
     pub(crate) dedicated_tools: bool,
-    pub(crate) codex_home: AbsolutePathBuf,
+    pub(crate) memory_root: AbsolutePathBuf,
     pub(crate) version: MemoryVersion,
 }
 
@@ -47,7 +47,7 @@ impl MemoriesExtensionConfig {
         Self {
             enabled: config.features.enabled(Feature::MemoryTool) && config.memories.use_memories,
             dedicated_tools: config.memories.dedicated_tools,
-            codex_home: config.codex_home.clone(),
+            memory_root: config.memories_home.clone(),
             version: config.memories.version,
         }
     }
@@ -67,8 +67,11 @@ impl ContextContributor for MemoriesExtension {
                 return Vec::new();
             }
 
-            let Some(instructions) =
-                build_memory_tool_developer_instructions(&config.codex_home, config.version).await
+            let Some(instructions) = build_memory_tool_developer_instructions_at(
+                config.memory_root.as_path(),
+                config.version,
+            )
+            .await
             else {
                 return Vec::new();
             };
@@ -129,6 +132,7 @@ impl ConfigContributor<Config> for MemoriesExtension {
         if let Some(previous) = thread_store.get::<MemoriesExtensionConfig>() {
             // The initial summary and retrieval tools must use the same namespace.
             config.version = previous.version;
+            config.memory_root = new_config.memory_root_for_version(previous.version);
         }
         thread_store.insert(config);
     }
@@ -150,12 +154,7 @@ impl ToolContributor for MemoriesExtension {
         }
 
         tools::memory_tools(
-            LocalMemoriesBackend::from_memory_root(
-                config
-                    .codex_home
-                    .join(config.version.directory_name())
-                    .to_path_buf(),
-            ),
+            LocalMemoriesBackend::from_memory_root(config.memory_root.to_path_buf()),
             self.metrics_client.clone(),
         )
     }

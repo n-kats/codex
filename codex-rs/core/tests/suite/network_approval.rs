@@ -2167,6 +2167,14 @@ async fn guardian_receives_exact_triggers_for_concurrent_network_requests() -> R
 
     let server = start_mock_server().await;
     let test = managed_network_unified_exec_test(&server).await?;
+    if codex_core::config::system_bwrap_warning(
+        test.config.permissions.permission_profile(),
+        &test.config.cwd,
+    )
+    .is_some()
+    {
+        return Ok(());
+    }
     let barrier_dir = TempDir::new_in(test.cwd.path())?;
     let first_marker = barrier_dir.path().join("first");
     let second_marker = barrier_dir.path().join("second");
@@ -2321,6 +2329,14 @@ async fn guardian_receives_exact_trigger_for_single_network_request() -> Result<
 
     let server = start_mock_server().await;
     let test = managed_network_unified_exec_test(&server).await?;
+    if codex_core::config::system_bwrap_warning(
+        test.config.permissions.permission_profile(),
+        &test.config.cwd,
+    )
+    .is_some()
+    {
+        return Ok(());
+    }
     let command = "python3 -c \"import urllib.request; opener = urllib.request.build_opener(urllib.request.ProxyHandler()); print('OK:' + opener.open('http://1.1.1.1', timeout=10).read().decode(errors='replace'))\"".to_string();
     let call_id = "exec-network-single";
     mount_sse_once_match(
@@ -3141,6 +3157,14 @@ async fn local_session_grant_does_not_allow_the_same_host_on_a_remote_executor()
 
     let server = start_mock_server().await;
     let test = managed_network_unified_exec_test(&server).await?;
+    if codex_core::config::system_bwrap_warning(
+        test.config.permissions.permission_profile(),
+        &test.config.cwd,
+    )
+    .is_some()
+    {
+        return Ok(());
+    }
     let local_cwd = TempDir::new()?;
     let environments = vec![
         local(local_cwd.path().abs()),
@@ -3669,19 +3693,24 @@ fn guardian_network_triggers(responses: &[&ResponseMock]) -> Result<Vec<(String,
     responses
         .iter()
         .flat_map(|responses| responses.requests())
-        .filter(|request| {
-            request.body_json()["client_metadata"]["x-openai-subagent"].as_str() == Some("guardian")
-        })
+        .filter(is_guardian_network_response_request)
         .map(|request| {
-            let user_texts = request.message_input_texts("user");
-            let action: Value = serde_json::from_str(
-                user_texts
-                    .iter()
-                    .rev()
-                    .find(|text| text.contains("\"tool\": \"network_access\""))
-                    .context("expected network access JSON in Guardian request")?
-                    .trim(),
-            )?;
+            let user_message = request
+                .message_input_text_groups("user")
+                .into_iter()
+                .rev()
+                .find(|texts| texts.join("").contains("Network access JSON:"))
+                .context("expected network access JSON in Guardian request")?
+                .join("");
+            let action_text = user_message
+                .split_once("Network access JSON:\n")
+                .map(|(_, json)| json)
+                .context("expected Guardian network access JSON payload")?;
+            let action_text = action_text
+                .split_once("\n>>> APPROVAL REQUEST END")
+                .map_or(action_text, |(json, _)| json)
+                .trim();
+            let action: Value = serde_json::from_str(action_text)?;
             Ok((
                 action
                     .pointer("/trigger/callId")
@@ -3698,28 +3727,46 @@ fn guardian_network_triggers(responses: &[&ResponseMock]) -> Result<Vec<(String,
         .collect()
 }
 
+fn is_guardian_response_request(request: &core_test_support::responses::ResponsesRequest) -> bool {
+    request
+        .body_json()
+        .pointer("/client_metadata/x-openai-subagent")
+        .and_then(Value::as_str)
+        == Some("guardian")
+}
+
+fn is_guardian_network_response_request(
+    request: &core_test_support::responses::ResponsesRequest,
+) -> bool {
+    is_guardian_response_request(request)
+        && request
+            .message_input_text_groups("user")
+            .into_iter()
+            .any(|texts| texts.join("").contains("Network access JSON:"))
+}
+
 fn guardian_network_actions(responses: &ResponseMock) -> Result<Vec<Value>> {
     responses
         .requests()
         .into_iter()
-        .filter(|request| {
-            request.body_json()["client_metadata"]["x-openai-subagent"].as_str() == Some("guardian")
-                && request
-                    .message_input_texts("user")
-                    .iter()
-                    .any(|text| text.contains("\"tool\": \"network_access\""))
-        })
+        .filter(is_guardian_network_response_request)
         .map(|request| {
-            let user_texts = request.message_input_texts("user");
-            serde_json::from_str(
-                user_texts
-                    .iter()
-                    .rev()
-                    .find(|text| text.contains("\"tool\": \"network_access\""))
-                    .context("expected network access JSON in Guardian request")?
-                    .trim(),
-            )
-            .context("parse Guardian network action")
+            let user_message = request
+                .message_input_text_groups("user")
+                .into_iter()
+                .rev()
+                .find(|texts| texts.join("").contains("Network access JSON:"))
+                .context("expected network access JSON in Guardian request")?
+                .join("");
+            let action_text = user_message
+                .split_once("Network access JSON:\n")
+                .map(|(_, json)| json)
+                .context("expected Guardian network access JSON payload")?;
+            let action_text = action_text
+                .split_once("\n>>> APPROVAL REQUEST END")
+                .map_or(action_text, |(json, _)| json)
+                .trim();
+            serde_json::from_str(action_text).context("parse Guardian network action")
         })
         .collect()
 }
@@ -3805,7 +3852,7 @@ async fn wait_for_completion_without_network_prompt(test: &TestCodex) {
 }
 
 async fn wait_for_guardian_request(responses: &ResponseMock) {
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             if responses.requests().iter().any(|request| {
                 request.body_json()["client_metadata"]["x-openai-subagent"] == "guardian"

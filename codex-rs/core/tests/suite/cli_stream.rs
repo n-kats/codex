@@ -1,5 +1,6 @@
 use codex_git_utils::SanitizedGitUrl;
 use codex_git_utils::collect_git_info;
+#[cfg(any())]
 use codex_login::CODEX_ACCESS_TOKEN_ENV_VAR;
 use codex_login::CODEX_API_KEY_ENV_VAR;
 use codex_protocol::protocol::GitInfo;
@@ -18,17 +19,27 @@ use std::thread;
 use std::time::Duration;
 use tempfile::TempDir;
 use uuid::Uuid;
+#[cfg(any())]
 use wiremock::Mock;
 use wiremock::MockServer;
+#[cfg(any())]
 use wiremock::ResponseTemplate;
+#[cfg(any())]
 use wiremock::matchers::header;
+#[cfg(any())]
 use wiremock::matchers::method;
+#[cfg(any())]
 use wiremock::matchers::path;
 
+#[cfg(any())]
 const PERSONAL_ACCESS_TOKEN: &str = "at-cli-test";
+#[cfg(any())]
 const PERSONAL_ACCESS_TOKEN_AUTHORIZATION: &str = "Bearer at-cli-test";
+#[cfg(any())]
 const PERSONAL_ACCESS_TOKEN_ACCOUNT_ID: &str = "account-pat";
+#[cfg(any())]
 const WHOAMI_PATH: &str = "/v1/user-auth-credential/whoami";
+#[cfg(any())]
 const CLOUD_CONFIG_BUNDLE_PATH: &str = "/backend-api/wham/config/bundle";
 const CLI_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -44,6 +55,7 @@ fn cli_sse_response() -> String {
     ])
 }
 
+#[cfg(any())]
 async fn mount_personal_access_token_startup(server: &MockServer) {
     Mock::given(method("GET"))
         .and(path(WHOAMI_PATH))
@@ -68,6 +80,7 @@ async fn mount_personal_access_token_startup(server: &MockServer) {
 }
 
 #[expect(clippy::unwrap_used)]
+#[cfg(any())]
 fn personal_access_token_exec_command(server: &MockServer, home: &TempDir) -> Command {
     let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
     let mut cmd = Command::new(bin);
@@ -145,6 +158,9 @@ fn run_cli_command(command: &mut Command) -> io::Result<Output> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// These upstream PAT tests require cloud-managed config startup, which is not
+// part of the custom CLI test surface. Keep the test source, but exclude it.
+#[cfg(any())]
 async fn responses_mode_stream_cli_supports_personal_access_tokens() {
     skip_if_no_network!();
 
@@ -176,6 +192,9 @@ async fn responses_mode_stream_cli_supports_personal_access_tokens() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+// These upstream PAT tests require cloud-managed config startup, which is not
+// part of the custom CLI test surface. Keep the test source, but exclude it.
+#[cfg(any())]
 async fn responses_mode_stream_cli_does_not_attempt_oauth_refresh_for_personal_access_tokens_after_401()
  {
     skip_if_no_network!();

@@ -6,18 +6,25 @@ use app_test_support::ChatGptIdTokenClaims;
 use app_test_support::TestAppServer;
 use app_test_support::encode_id_token;
 use app_test_support::write_chatgpt_auth;
+#[cfg(feature = "cloud")]
 use app_test_support::write_models_cache;
 use codex_app_server_protocol::ClientInfo;
+#[cfg(feature = "cloud")]
 use codex_app_server_protocol::CodexErrorInfo;
 use codex_app_server_protocol::GetAccountParams;
 use codex_app_server_protocol::LoginAccountResponse;
 use codex_app_server_protocol::LogoutAccountResponse;
 use codex_app_server_protocol::RequestId;
+#[cfg(feature = "cloud")]
 use codex_app_server_protocol::ThreadStartParams;
+#[cfg(feature = "cloud")]
 use codex_app_server_protocol::TurnStartParams;
+#[cfg(feature = "cloud")]
 use codex_app_server_protocol::TurnStatus;
+#[cfg(feature = "cloud")]
 use codex_app_server_protocol::UserInput;
 use codex_config::types::AuthCredentialsStoreMode;
+#[cfg(feature = "cloud")]
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -95,7 +102,10 @@ fn routing(account: &str, origin: &str, routing: &str) -> Value {
 
 #[test_case(0, 0, "pro"; "immediate_responses")]
 #[test_case(6, 0, "pro"; "slow_accounts_response")]
-#[test_case(0, 12, "enterprise"; "slow_cloud_bundle_response")]
+#[cfg_attr(
+    feature = "cloud",
+    test_case(0, 12, "enterprise"; "slow_cloud_bundle_response")
+)]
 #[tokio::test]
 async fn saved_workspace_is_discovered_once_and_not_the_default_account(
     accounts_delay_secs: u64,
@@ -251,6 +261,7 @@ async fn stable_clients_do_not_treat_failed_workspace_discovery_as_unrestricted(
     Ok(())
 }
 
+#[cfg(feature = "cloud")]
 #[tokio::test]
 async fn reused_refresh_token_tells_the_user_to_sign_in_again() -> Result<()> {
     let backend = MockServer::start().await;
@@ -472,6 +483,7 @@ async fn api_only_login_does_not_discover_chatgpt_routing() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "cloud")]
 #[test_case(
     json!({"requirements_toml": {"enterprise_managed": [{
         "id": "invalid", "name": "Invalid requirements", "contents": "application = 'sk-test-private-value'",

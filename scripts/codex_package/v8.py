@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import shutil
 import tempfile
 from collections.abc import Mapping
@@ -15,6 +14,7 @@ from .targets import REPO_ROOT, TargetSpec
 
 DOWNLOAD_TIMEOUT_SECS = 120
 V8_ARTIFACT_PROFILE = "ptrcomp_sandbox_release"
+V8_ARTIFACT_REVISION = "codex1"
 
 
 @dataclass(frozen=True)
@@ -29,23 +29,48 @@ def resolve_codex_v8_cargo_env(
     environ: Mapping[str, str] | None = None,
     cache_root: Path | None = None,
 ) -> dict[str, str]:
-    environ = os.environ if environ is None else environ
-    if environ.get("V8_FROM_SOURCE") in {"true", "1", "yes"}:
-        return {}
-
-    archive_override = environ.get("RUSTY_V8_ARCHIVE")
-    binding_override = environ.get("RUSTY_V8_SRC_BINDING_PATH")
-    if archive_override and binding_override:
-        return {}
-    if archive_override or binding_override:
-        raise RuntimeError(
-            "Cargo package builds need RUSTY_V8_ARCHIVE and RUSTY_V8_SRC_BINDING_PATH set together."
-        )
-
     artifacts = fetch_codex_v8_artifacts(spec, cache_root=cache_root)
     return {
         "RUSTY_V8_ARCHIVE": str(artifacts.archive),
         "RUSTY_V8_SRC_BINDING_PATH": str(artifacts.binding),
+    }
+
+
+def resolve_workspace_v8_cargo_env(
+    spec: TargetSpec,
+    *,
+    asset_dir: Path | None = None,
+) -> dict[str, str]:
+    """Resolve the Bazel-built V8 pair staged for local workspace tests."""
+    target = spec.target
+    if spec.is_windows:
+        archive_name = f"rusty_v8_{V8_ARTIFACT_PROFILE}_{target}.lib.gz"
+    else:
+        archive_name = f"librusty_v8_{V8_ARTIFACT_PROFILE}_{target}.a.gz"
+    binding_name = f"src_binding_{V8_ARTIFACT_PROFILE}_{target}.rs"
+    checksums_name = f"rusty_v8_{V8_ARTIFACT_PROFILE}_{target}.sha256"
+    asset_dir = asset_dir or (REPO_ROOT / "_tmp" / "assets")
+    checksums_path = asset_dir / checksums_name
+    archive = asset_dir / archive_name
+    binding = asset_dir / binding_name
+
+    if not checksums_path.is_file():
+        raise RuntimeError(
+            f"Missing local Bazel-built V8 pair in {asset_dir}. "
+            "Run `make build-v8-test-assets` before the Cargo test."
+        )
+
+    expected_checksums = load_checksums(checksums_path, {archive.name, binding.name})
+    for artifact in (archive, binding):
+        if not has_checksum(artifact, expected_checksums[artifact.name]):
+            raise RuntimeError(
+                f"Local Bazel-built V8 artifact {artifact} is missing or does not "
+                "match its staged checksum. Run `make build-v8-test-assets` again."
+            )
+
+    return {
+        "RUSTY_V8_ARCHIVE": str(archive),
+        "RUSTY_V8_SRC_BINDING_PATH": str(binding),
     }
 
 
@@ -56,11 +81,12 @@ def fetch_codex_v8_artifacts(
     cache_root: Path | None = None,
 ) -> RustyV8ArtifactPair:
     version = version or resolved_v8_crate_version()
-    release_url = (
-        f"https://github.com/openai/codex/releases/download/rusty-v8-v{version}"
-    )
+    release_tag = f"rusty-v8-v{version}-{V8_ARTIFACT_REVISION}"
+    release_url = f"https://github.com/openai/codex/releases/download/{release_tag}"
     target = spec.target
-    cache_dir = (cache_root or default_cache_root()) / f"rusty-v8-{version}-{target}"
+    cache_dir = (cache_root or default_cache_root()) / (
+        f"rusty-v8-{version}-{V8_ARTIFACT_REVISION}-{target}"
+    )
 
     if spec.is_windows:
         archive_name = f"rusty_v8_{V8_ARTIFACT_PROFILE}_{target}.lib.gz"

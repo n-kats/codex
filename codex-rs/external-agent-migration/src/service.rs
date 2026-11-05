@@ -41,6 +41,7 @@ pub(super) use crate::utils::read_json_file as read_external_settings;
 use crate::utils::rewrite_external_agent_terms;
 use codex_analytics::AnalyticsEventsClient;
 use codex_core::config::Config;
+use codex_core::config::resolve_memory_root;
 use codex_core_plugins::PluginsManager;
 use codex_core_plugins::marketplace::MarketplacePluginInstallPolicy;
 use codex_login::AuthManager;
@@ -422,9 +423,11 @@ impl ExternalAgentConfigService {
                             ExternalAgentConfigMigrationItemType::Memory,
                             /*skills_count*/ None,
                         );
-                        let target_path = memory_import::resources_root(
-                            &self.codex_home.join(MemoryVersion::V2.directory_name()),
-                        );
+                        let target_path = memory_import::resources_root(&resolve_memory_root(
+                            &self.codex_home,
+                            self.memory_version,
+                            MemoryVersion::V2,
+                        ));
                         for project_key in memory_outcome.synchronized_projects {
                             item_result.record_success(
                                 Some(project_key),

@@ -1,4 +1,7 @@
 mod application;
+#[cfg(test)]
+#[path = "custom_tests.rs"]
+mod custom_tests;
 mod layer_io;
 mod local;
 #[cfg(target_os = "macos")]

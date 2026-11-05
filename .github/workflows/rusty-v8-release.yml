@@ -3,7 +3,7 @@ name: rusty-v8-release
 on:
   push:
     tags:
-      - "rusty-v8-v*.*.*"
+      - "rusty-v8-v*.*.*-codex1"
 
 # Cargo's libgit2 transport has been flaky when fetching git dependencies with
 # nested submodules. Prefer the system git CLI for Cargo smoke tests.
@@ -48,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          expected_release_tag="rusty-v8-v${V8_VERSION}"
+          expected_release_tag="rusty-v8-v${V8_VERSION}-codex1"
           release_tag="${GITHUB_REF_NAME}"
           if [[ "${release_tag}" != "${expected_release_tag}" ]]; then
             echo "Tag ${release_tag} does not match expected release tag ${expected_release_tag}." >&2
@@ -166,36 +166,6 @@ jobs:
           toolchain: "1.95.0"
           targets: ${{ matrix.target }}
 
-      - name: Build Bazel V8 release pair
-        env:
-          PLATFORM: ${{ matrix.platform }}
-          SANDBOX: ${{ matrix.sandbox }}
-          TARGET: ${{ matrix.target }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          target_suffix="${TARGET//-/_}"
-          pair_kind="release_pair"
-          if [[ "${SANDBOX}" == "true" ]]; then
-            pair_kind="sandbox_release_pair"
-          fi
-          pair_target="//third_party/v8:rusty_v8_${pair_kind}_${target_suffix}"
-
-          bazel_args=(
-            build
-            -c
-            opt
-            "--platforms=@llvm//platforms:${PLATFORM}"
-            "${pair_target}"
-            --build_metadata=COMMIT_SHA=$(git rev-parse HEAD)
-          )
-
-          ./.github/scripts/run_bazel_with_buildbuddy.py \
-            --noexperimental_remote_repo_contents_cache \
-            "${bazel_args[@]}" \
-            "--config=${{ matrix.bazel_config }}"
-
       - name: Stage release pair
         env:
           BAZEL_CONFIG: ${{ matrix.bazel_config }}
@@ -212,6 +182,7 @@ jobs:
             --compilation-mode opt
             --output-dir "dist/${TARGET}"
             --bazel-config "${BAZEL_CONFIG}"
+            --build-metadata "COMMIT_SHA=${GITHUB_SHA}"
           )
           if [[ "${SANDBOX}" == "true" ]]; then
             stage_args+=(--sandbox)

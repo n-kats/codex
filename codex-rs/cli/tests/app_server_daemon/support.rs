@@ -4,6 +4,8 @@
 use std::path::PathBuf;
 use std::process::Child;
 use std::process::Command;
+use std::sync::Mutex;
+use std::sync::MutexGuard;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -14,14 +16,21 @@ use codex_utils_cargo_bin::copy_executable;
 use serde_json::Value;
 use tempfile::TempDir;
 
+static APP_SERVER_DAEMON_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 pub(super) struct TestDaemon {
     pub(super) home: TempDir,
     pub(super) codex: PathBuf,
     pub(super) unmanaged: Option<Child>,
+    _test_lock: MutexGuard<'static, ()>,
 }
 
 impl TestDaemon {
     pub(super) fn new() -> Result<Self> {
+        // Keep timed process checks independent from sibling daemon fixtures.
+        let test_lock = APP_SERVER_DAEMON_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let home = tempfile::Builder::new().tempdir_in("/tmp")?;
         let codex = codex_utils_cargo_bin::cargo_bin("codex")?;
         let codex_source = std::fs::canonicalize(&codex)?;
@@ -69,12 +78,14 @@ impl TestDaemon {
             home,
             codex,
             unmanaged: None,
+            _test_lock: test_lock,
         })
     }
 
     pub(super) fn command(&self) -> Command {
         let mut command = Command::new(&self.codex);
         command.env("CODEX_HOME", self.home.path());
+        command.env("RUST_BACKTRACE", "0");
         command
     }
 

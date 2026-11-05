@@ -172,9 +172,13 @@ mod tests {
             let value = evaluate_script(scope, &expression);
             let view = v8::Local::<v8::ArrayBufferView>::try_from(value).unwrap();
             let on_heap = uses_inline_typed_array_storage(length, v8::TYPED_ARRAY_MAX_SIZE_IN_HEAP);
-            // Check native placement before asking C++ to copy into storage:
-            // stale size-zero bindings must fail here rather than abort in FFI.
-            assert_eq!(view.has_buffer(), !on_heap, "byte length {length}");
+            // A zero-byte view has no contents whose native storage placement
+            // can be checked. Check placement only where bytes must be stored.
+            if length > 0 {
+                // Check native placement before asking C++ to copy into storage:
+                // stale size-zero bindings must fail here rather than abort in FFI.
+                assert_eq!(view.has_buffer(), !on_heap, "byte length {length}");
+            }
 
             let mut storage = vec![0; v8::TYPED_ARRAY_MAX_SIZE_IN_HEAP];
             let storage_ptr = storage.as_ptr();
@@ -184,7 +188,9 @@ mod tests {
                 assert_eq!(contents.as_ptr(), storage_ptr);
             }
             // Reading inline contents copies bytes without promoting the view.
-            assert_eq!(view.has_buffer(), !on_heap, "byte length {length}");
+            if length > 0 {
+                assert_eq!(view.has_buffer(), !on_heap, "byte length {length}");
+            }
         }
     }
 

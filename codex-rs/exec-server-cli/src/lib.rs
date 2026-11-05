@@ -3,6 +3,7 @@
 
 use clap::CommandFactory;
 use clap::Parser;
+use codex_config::LoaderOverrides;
 use codex_utils_cli::CliConfigOverrides;
 use codex_utils_cli::collect_config_overrides;
 
@@ -30,6 +31,8 @@ pub fn run_standalone() -> anyhow::Result<()> {
         let mut cli = ExecServerCli::parse_from(&args);
         cli.config_overrides = collect_config_overrides(ExecServerCli::command(), args)
             .unwrap_or_else(|error| error.exit());
-        cli.command.run(&paths, &cli.config_overrides).await
+        cli.command
+            .run(&paths, &cli.config_overrides, &LoaderOverrides::default())
+            .await
     })
 }

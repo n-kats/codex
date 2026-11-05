@@ -70,15 +70,37 @@ pub(super) enum RemoteControlSubcommand {
 pub(crate) async fn run(
     command: RemoteControlCommand,
     arg0_paths: Arg0DispatchPaths,
-    root_config_overrides: CliConfigOverrides,
+    mut root_config_overrides: CliConfigOverrides,
+    psp: bool,
+    loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     if command.no_daemon && command.subcommand.is_some() {
         anyhow::bail!("`--no-daemon` cannot be used with a remote-control subcommand");
     }
 
+    if psp {
+        root_config_overrides
+            .raw_overrides
+            .push("features.psp=true".to_string());
+    }
+
     if command.subcommand.is_none() {
-        if command.no_daemon || command.json || !daemon_eligible(&root_config_overrides).await? {
-            run_foreground_remote_control(command.json, arg0_paths, root_config_overrides).await?;
+        let has_loader_overrides = loader_overrides.user_config_path.is_some()
+            || loader_overrides.user_config_profile.is_some()
+            || loader_overrides.ignore_user_config
+            || loader_overrides.ignore_project_config;
+        if command.no_daemon
+            || command.json
+            || has_loader_overrides
+            || !daemon_eligible(&root_config_overrides).await?
+        {
+            run_foreground_remote_control(
+                command.json,
+                arg0_paths,
+                root_config_overrides,
+                loader_overrides,
+            )
+            .await?;
         } else {
             print_remote_control_progress(
                 command.json,
@@ -94,6 +116,7 @@ pub(crate) async fn run(
                         command.json,
                         arg0_paths,
                         root_config_overrides,
+                        loader_overrides,
                     )
                     .await;
                 }
@@ -104,6 +127,7 @@ pub(crate) async fn run(
                     command.json,
                     arg0_paths,
                     root_config_overrides,
+                    loader_overrides,
                 )
                 .await;
             }
@@ -181,6 +205,7 @@ async fn run_foreground_remote_control(
     json: bool,
     arg0_paths: Arg0DispatchPaths,
     root_config_overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     print_remote_control_progress(json, "Starting app-server with remote control enabled...")?;
     #[cfg(not(windows))]
@@ -211,7 +236,7 @@ async fn run_foreground_remote_control(
     let app_server = codex_app_server::run_main_with_transport_options(
         arg0_paths,
         root_config_overrides,
-        LoaderOverrides::default(),
+        loader_overrides,
         /*strict_config*/ false,
         /*default_analytics_enabled*/ false,
         transport,

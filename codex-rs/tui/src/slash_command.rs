@@ -41,6 +41,7 @@ pub enum SlashCommand {
     Compact,
     Config,
     Recap,
+    CustomAgents,
     Plan,
     Voice,
     Goal,
@@ -115,6 +116,7 @@ impl SlashCommand {
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
             SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
+            SlashCommand::CustomAgents => "override AGENTS.md files for this session",
             SlashCommand::Import => "import setup, this project, and recent chats from Claude Code",
             SlashCommand::Hooks => "view and manage lifecycle hooks",
             SlashCommand::Daemon => "Manage the local background server",
@@ -196,6 +198,7 @@ impl SlashCommand {
                 | SlashCommand::Side
                 | SlashCommand::Btw
                 | SlashCommand::Resume
+                | SlashCommand::CustomAgents
         )
     }
 
@@ -276,6 +279,7 @@ impl SlashCommand {
             | SlashCommand::Model
             | SlashCommand::Presets
             | SlashCommand::Daybreak
+            | SlashCommand::CustomAgents
             | SlashCommand::Permissions
             | SlashCommand::Copy
             | SlashCommand::Raw
@@ -376,3 +380,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "slash_command_custom_tests.rs"]
+mod custom_tests;

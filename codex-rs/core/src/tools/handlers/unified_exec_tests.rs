@@ -842,7 +842,9 @@ async fn exec_command_telemetry_records_configured_snapshot_mode(
         environments: Default::default(),
     };
     assert_eq!(
-        ExecCommandHandler::default().telemetry_tags(&invocation),
+        ExecCommandHandler::default()
+            .telemetry_tags(&invocation)
+            .await,
         vec![("shell_snapshot_mode", expected_mode.to_string())],
     );
 }

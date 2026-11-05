@@ -87,6 +87,36 @@ class RustyV8BazelTest(unittest.TestCase):
                 ),
             )
 
+    def test_stage_release_pair_build_accepts_build_metadata(self) -> None:
+        with patch.object(
+            rusty_v8_bazel,
+            "bazel_command",
+            side_effect=lambda *args: list(args),
+        ), patch.object(rusty_v8_bazel.subprocess, "run") as run:
+            rusty_v8_bazel.bazel_build(
+                platform="linux_amd64",
+                labels=["//third_party/v8:rusty_v8_sandbox_release_pair_x86_64_unknown_linux_gnu"],
+                compilation_mode="opt",
+                bazel_configs=["ci-v8"],
+                download_toplevel=True,
+                build_metadata=["COMMIT_SHA=abc123"],
+            )
+
+        run.assert_called_once_with(
+            [
+                "build",
+                "-c",
+                "opt",
+                "--platforms=@llvm//platforms:linux_amd64",
+                "--config=ci-v8",
+                "--remote_download_toplevel",
+                "--build_metadata=COMMIT_SHA=abc123",
+                "//third_party/v8:rusty_v8_sandbox_release_pair_x86_64_unknown_linux_gnu",
+            ],
+            cwd=rusty_v8_bazel.ROOT,
+            check=True,
+        )
+
     def test_release_pair_labels_and_staged_names_distinguish_sandbox_artifacts(
         self,
     ) -> None:
@@ -254,6 +284,7 @@ class RustyV8BazelTest(unittest.TestCase):
                 "opt",
                 ["ci-macos"],
                 download_toplevel=True,
+                build_metadata=None,
             )
             bazel_output_files.assert_called_once_with(
                 "macos_arm64",

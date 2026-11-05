@@ -84,8 +84,10 @@ def bazel_build(
     compilation_mode: str = "fastbuild",
     bazel_configs: list[str] | None = None,
     download_toplevel: bool = False,
+    build_metadata: list[str] | None = None,
 ) -> None:
     bazel_configs = bazel_configs or []
+    build_metadata = build_metadata or []
     download_args = ["--remote_download_toplevel"] if download_toplevel else []
     subprocess.run(
         bazel_command(
@@ -95,6 +97,7 @@ def bazel_build(
             f"--platforms=@llvm//platforms:{platform}",
             *[f"--config={config}" for config in bazel_configs],
             *download_args,
+            *[f"--build_metadata={item}" for item in build_metadata],
             *labels,
         ),
         cwd=ROOT,
@@ -107,6 +110,7 @@ def ensure_bazel_output_files(
     labels: list[str],
     compilation_mode: str = "fastbuild",
     bazel_configs: list[str] | None = None,
+    build_metadata: list[str] | None = None,
 ) -> list[Path]:
     # Bazel output paths can be reused across config flips, so existence alone
     # does not prove the files match the requested flags.
@@ -116,6 +120,7 @@ def ensure_bazel_output_files(
         compilation_mode,
         bazel_configs,
         download_toplevel=True,
+        build_metadata=build_metadata,
     )
     outputs = bazel_output_files(platform, labels, compilation_mode, bazel_configs)
     missing = [str(path) for path in outputs if not path.exists()]
@@ -280,12 +285,14 @@ def stage_release_pair(
     compilation_mode: str = "fastbuild",
     bazel_configs: list[str] | None = None,
     sandbox: bool = False,
+    build_metadata: list[str] | None = None,
 ) -> None:
     outputs = ensure_bazel_output_files(
         platform,
         [release_pair_label(target, sandbox)],
         compilation_mode,
         bazel_configs,
+        build_metadata,
     )
 
     try:
@@ -320,6 +327,11 @@ def parse_args() -> argparse.Namespace:
         "--compilation-mode",
         default="fastbuild",
         choices=["fastbuild", "opt", "dbg"],
+    )
+    stage_release_pair_parser.add_argument(
+        "--build-metadata",
+        action="append",
+        default=[],
     )
 
     stage_upstream_release_pair_parser = subparsers.add_parser(
@@ -365,6 +377,7 @@ def main() -> int:
             compilation_mode=args.compilation_mode,
             bazel_configs=args.bazel_configs,
             sandbox=args.sandbox,
+            build_metadata=args.build_metadata,
         )
         return 0
     if args.command == "stage-upstream-release-pair":

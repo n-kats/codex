@@ -3167,6 +3167,8 @@ async fn try_run_sampling_request(
                             authorization: authorization.clone(),
                         })
                     });
+                let wait_for_mcp_tool_completion =
+                    tool_runtime.waits_for_mcp_tool_completion(&item);
                 if item.id().is_none_or(|id| id.is_empty())
                     && let Some(active_item) = &active_item
                 {
@@ -3286,6 +3288,13 @@ async fn try_run_sampling_request(
                     };
                 if let Some(tool_future) = output_result.tool_future {
                     in_flight.push_back(tool_future);
+                    if wait_for_mcp_tool_completion {
+                        break Ok(SamplingRequestResult {
+                            needs_follow_up: true,
+                            mailbox_preempted: false,
+                            last_agent_message,
+                        });
+                    }
                 }
                 if let Some(agent_message) = output_result.last_agent_message {
                     last_agent_message = Some(agent_message);

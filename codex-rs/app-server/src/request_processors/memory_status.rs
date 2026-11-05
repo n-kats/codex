@@ -28,20 +28,16 @@ impl ThreadRequestProcessor {
             .max_consolidated_thread_count()
             .await
             .map_err(|error| internal_error(format!("failed to read memory progress: {error}")))?;
-        let root = self
-            .config
-            .codex_home
-            .join(MemoryVersion::V2.directory_name());
+        let root = self.config.memory_root_for_version(MemoryVersion::V2);
         let summary = tokio::fs::read_to_string(root.join("memory_summary.md"))
             .await
             .ok();
-        let has_v1_workspace = tokio::fs::try_exists(
-            self.config
-                .codex_home
-                .join(MemoryVersion::V1.directory_name()),
-        )
-        .await
-        .map_err(|error| internal_error(format!("failed to check v1 memory workspace: {error}")))?;
+        let has_v1_workspace =
+            tokio::fs::try_exists(self.config.memory_root_for_version(MemoryVersion::V1))
+                .await
+                .map_err(|error| {
+                    internal_error(format!("failed to check v1 memory workspace: {error}"))
+                })?;
         // Fresh profiles can start on V2 without consolidating any V1 history first.
         let ready = !has_v1_workspace
             || count >= minimum

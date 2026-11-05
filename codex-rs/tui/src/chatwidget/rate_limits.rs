@@ -479,6 +479,7 @@ impl ChatWidget {
                 /*summary*/ None,
                 /*service_tier*/ None,
                 /*collaboration_mode*/ None,
+                /*project_doc_paths*/ None,
             )));
             tx.send(AppEvent::UpdateModel(switch_model_for_events.clone()));
             tx.send(AppEvent::UpdateReasoningEffort(Some(

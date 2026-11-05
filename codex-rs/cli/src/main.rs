@@ -10,6 +10,7 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_arg0::arg0_dispatch_or_else;
 use codex_chatgpt::apply_command::ApplyCommand;
 use codex_chatgpt::apply_command::run_apply_command;
+use codex_cli::SandboxUninstallCommand;
 use codex_cli::cloud_config;
 use codex_cli::read_access_token_from_stdin;
 use codex_cli::read_api_key_from_stdin;
@@ -19,7 +20,6 @@ use codex_cli::run_login_with_api_key;
 use codex_cli::run_login_with_browser;
 use codex_cli::run_login_with_device_code;
 use codex_cli::run_logout;
-use codex_cloud_tasks::Cli as CloudTasksCli;
 use codex_exec::Cli as ExecCli;
 use codex_exec::Command as ExecCommand;
 use codex_exec::ReviewArgs;
@@ -39,6 +39,7 @@ use codex_utils_cli::SharedCliOptions;
 use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use supports_color::Stream;
@@ -75,7 +76,6 @@ mod queue_cmd;
 mod remote_control_cmd;
 #[cfg(target_os = "windows")]
 mod sandbox_setup;
-mod sandbox_uninstall;
 mod state_db_recovery;
 #[cfg(not(windows))]
 mod wsl_paths;
@@ -125,6 +125,10 @@ use codex_terminal_detection::TerminalName;
     override_usage = "codex [OPTIONS] [PROMPT]\n       codex [OPTIONS] <COMMAND> [ARGS]"
 )]
 struct MultitoolCli {
+    /// Enable process-only PSP routing for first-party ChatGPT requests.
+    #[arg(long, global = true, hide = true)]
+    psp: bool,
+
     #[clap(flatten)]
     pub config_overrides: CliConfigOverrides,
 
@@ -140,6 +144,9 @@ struct MultitoolCli {
     #[clap(subcommand)]
     subcommand: Option<Subcommand>,
 }
+
+#[cfg(test)]
+mod custom_tests;
 
 #[derive(Debug, clap::Subcommand)]
 enum Subcommand {
@@ -188,7 +195,7 @@ enum Subcommand {
     Doctor(DoctorCommand),
 
     /// Run commands within a Codex-provided sandbox.
-    Sandbox(SandboxCommand),
+    Sandbox(HostSandboxArgs),
 
     /// Debugging tools.
     Debug(DebugCommand),
@@ -224,10 +231,6 @@ enum Subcommand {
 
     /// Fork a previous interactive session (picker by default; use --last to fork the most recent).
     Fork(ForkCommand),
-
-    /// [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally.
-    #[clap(name = "cloud", alias = "cloud-tasks")]
-    Cloud(CloudTasksCli),
 
     /// Internal: run the responses API proxy.
     #[clap(hide = true)]
@@ -459,20 +462,6 @@ impl clap::FromArgMatches for SessionTuiCli {
     fn update_from_arg_matches(&mut self, matches: &clap::ArgMatches) -> Result<(), clap::Error> {
         self.0.update_from_arg_matches(matches)
     }
-}
-
-#[derive(Debug, Parser)]
-struct SandboxCommand {
-    #[command(flatten)]
-    host: HostSandboxArgs,
-
-    #[command(subcommand)]
-    subcommand: Option<SandboxSubcommand>,
-}
-
-#[derive(Debug, clap::Subcommand)]
-enum SandboxSubcommand {
-    Uninstall(sandbox_uninstall::SandboxUninstallCommand),
 }
 
 #[cfg(target_os = "macos")]
@@ -1051,6 +1040,7 @@ async fn dispatch_cli(
     remote_control_disabled: bool,
 ) -> anyhow::Result<Option<impl Future<Output = anyhow::Result<()>>>> {
     let MultitoolCli {
+        psp,
         config_overrides: mut root_config_overrides,
         feature_toggles,
         remote,
@@ -1067,6 +1057,13 @@ async fn dispatch_cli(
         .clone()
         .and_then(|path| AbsolutePathBuf::from_absolute_path(path).ok());
     reject_unsupported_worktree_for_subcommand(interactive.shared.worktree, &subcommand)?;
+    interactive.psp = psp;
+
+    if psp {
+        root_config_overrides
+            .raw_overrides
+            .push("features.psp=true".to_string());
+    }
     // Fold --enable/--disable into config overrides so they flow to all subcommands.
     let toggle_overrides = feature_toggles.to_overrides()?;
     root_config_overrides.raw_overrides.extend(toggle_overrides);
@@ -1092,6 +1089,9 @@ async fn dispatch_cli(
         interactive.no_alt_screen |= options.no_alt_screen;
         interactive.no_daemon |= options.no_daemon;
     }
+    let root_shared = interactive.shared.clone().into_inner();
+    apply_bootstrap_env(&root_shared)?;
+    let root_loader_overrides = loader_overrides_from_shared(&root_shared)?;
     let root_strict_config = interactive.strict_config;
     interactive
         .shared
@@ -1101,10 +1101,26 @@ async fn dispatch_cli(
         profile_v2_for_subcommand(&interactive, subcommand)?;
     }
 
-    let launch_tui = move |interactive, remote, auth_token_env, arg0_paths| async move {
-        let exit_info =
-            run_interactive_tui(interactive, remote, auth_token_env, arg0_paths).await?;
-        handle_app_exit(exit_info, daemon_cli_executable.as_deref())
+    let launch_tui_loader_overrides = root_loader_overrides.clone();
+    let launch_tui = move |interactive: TuiCli,
+                           remote: Option<String>,
+                           auth_token_env: Option<String>,
+                           arg0_paths: Arg0DispatchPaths| {
+        let loader_overrides = loader_overrides_for_profile(
+            &launch_tui_loader_overrides,
+            interactive.config_profile_v2.as_ref(),
+        );
+        async move {
+            let exit_info = run_interactive_tui(
+                interactive,
+                loader_overrides?,
+                remote,
+                auth_token_env,
+                arg0_paths,
+            )
+            .await?;
+            handle_app_exit(exit_info, daemon_cli_executable.as_deref())
+        }
     };
     let open_agents_overview = matches!(&subcommand, Some(Subcommand::Agents(_)));
     match subcommand {
@@ -1157,6 +1173,7 @@ async fn dispatch_cli(
             exec_cli
                 .shared
                 .inherit_exec_root_options(&interactive.shared);
+            exec_cli.psp = psp;
             exec_cli.strict_config |= root_strict_config;
             prepend_config_flags(
                 &mut exec_cli.config_overrides,
@@ -1177,6 +1194,7 @@ async fn dispatch_cli(
             exec_cli
                 .shared
                 .inherit_exec_root_options(&interactive.shared);
+            exec_cli.psp = psp;
             exec_cli.command = Some(ExecCommand::Review(review_args));
             exec_cli.strict_config = strict_config || root_strict_config;
             prepend_config_flags(
@@ -1193,8 +1211,10 @@ async fn dispatch_cli(
             )?;
             // Propagate any root-level config overrides (e.g. `-c key=value`).
             prepend_config_flags(&mut mcp_cli.config_overrides, root_config_overrides.clone());
-            let loader_overrides =
-                loader_overrides_for_profile(interactive.config_profile_v2.as_ref())?;
+            let loader_overrides = loader_overrides_for_profile(
+                &root_loader_overrides,
+                interactive.config_profile_v2.as_ref(),
+            )?;
             mcp_cli.run(loader_overrides).await?;
         }
         Some(Subcommand::Plugin(plugin_cli)) => {
@@ -1306,7 +1326,7 @@ async fn dispatch_cli(
                     let exit = codex_app_server::run_main_with_transport_options(
                         arg0_paths.clone(),
                         root_config_overrides,
-                        LoaderOverrides::default(),
+                        root_loader_overrides.clone(),
                         strict_config,
                         analytics_default_enabled,
                         transport,
@@ -1505,6 +1525,8 @@ async fn dispatch_cli(
                 remote_control_cli,
                 arg0_paths.clone(),
                 root_config_overrides,
+                psp,
+                root_loader_overrides.clone(),
             )
             .await?;
         }
@@ -1598,7 +1620,10 @@ async fn dispatch_cli(
             migrate_nfs_db::run(
                 command,
                 root_config_overrides,
-                loader_overrides_for_profile(interactive.config_profile_v2.as_ref())?,
+                loader_overrides_for_profile(
+                    &root_loader_overrides,
+                    interactive.config_profile_v2.as_ref(),
+                )?,
             )
             .await?;
         }
@@ -1719,28 +1744,26 @@ async fn dispatch_cli(
             doctor::run_doctor(
                 doctor_cli,
                 root_config_overrides.clone(),
+                root_loader_overrides.clone(),
                 &interactive,
                 &arg0_paths,
             )
             .await?;
         }
-        Some(Subcommand::Cloud(mut cloud_cli)) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "cloud",
-            )?;
-            prepend_config_flags(
-                &mut cloud_cli.config_overrides,
-                root_config_overrides.clone(),
-            );
-            codex_cloud_tasks::run_main(cloud_cli, arg0_paths.codex_linux_sandbox_exe.clone())
-                .await?;
-        }
-        Some(Subcommand::Sandbox(SandboxCommand {
-            host: mut sandbox_cli,
-            subcommand,
-        })) => {
+        Some(Subcommand::Sandbox(mut sandbox_cli)) => {
+            if sandbox_cli
+                .command
+                .first()
+                .is_some_and(|argument| argument == "uninstall")
+            {
+                let uninstall_args = std::iter::once("uninstall".to_owned())
+                    .chain(sandbox_cli.command.iter().skip(1).cloned());
+                SandboxUninstallCommand::try_parse_from(uninstall_args)
+                    .unwrap_or_else(|error| error.exit())
+                    .run()?;
+                return Ok(None);
+            }
+
             let config_profile = sandbox_cli
                 .config_profile
                 .as_ref()
@@ -1768,11 +1791,8 @@ async fn dispatch_cli(
                 root_remote_auth_token_env.as_deref(),
                 "sandbox",
             )?;
-            if let Some(SandboxSubcommand::Uninstall(command)) = subcommand {
-                command.run()?;
-                return Ok(None);
-            }
-            let loader_overrides = loader_overrides_for_profile(config_profile)?;
+            let loader_overrides =
+                loader_overrides_for_profile(&root_loader_overrides, config_profile)?;
             #[cfg(target_os = "macos")]
             codex_cli::run_command_under_seatbelt(
                 sandbox_cli,
@@ -1807,7 +1827,8 @@ async fn dispatch_cli(
                     root_remote_auth_token_env.as_deref(),
                     "debug models",
                 )?;
-                run_debug_models_command(cmd, root_config_overrides).await?;
+                run_debug_models_command(cmd, root_config_overrides, root_loader_overrides.clone())
+                    .await?;
             }
             DebugSubcommand::AppServer(cmd) => {
                 reject_remote_mode_for_subcommand(
@@ -1827,6 +1848,7 @@ async fn dispatch_cli(
                     cmd,
                     root_config_overrides,
                     interactive,
+                    root_loader_overrides.clone(),
                     arg0_paths.clone(),
                 )
                 .await?;
@@ -1845,7 +1867,11 @@ async fn dispatch_cli(
                     root_remote_auth_token_env.as_deref(),
                     "debug clear-memories",
                 )?;
-                run_debug_clear_memories_command(&root_config_overrides).await?;
+                run_debug_clear_memories_command(
+                    &root_config_overrides,
+                    root_loader_overrides.clone(),
+                )
+                .await?;
             }
         },
         Some(Subcommand::Execpolicy(ExecpolicyCommand { sub })) => match sub {
@@ -1895,7 +1921,8 @@ async fn dispatch_cli(
                 "exec-server",
             )?;
             cmd.strict_config |= root_strict_config;
-            cmd.run(&arg0_paths, &root_config_overrides).await?;
+            cmd.run(&arg0_paths, &root_config_overrides, &root_loader_overrides)
+                .await?;
         }
         Some(Subcommand::Features(FeaturesCli { sub })) => match sub {
             FeaturesSubcommand::List => {
@@ -1905,15 +1932,21 @@ async fn dispatch_cli(
                     "features list",
                 )?;
                 // Honor `--search` via the canonical web_search mode.
+                let mut cli_kv_overrides = root_config_overrides
+                    .parse_overrides()
+                    .map_err(anyhow::Error::msg)?;
                 if interactive.web_search {
-                    root_config_overrides
-                        .raw_overrides
-                        .push("web_search=\"live\"".to_string());
+                    cli_kv_overrides.push((
+                        "web_search".to_string(),
+                        toml::Value::String("live".to_string()),
+                    ));
                 }
 
-                let config =
-                    cloud_config::load_config(&root_config_overrides, LoaderOverrides::default())
-                        .await?;
+                let config = ConfigBuilder::default()
+                    .loader_overrides(root_loader_overrides.clone())
+                    .cli_overrides(cli_kv_overrides)
+                    .build()
+                    .await?;
                 let mut rows = Vec::with_capacity(FEATURES.len());
                 let mut name_width = 0;
                 let mut stage_width = 0;
@@ -2007,32 +2040,67 @@ async fn disable_feature_in_config(feature: &str) -> anyhow::Result<()> {
 }
 
 fn loader_overrides_for_profile(
+    root_loader_overrides: &LoaderOverrides,
     profile_v2: Option<&ProfileV2Name>,
 ) -> anyhow::Result<LoaderOverrides> {
+    let loader_overrides = root_loader_overrides.clone();
     match profile_v2 {
         Some(profile_v2) => {
             let codex_home = find_codex_home()?;
             Ok(loader_overrides_for_profile_at_codex_home(
                 Some(profile_v2),
-                &codex_home,
+                codex_home.as_path(),
+                loader_overrides,
             ))
         }
-        None => Ok(LoaderOverrides::default()),
+        None => Ok(loader_overrides),
     }
 }
 
 fn loader_overrides_for_profile_at_codex_home(
     profile_v2: Option<&ProfileV2Name>,
-    codex_home: &std::path::Path,
+    codex_home: &Path,
+    mut loader_overrides: LoaderOverrides,
 ) -> LoaderOverrides {
-    match profile_v2 {
-        Some(profile_v2) => LoaderOverrides {
-            user_config_path: Some(resolve_profile_v2_config_path(codex_home, profile_v2)),
-            user_config_profile: Some(profile_v2.clone()),
-            ..Default::default()
-        },
-        None => LoaderOverrides::default(),
+    if let Some(profile_v2) = profile_v2 {
+        if loader_overrides.user_config_path.is_none() && !loader_overrides.ignore_user_config {
+            loader_overrides.user_config_path =
+                Some(resolve_profile_v2_config_path(codex_home, profile_v2));
+        }
+        loader_overrides.user_config_profile = Some(profile_v2.clone());
     }
+    loader_overrides
+}
+
+fn loader_overrides_from_shared(shared: &SharedCliOptions) -> anyhow::Result<LoaderOverrides> {
+    let mut loader_overrides = LoaderOverrides::default();
+    if let Some(config_toml_file) = shared.config_toml_file.as_ref() {
+        loader_overrides.user_config_path =
+            Some(AbsolutePathBuf::relative_to_current_dir(config_toml_file)?);
+    }
+    if shared.no_config {
+        loader_overrides.ignore_user_config = true;
+        loader_overrides.ignore_project_config = true;
+        loader_overrides.user_config_profile = None;
+        loader_overrides.user_config_path = None;
+    }
+    Ok(loader_overrides)
+}
+
+fn apply_bootstrap_env(shared: &SharedCliOptions) -> anyhow::Result<()> {
+    if let Some(codex_home) = shared.codex_home.as_ref() {
+        let resolved = AbsolutePathBuf::relative_to_current_dir(codex_home)?;
+        unsafe {
+            std::env::set_var("CODEX_HOME", resolved.as_path());
+        }
+    }
+    if let Some(codex_memory) = shared.codex_memory.as_ref() {
+        let resolved = AbsolutePathBuf::relative_to_current_dir(codex_memory)?;
+        unsafe {
+            std::env::set_var("CODEX_MEMORIES_HOME", resolved.as_path());
+        }
+    }
+    Ok(())
 }
 
 fn maybe_print_under_development_feature_warning(codex_home: &std::path::Path, feature: &str) {
@@ -2067,9 +2135,13 @@ async fn run_debug_prompt_input_command(
     cmd: DebugPromptInputCommand,
     root_config_overrides: CliConfigOverrides,
     interactive: TuiCli,
+    root_loader_overrides: LoaderOverrides,
     arg0_paths: Arg0DispatchPaths,
 ) -> anyhow::Result<()> {
-    let loader_overrides = loader_overrides_for_profile(interactive.config_profile_v2.as_ref())?;
+    let loader_overrides = loader_overrides_for_profile(
+        &root_loader_overrides,
+        interactive.config_profile_v2.as_ref(),
+    )?;
     let shared = interactive.shared.into_inner();
     let mut cli_kv_overrides = root_config_overrides
         .parse_overrides()
@@ -2101,6 +2173,7 @@ async fn run_debug_prompt_input_command(
         show_raw_agent_reasoning: shared.oss.then_some(true),
         ephemeral: Some(true),
         bypass_hook_trust: shared.bypass_hook_trust.then_some(true),
+        project_doc_paths: shared.agents_md,
         additional_writable_roots: shared.add_dir,
         ..Default::default()
     };
@@ -2176,6 +2249,7 @@ async fn run_debug_prompt_input_command(
 async fn run_debug_models_command(
     cmd: DebugModelsCommand,
     root_config_overrides: CliConfigOverrides,
+    root_loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     let catalog = if cmd.bundled {
         bundled_models_response()?
@@ -2184,6 +2258,7 @@ async fn run_debug_models_command(
             .parse_overrides()
             .map_err(anyhow::Error::msg)?;
         let config = ConfigBuilder::default()
+            .loader_overrides(root_loader_overrides)
             .cli_overrides(cli_overrides)
             .build()
             .await?;
@@ -2218,11 +2293,13 @@ async fn run_debug_models_command(
 
 async fn run_debug_clear_memories_command(
     root_config_overrides: &CliConfigOverrides,
+    root_loader_overrides: LoaderOverrides,
 ) -> anyhow::Result<()> {
     let cli_kv_overrides = root_config_overrides
         .parse_overrides()
         .map_err(anyhow::Error::msg)?;
     let config = ConfigBuilder::default()
+        .loader_overrides(root_loader_overrides)
         .cli_overrides(cli_kv_overrides)
         .build()
         .await?;
@@ -2344,7 +2421,7 @@ fn reject_root_strict_config_for_subcommand(
 /// unsupported subcommands need an explicit post-parse reject path.
 ///
 /// `Some(...)` returns the user-facing command name fragment to embed in the
-/// rejection error, such as `cloud` or `app-server proxy`. `None` means the
+/// rejection error, such as `app-server proxy`. `None` means the
 /// selected command is allowed to inherit root `--strict-config`.
 fn unsupported_subcommand_name_for_strict_config(
     subcommand: &Option<Subcommand>,
@@ -2377,7 +2454,6 @@ fn unsupported_subcommand_name_for_strict_config(
         Some(Subcommand::Logout(_)) => Some("logout"),
         Some(Subcommand::Completion(_)) => Some("completion"),
         Some(Subcommand::Update) => Some("update"),
-        Some(Subcommand::Cloud(_)) => Some("cloud"),
         Some(Subcommand::Sandbox(_)) => Some("sandbox"),
         Some(Subcommand::Debug(_)) => Some("debug"),
         Some(Subcommand::Execpolicy(_)) => Some("execpolicy"),
@@ -2492,6 +2568,7 @@ fn read_remote_auth_token_from_env_var(env_var_name: &str) -> anyhow::Result<Str
 
 async fn run_interactive_tui(
     mut interactive: TuiCli,
+    loader_overrides: LoaderOverrides,
     remote: Option<String>,
     remote_auth_token_env: Option<String>,
     arg0_paths: Arg0DispatchPaths,
@@ -2543,7 +2620,7 @@ async fn run_interactive_tui(
         codex_tui::run_main(
             interactive.clone(),
             arg0_paths.clone(),
-            codex_config::LoaderOverrides::default(),
+            loader_overrides.clone(),
             remote_endpoint.clone(),
         )
     };
@@ -2806,6 +2883,7 @@ mod tests {
     fn interactive_tui_future_stays_bounded() {
         let future = run_interactive_tui(
             TuiCli::parse_from(["codex"]),
+            LoaderOverrides::default(),
             /*remote*/ None,
             /*remote_auth_token_env*/ None,
             Arg0DispatchPaths::default(),
@@ -2941,6 +3019,7 @@ enabled = true
     fn finalize_resume_from_args(args: &[&str]) -> TuiCli {
         let cli = MultitoolCli::try_parse_from(args).expect("parse");
         let MultitoolCli {
+            psp: _,
             mut interactive,
             config_overrides: mut root_overrides,
             subcommand,
@@ -2978,6 +3057,7 @@ enabled = true
     fn finalize_fork_from_args(args: &[&str]) -> TuiCli {
         let cli = MultitoolCli::try_parse_from(args).expect("parse");
         let MultitoolCli {
+            psp: _,
             mut interactive,
             config_overrides: mut root_overrides,
             subcommand,
@@ -3022,6 +3102,7 @@ enabled = true
     fn finalize_archive_from_args(args: &[&str]) -> (String, TuiCli, InteractiveRemoteOptions) {
         let cli = MultitoolCli::try_parse_from(args).expect("parse");
         let MultitoolCli {
+            psp: _,
             interactive,
             config_overrides: root_overrides,
             subcommand,
@@ -3062,8 +3143,11 @@ enabled = true
         let codex_home = tempfile::tempdir()?;
         let profile: ProfileV2Name = "work".parse()?;
 
-        let overrides =
-            loader_overrides_for_profile_at_codex_home(Some(&profile), codex_home.path());
+        let overrides = loader_overrides_for_profile_at_codex_home(
+            Some(&profile),
+            codex_home.path(),
+            LoaderOverrides::default(),
+        );
 
         assert_eq!(
             overrides.user_config_path,
@@ -3653,38 +3737,6 @@ enabled = true
         );
     }
 
-    #[test]
-    fn sandbox_uninstall_respects_command_separator() {
-        let cli = MultitoolCli::try_parse_from(["codex", "sandbox", "uninstall"]).expect("parse");
-        assert!(matches!(
-            cli.subcommand,
-            Some(Subcommand::Sandbox(SandboxCommand {
-                subcommand: Some(SandboxSubcommand::Uninstall(_)),
-                ..
-            }))
-        ));
-
-        for args in [
-            vec!["codex", "sandbox", "--", "uninstall", "--help"],
-            vec![
-                "codex",
-                "sandbox",
-                "--profile",
-                "uninstall",
-                "--",
-                "uninstall",
-                "--help",
-            ],
-        ] {
-            let cli = MultitoolCli::try_parse_from(args).expect("parse forwarded command");
-            let Some(Subcommand::Sandbox(command)) = cli.subcommand else {
-                panic!("expected sandbox command");
-            };
-            assert!(command.subcommand.is_none());
-            assert_eq!(command.host.command, vec!["uninstall", "--help"]);
-        }
-    }
-
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     #[test]
     fn sandbox_parses_permission_profile() {
@@ -3698,7 +3750,7 @@ enabled = true
         ])
         .expect("parse");
 
-        let Some(Subcommand::Sandbox(SandboxCommand { host: command, .. })) = cli.subcommand else {
+        let Some(Subcommand::Sandbox(command)) = cli.subcommand else {
             panic!("expected sandbox command");
         };
 
@@ -3719,7 +3771,7 @@ enabled = true
         ])
         .expect("parse");
 
-        let Some(Subcommand::Sandbox(SandboxCommand { host: command, .. })) = cli.subcommand else {
+        let Some(Subcommand::Sandbox(command)) = cli.subcommand else {
             panic!("expected sandbox command");
         };
 
@@ -3742,7 +3794,7 @@ enabled = true
             MultitoolCli::try_parse_from(["codex", "sandbox", "-P", ":workspace", "--", "echo"])
                 .expect("parse");
 
-        let Some(Subcommand::Sandbox(SandboxCommand { host: command, .. })) = cli.subcommand else {
+        let Some(Subcommand::Sandbox(command)) = cli.subcommand else {
             panic!("expected sandbox command");
         };
 
@@ -3757,7 +3809,7 @@ enabled = true
             MultitoolCli::try_parse_from(["codex", "sandbox", "--profile", "work", "--", "echo"])
                 .expect("parse");
 
-        let Some(Subcommand::Sandbox(SandboxCommand { host: command, .. })) = cli.subcommand else {
+        let Some(Subcommand::Sandbox(command)) = cli.subcommand else {
             panic!("expected sandbox command");
         };
 
@@ -5022,6 +5074,10 @@ enabled = true
             .to_overrides()
             .expect_err("feature should be rejected")
     }
+
+    #[cfg(test)]
+    #[path = "main_custom_tests.rs"]
+    mod custom_tests;
 }
 
 #[cfg(all(test, unix))]

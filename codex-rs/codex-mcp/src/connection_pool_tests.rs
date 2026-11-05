@@ -509,6 +509,7 @@ async fn shared_startup_survives_first_chat_cancellation_and_rejects_released_bi
             supports_parallel_tool_calls: true,
             default_tools_approval_mode: None,
             tool_approval_modes: Default::default(),
+            wait_for_mcp_tool_completion: Default::default(),
         },
         /*plugin_id*/ None,
         /*selected_plugin_server*/ false,

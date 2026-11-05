@@ -9,6 +9,7 @@ use core_test_support::apps_test_server::apps_enabled_builder;
 use core_test_support::responses::ev_function_call;
 use core_test_support::responses::ev_tool_search_call;
 use core_test_support::test_codex::TestCodexBuilder;
+use core_test_support::wait_for_mcp_server;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use std::sync::Mutex;
@@ -530,6 +531,7 @@ async fn background_search_and_native_fallback(native_first: bool) -> Result<()>
     let test = model_search_builder(&apps, ToolMode::CodeMode)
         .build_with_auto_env(&server)
         .await?;
+    wait_for_mcp_server(&test.codex, "codex_apps").await?;
     Mock::given(method("POST"))
         .and(body_partial_json(json!({"method":"tools/call","params":{"name":"search_service.web_run","_meta":{"_codex_apps":{"invocation_context":literature_search_pin()}}}})))
         .respond_with(|request: &wiremock::Request| {
@@ -541,7 +543,12 @@ async fn background_search_and_native_fallback(native_first: bool) -> Result<()>
         .with_priority(1).expect(u64::from(!native_first)).mount(&server).await;
 
     // The barrier holds the original step's MCP call until the next turn has offered native.
-    let barrier = json!({"barrier":{"id":"background-search","participants":2,"timeout_ms":60000}});
+    let barrier_id = if native_first {
+        "background-search-native-first"
+    } else {
+        "background-search-mcp-first"
+    };
+    let barrier = json!({"barrier":{"id":barrier_id,"participants":2,"timeout_ms":60000}});
     let pending = format!(
         r#"yield_control();
 await tools.test_sync_tool({barrier});

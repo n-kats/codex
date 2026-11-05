@@ -285,27 +285,80 @@ class FetchCodexV8ArtifactsTest(unittest.TestCase):
             self.assertEqual(artifacts.binding.read_bytes(), b"trusted V8 binding")
             self.assertFalse(list(manifest.parent.glob("*.tmp")))
 
-    def test_source_and_paired_overrides_do_not_touch_cache(self) -> None:
+    def test_cargo_env_always_uses_pinned_pair(self) -> None:
         spec = TARGET_SPECS["x86_64-unknown-linux-gnu"]
-        for environ in (
-            {"V8_FROM_SOURCE": "1"},
-            {
-                "RUSTY_V8_ARCHIVE": "archive.a",
-                "RUSTY_V8_SRC_BINDING_PATH": "binding.rs",
-            },
+        environ = {
+            "V8_FROM_SOURCE": "1",
+            "RUSTY_V8_ARCHIVE": "manual.a",
+            "RUSTY_V8_SRC_BINDING_PATH": "manual.rs",
+        }
+        with (
+            self.release("x86_64-unknown-linux-gnu") as (_spec, _download, _name),
+            patch.object(v8, "resolved_v8_crate_version", return_value=self.version),
         ):
-            with (
-                self.subTest(environ=environ),
-                patch.object(
-                    v8,
-                    "fetch_codex_v8_artifacts",
-                    side_effect=AssertionError("unexpected fetch"),
-                ) as fetch,
-            ):
-                self.assertEqual(
-                    v8.resolve_codex_v8_cargo_env(spec, environ=environ), {}
-                )
-                fetch.assert_not_called()
+            cargo_env = v8.resolve_codex_v8_cargo_env(
+                spec, environ=environ, cache_root=self.root / "cache"
+            )
+
+        self.assertEqual(
+            Path(cargo_env["RUSTY_V8_ARCHIVE"]).name,
+            f"librusty_v8_{v8.V8_ARTIFACT_PROFILE}_{spec.target}.a.gz",
+        )
+        self.assertEqual(
+            Path(cargo_env["RUSTY_V8_SRC_BINDING_PATH"]).name,
+            f"src_binding_{v8.V8_ARTIFACT_PROFILE}_{spec.target}.rs",
+        )
+        self.assertNotIn("V8_FROM_SOURCE", cargo_env)
+
+    def test_workspace_cargo_env_uses_verified_local_bazel_pair(self) -> None:
+        spec = TARGET_SPECS["x86_64-unknown-linux-gnu"]
+        with TemporaryDirectory() as temp_dir:
+            asset_dir = Path(temp_dir)
+            archive_name = (
+                f"librusty_v8_{v8.V8_ARTIFACT_PROFILE}_{spec.target}.a.gz"
+            )
+            binding_name = f"src_binding_{v8.V8_ARTIFACT_PROFILE}_{spec.target}.rs"
+            archive = asset_dir / archive_name
+            binding = asset_dir / binding_name
+            archive.write_bytes(b"Bazel V8 archive")
+            binding.write_bytes(b"matching V8 binding")
+            checksums = asset_dir / (
+                f"rusty_v8_{v8.V8_ARTIFACT_PROFILE}_{spec.target}.sha256"
+            )
+            checksums.write_text(
+                f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive_name}\n"
+                f"{hashlib.sha256(binding.read_bytes()).hexdigest()}  {binding_name}\n"
+            )
+
+            cargo_env = v8.resolve_workspace_v8_cargo_env(
+                spec,
+                asset_dir=asset_dir,
+            )
+
+        self.assertEqual(cargo_env["RUSTY_V8_ARCHIVE"], str(archive))
+        self.assertEqual(cargo_env["RUSTY_V8_SRC_BINDING_PATH"], str(binding))
+
+    def test_workspace_cargo_env_rejects_corrupt_local_pair(self) -> None:
+        spec = TARGET_SPECS["x86_64-unknown-linux-gnu"]
+        with TemporaryDirectory() as temp_dir:
+            asset_dir = Path(temp_dir)
+            archive_name = (
+                f"librusty_v8_{v8.V8_ARTIFACT_PROFILE}_{spec.target}.a.gz"
+            )
+            binding_name = f"src_binding_{v8.V8_ARTIFACT_PROFILE}_{spec.target}.rs"
+            archive = asset_dir / archive_name
+            binding = asset_dir / binding_name
+            archive.write_bytes(b"archive")
+            binding.write_bytes(b"binding")
+            checksums = asset_dir / (
+                f"rusty_v8_{v8.V8_ARTIFACT_PROFILE}_{spec.target}.sha256"
+            )
+            checksums.write_text(
+                f"{'0' * 64}  {archive_name}\n{'1' * 64}  {binding_name}\n"
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "does not match"):
+                v8.resolve_workspace_v8_cargo_env(spec, asset_dir=asset_dir)
 
 
 if __name__ == "__main__":

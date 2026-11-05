@@ -384,6 +384,13 @@ cc_library(
         "@v8_crate_152_2_0//:support_h",
     ],
     tags = ["manual"],
+    # Match the TypedArray threshold from engine.BUILD in bindgen's CcInfo.
+    # Without this, native code can use inline storage while the generated Rust
+    # constant still advertises the upstream zero-byte default.
+    defines = select({
+        ":platform_windows_msvc": ["V8_TYPED_ARRAY_MAX_SIZE_IN_HEAP=0"],
+        "//conditions:default": ["V8_TYPED_ARRAY_MAX_SIZE_IN_HEAP=64"],
+    }),
     # Bindgen asks the toolchain for C flags, which omit its C++ header search
     # paths. Source profiles use the workspace headers; release profiles get
     # their pinned Chromium headers from the profiled binding dependency.

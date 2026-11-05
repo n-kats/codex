@@ -29,6 +29,7 @@ use std::net::TcpListener;
 use std::net::TcpStream;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Output;
 use std::process::Stdio;
 use std::time::Duration;
@@ -51,6 +52,22 @@ const MANAGED_PROXY_PERMISSION_ERR_SNIPPETS: &[&str] = &[
     "No permissions to create a new namespace",
     "error isolating Linux network namespace for proxy mode",
 ];
+
+fn codex_linux_sandbox_exe() -> PathBuf {
+    let test_executable =
+        std::env::current_exe().expect("integration test executable path should be available");
+    let debug_dir = test_executable
+        .parent()
+        .and_then(Path::parent)
+        .expect("integration test executable should be under target/debug/deps");
+    let runtime_path = debug_dir.join("codex-linux-sandbox");
+    assert!(
+        runtime_path.is_file(),
+        "sandbox helper should exist at {}",
+        runtime_path.display()
+    );
+    runtime_path
+}
 
 const PROXY_ENV_KEYS: &[&str] = &[
     "HTTP_PROXY",
@@ -181,8 +198,7 @@ fn linux_sandbox_command(
     args.push("--".to_string());
     args.extend(command.iter().map(|entry| (*entry).to_string()));
 
-    let mut cmd =
-        Command::new(cargo_bin("codex-linux-sandbox").expect("sandbox helper should exist"));
+    let mut cmd = Command::new(codex_linux_sandbox_exe());
     cmd.args(args)
         .current_dir(cwd)
         .env_clear()
@@ -398,8 +414,7 @@ printf 'legacy proc fallback\n'
             "CODEX_TEST_PROTECTED_FILE".to_string(),
             protected_file.display().to_string(),
         );
-        let mut command =
-            Command::new(cargo_bin("codex-linux-sandbox").expect("sandbox helper should exist"));
+        let mut command = Command::new(codex_linux_sandbox_exe());
         command
             .arg("--sandbox-policy-cwd")
             .arg(std::env::current_dir().expect("current directory should exist"))
@@ -477,12 +492,21 @@ async fn unsupported_system_bwrap_falls_back_to_bundled_bwrap() {
 
     let tempdir = tempfile::tempdir().expect("create isolated sandbox installation");
     let sandbox_executable = tempdir.path().join("codex-linux-sandbox");
-    let original_executable =
-        cargo_bin("codex-linux-sandbox").expect("sandbox helper should exist");
-    if std::fs::hard_link(&original_executable, &sandbox_executable).is_err() {
-        codex_utils_cargo_bin::copy_executable(&original_executable, &sandbox_executable)
-            .expect("copy sandbox executable");
-    }
+    let original_executable = codex_linux_sandbox_exe();
+    // Do not share Cargo's executable inode: a concurrent build can leave a
+    // hard-linked test fixture with ETXTBSY when this test tries to execute it.
+    std::fs::write(
+        &sandbox_executable,
+        std::fs::read(&original_executable).expect("read sandbox executable"),
+    )
+    .expect("copy sandbox executable");
+    std::fs::set_permissions(
+        &sandbox_executable,
+        std::fs::metadata(&original_executable)
+            .expect("stat sandbox executable")
+            .permissions(),
+    )
+    .expect("make sandbox executable executable");
 
     let resources_dir = tempdir.path().join("codex-resources");
     std::fs::create_dir(&resources_dir).expect("create bundled resource directory");
@@ -800,8 +824,7 @@ async fn managed_proxy_mode_routes_through_bridge_and_blocks_direct_egress() {
     );
 
     // Bubblewrap re-executes the canonical binary, outside its Bazel runfiles alias.
-    let sandbox_helper = cargo_bin("codex-linux-sandbox")
-        .expect("sandbox helper should exist")
+    let sandbox_helper = codex_linux_sandbox_exe()
         .canonicalize()
         .expect("sandbox helper should resolve");
     let sandbox_helper_dir = sandbox_helper

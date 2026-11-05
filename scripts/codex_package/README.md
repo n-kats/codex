@@ -92,12 +92,16 @@ corresponding resource flags: `--bwrap-bin` for Linux packages, and
 Windows packages. This keeps package archive creation as a pure staging step
 after signing instead of rebuilding resources.
 
-When the builder source-builds an entrypoint for a Darwin or Linux target, it
-downloads and verifies the matching Codex-built V8 release pair before invoking
-Cargo and sets `RUSTY_V8_ARCHIVE` plus `RUSTY_V8_SRC_BINDING_PATH` for that
-build. Windows targets keep Cargo's release-build MSVC artifact path. Explicit
-overrides remain authoritative when both variables are already set. Set
-`V8_FROM_SOURCE=1` to leave the build with the `v8` crate source-build path.
+When the package builder source-builds an entrypoint for a Darwin or Linux
+target, it downloads and verifies the matching Codex-built V8 release pair
+before invoking Cargo and sets `RUSTY_V8_ARCHIVE` plus
+`RUSTY_V8_SRC_BINDING_PATH` for that build. The Make/MCP workspace test path
+builds the Linux x86_64 sandbox pair from the repository's Bazel targets into
+`_tmp/assets` before running Cargo, then verifies the staged checksums. This
+keeps workspace tests independent of whether a new public V8 release tag has
+been published. The `V8_FROM_SOURCE=1` setting is reserved for the GitHub
+workflows that build the published V8 release pair. Windows package targets
+keep Cargo's release-build MSVC artifact path.
 
 `rg` is not built from this repository, so the builder fetches it from the
 DotSlash manifest at `scripts/codex_package/rg`. Downloaded archives are cached

@@ -24,7 +24,7 @@ struct McpServerProcess {
 impl McpServerProcess {
     fn observe_running(pid: String) -> anyhow::Result<Self> {
         let process = cfg_select! {
-            unix => { Self { pid } }
+            unix => Self { pid },
             windows => {{
                 use std::io;
                 use std::num::NonZeroU32;
@@ -62,12 +62,12 @@ impl McpServerProcess {
 
     fn is_alive(&self) -> anyhow::Result<bool> {
         cfg_select! {
-            unix => {{
+            unix => {
                 use core_test_support::process::process_is_alive;
 
                 let Self { pid } = self;
                 process_is_alive(pid)
-            }}
+            }
             windows => {{
                 use std::io;
                 use std::os::windows::io::AsRawHandle;
@@ -88,7 +88,9 @@ impl McpServerProcess {
                     WAIT_OBJECT_0 => Ok(false),
                     WAIT_FAILED => Err(io::Error::last_os_error())
                         .with_context(|| format!("failed to wait for MCP server process {pid}")),
-                    result => anyhow::bail!("unexpected wait result {result} for MCP server process {pid}"),
+                    result => anyhow::bail!(
+                        "unexpected wait result {result} for MCP server process {pid}"
+                    ),
                 }
             }}
         }
@@ -96,13 +98,13 @@ impl McpServerProcess {
 
     async fn wait_for_exit(&self) -> anyhow::Result<()> {
         cfg_select! {
-            unix => {{
+            unix => {
                 use core_test_support::process::wait_for_process_exit;
 
                 let Self { pid } = self;
                 wait_for_process_exit(pid).await
-            }}
-            windows => {{
+            }
+            windows => {
                 use anyhow::Context;
 
                 tokio::time::timeout(Duration::from_secs(2), async {
@@ -116,7 +118,7 @@ impl McpServerProcess {
                 })
                 .await
                 .context("timed out waiting for process to exit")?
-            }}
+            }
         }
     }
 }

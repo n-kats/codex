@@ -291,6 +291,10 @@ pub struct ThreadSettingsUpdateParams {
     /// Changing this does not rewrite the thread's existing instructions.
     #[ts(optional = nullable)]
     pub personality: Option<Personality>,
+    /// Override AGENTS.md project doc files for subsequent turns. Send an empty
+    /// list to return to automatic discovery.
+    #[ts(optional = nullable)]
+    pub project_doc_paths: Option<Vec<PathBuf>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]

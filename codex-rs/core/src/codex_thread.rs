@@ -174,6 +174,7 @@ pub struct CodexThreadSettingsOverrides {
     pub collaboration_mode: Option<CollaborationMode>,
     pub personality: Option<Personality>,
     pub disabled_plugin_ids: Option<Vec<String>>,
+    pub project_doc_paths: Option<Vec<AbsolutePathBuf>>,
 }
 
 /// Result of publishing a loaded configuration snapshot for a thread.
@@ -898,6 +899,7 @@ impl CodexThread {
             collaboration_mode,
             personality,
             disabled_plugin_ids,
+            project_doc_paths,
         } = overrides;
         SessionSettingsUpdate {
             requested_approvals_reviewer,
@@ -921,6 +923,7 @@ impl CodexThread {
             active_permission_profile,
             windows_sandbox_level,
             disabled_plugin_ids,
+            project_doc_paths,
             ..Default::default()
         }
     }

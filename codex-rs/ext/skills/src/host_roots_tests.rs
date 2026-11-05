@@ -473,13 +473,29 @@ async fn repo_ancestry_without_project_marker_does_not_walk_parents() {
     let cwd = outer.join("nested/inner");
     fs::create_dir_all(outer.join(".agents/skills")).expect("create outer skills");
     fs::create_dir_all(cwd.join(".agents/skills")).expect("create cwd skills");
-
-    // Sandbox runners can put a .git marker above the temporary directory.
-    // Probe for an absent fixture marker while retaining the real ancestor search.
+    // The test temp directory may itself be nested inside a checkout, so use a
+    // unique marker to keep ambient parent repositories out of this scenario.
+    let project_root_marker = format!(
+        ".codex-test-project-root-marker-{}",
+        temp_dir
+            .path()
+            .file_name()
+            .expect("temp dir name")
+            .to_string_lossy()
+    );
+    let mut config = toml::map::Map::new();
+    config.insert(
+        "project_root_markers".to_string(),
+        toml::Value::Array(vec![toml::Value::String(project_root_marker)]),
+    );
     let config_stack = stack(vec![ConfigLayerEntry::new(
-        ConfigLayerSource::SessionFlags,
-        toml::toml! { project_root_markers = [".missing-skill-test-project"] }.into(),
+        ConfigLayerSource::User {
+            file: outer.join("config.toml"),
+            profile: None,
+        },
+        toml::Value::Table(config),
     )]);
+
     let roots = repo_agents_skill_roots(
         Some(&access),
         &config_stack,
@@ -491,7 +507,6 @@ async fn repo_ancestry_without_project_marker_does_not_walk_parents() {
     .into_iter()
     .map(|root| root.path)
     .collect::<Vec<_>>();
-
     assert_eq!(roots, vec![cwd.join(".agents/skills")]);
 }
 

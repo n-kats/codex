@@ -130,6 +130,7 @@ fn legacy_candidates_for_exe(exe: &Path, bazel_candidate: Option<PathBuf>) -> Ve
     candidates.push(exe_dir.join("codex-resources").join("bwrap"));
     if let Some(package_target_dir) = exe_dir.parent() {
         candidates.push(package_target_dir.join("codex-resources").join("bwrap"));
+        candidates.push(package_target_dir.join("bwrap"));
     }
     candidates.push(exe_dir.join("bwrap"));
     if let Some(path) = bazel_candidate {
@@ -221,3 +222,7 @@ fn bytes_to_hex(bytes: &[u8; 32]) -> String {
 #[cfg(test)]
 #[path = "bundled_bwrap_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "bundled_bwrap_custom_tests.rs"]
+mod custom_tests;

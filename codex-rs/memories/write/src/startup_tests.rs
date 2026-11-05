@@ -1204,6 +1204,11 @@ fn memory_test_codex(home: Arc<TempDir>, memories: MemoriesConfig) -> TestCodexB
             .features
             .enable(Feature::Sqlite)
             .expect("test config should allow feature update");
+        let version = memories.version;
+        config.memories_home = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
+            codex_core::config::resolve_memory_root(config.codex_home.as_path(), version, version),
+        )
+        .expect("test memory root should be absolute");
         config.memories = memories;
     })
 }

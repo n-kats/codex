@@ -33,6 +33,7 @@ use codex_direct_tool_timing::ToolGateTiming;
 use codex_history::ResponseItemEnvelope;
 use codex_protocol::error::CodexErr;
 use codex_protocol::models::ResponseInputItem;
+use codex_protocol::models::ResponseItem;
 use codex_protocol::models::ToolResultMetadata;
 
 struct ToolCallTimingGuard {
@@ -75,6 +76,15 @@ fn direct_path_supported(tool_name: &codex_tools::ToolName, source: &ToolCallSou
 }
 
 impl ToolCallRuntime {
+    pub(crate) fn waits_for_mcp_tool_completion(&self, item: &ResponseItem) -> bool {
+        let Ok(Some(call)) = self.step_context.tool_router.build_tool_call(item.clone()) else {
+            return false;
+        };
+        self.step_context
+            .tool_router
+            .tool_waits_for_mcp_tool_completion(&call)
+    }
+
     pub(crate) fn new(
         session: Arc<Session>,
         step_context: Arc<StepContext>,

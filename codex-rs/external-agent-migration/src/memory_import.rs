@@ -1,5 +1,6 @@
 use crate::ExternalMemoryFile;
 use crate::discover_external_memory_files;
+use codex_core::config::resolve_memory_root;
 use codex_memories_write::MemoryWorkspaceLock;
 use codex_protocol::MemoryVersion;
 use codex_rollout::StateDbHandle;
@@ -73,11 +74,15 @@ pub(super) async fn import(
     })?;
     let memory_files = discover_external_memory_files(external_agent_home)?;
     let versions = memory_versions(codex_home, selection)?;
+    let memory_roots = versions
+        .iter()
+        .map(|version| resolve_memory_root(codex_home, selection, *version))
+        .collect::<Vec<_>>();
     // Acquire every destination before changing either namespace. A busy v2
     // consolidation must not leave a partially imported v1 workspace.
-    let workspace_locks = versions
+    let workspace_locks = memory_roots
         .iter()
-        .map(|version| MemoryWorkspaceLock::try_acquire(&codex_home.join(version.directory_name())))
+        .map(|memory_root| MemoryWorkspaceLock::try_acquire(memory_root))
         .collect::<io::Result<Vec<_>>>()?;
     let codex_home = codex_home.to_path_buf();
     let state_db = std::sync::Arc::clone(state_db);
@@ -93,8 +98,7 @@ pub(super) async fn import(
         let mut failures = Vec::new();
         // Imports are profile-wide, but clients can still select either namespace per thread.
         // Synchronize only the requested external resources, not existing v1 memories or notes.
-        for &version in versions {
-            let memory_root = codex_home.join(version.directory_name());
+        for (&version, memory_root) in versions.iter().zip(memory_roots) {
             let store = state_db
                 .memories_for_version(version)
                 .await
@@ -144,9 +148,8 @@ pub(crate) fn memory_versions(
     codex_home: &Path,
     selection: MemoryVersion,
 ) -> io::Result<&'static [MemoryVersion]> {
-    let has_v1_workspace = codex_home
-        .join(MemoryVersion::V1.directory_name())
-        .try_exists()?;
+    let v1_memory_root = resolve_memory_root(codex_home, selection, MemoryVersion::V1);
+    let has_v1_workspace = v1_memory_root.try_exists()?;
     Ok(if has_v1_workspace || selection == MemoryVersion::V1 {
         &[MemoryVersion::V1, MemoryVersion::V2]
     } else {

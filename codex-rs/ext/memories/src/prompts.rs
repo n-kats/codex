@@ -4,6 +4,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_output_truncation::TruncationPolicy;
 use codex_utils_output_truncation::truncate_text;
 use codex_utils_template::Template;
+use std::path::Path;
 use std::sync::LazyLock;
 use tokio::fs;
 
@@ -36,7 +37,14 @@ pub(crate) async fn build_memory_tool_developer_instructions(
     codex_home: &AbsolutePathBuf,
     version: MemoryVersion,
 ) -> Option<String> {
-    let base_path = codex_home.join(version.directory_name());
+    let base_path = codex_core::config::resolve_memory_root(codex_home.as_path(), version, version);
+    build_memory_tool_developer_instructions_at(&base_path, version).await
+}
+
+pub(crate) async fn build_memory_tool_developer_instructions_at(
+    base_path: &Path,
+    version: MemoryVersion,
+) -> Option<String> {
     let memory_summary_path = base_path.join("memory_summary.md");
     let memory_summary = fs::read_to_string(&memory_summary_path)
         .await

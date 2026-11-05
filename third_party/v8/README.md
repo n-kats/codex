@@ -13,8 +13,10 @@ The Bazel `v8` crate and its native source targets enable V8's in-process
 sandbox and pointer compression.
 
 Local Cargo builds still use upstream prebuilt `rusty_v8` archives by default.
-Selected Cargo CI, release, and package builds override
-`RUSTY_V8_ARCHIVE`/`RUSTY_V8_SRC_BINDING_PATH` with Codex release assets.
+The Make/MCP workspace test path first builds the matching Linux x86_64
+sandbox pair from the Bazel targets into `_tmp/assets`, then supplies those
+files through `RUSTY_V8_ARCHIVE` and `RUSTY_V8_SRC_BINDING_PATH`. Package builds
+and selected CI builds use the published Codex release pair.
 
 Source targets enforce the workspace runtime and sandbox/pointer-compression
 ABI. Release-pair targets enforce either the legacy or sandbox ABI plus
@@ -64,7 +66,7 @@ checksum drift.
 
 Published release assets are expected at the tag:
 
-- `rusty-v8-v<crate_version>`
+- `rusty-v8-v<crate_version>-codex1`
 
 with these raw asset names:
 
@@ -170,7 +172,7 @@ Release and CI Cargo builds for Darwin and Linux use `RUSTY_V8_ARCHIVE` plus a
 downloaded `RUSTY_V8_SRC_BINDING_PATH` to point at those `openai/codex` release
 assets directly. We do not use `RUSTY_V8_MIRROR` because the upstream `v8` crate
 hardcodes a `v<crate_version>` tag layout, while our artifacts are published
-under `rusty-v8-v<crate_version>`.
+under `rusty-v8-v<crate_version>-codex1`.
 
 Do not mix artifacts across crate versions. The archive and binding must match
 the exact resolved `v8` crate version in `codex-rs/Cargo.lock`.

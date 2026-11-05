@@ -13,6 +13,7 @@ mod config_requirements;
 mod config_server;
 pub mod config_toml;
 mod constraint;
+pub mod custom;
 mod diagnostics;
 mod filesystem_constraints;
 mod fingerprint;

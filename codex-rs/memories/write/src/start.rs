@@ -46,6 +46,7 @@ pub fn start_memories_startup_task(
     for version in versions {
         let mut pipeline_config = config.as_ref().clone();
         pipeline_config.memories.version = version;
+        pipeline_config.memories_home = config.memory_root_for_version(version);
         let config = Arc::new(pipeline_config);
         let auth_manager = Arc::clone(&auth_manager);
         let parent_permission_profile = parent_permission_profile.clone();
@@ -62,14 +63,12 @@ pub fn start_memories_startup_task(
                 warn!("state db unavailable for memories startup pipeline; skipping");
                 return;
             }
-            let root = config
-                .codex_home
-                .join(config.memories.version.directory_name());
-            if let Err(err) = ensure_layout(&root).await {
+            let root = config.memories_home.as_path();
+            if let Err(err) = ensure_layout(root).await {
                 warn!("failed preparing memories root: {err}");
                 return;
             }
-            if let Err(err) = seed_extension_instructions(&root).await {
+            if let Err(err) = seed_extension_instructions(root).await {
                 warn!("failed seeding memory extension instructions: {err}");
             }
 

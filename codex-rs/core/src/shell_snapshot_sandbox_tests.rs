@@ -135,7 +135,7 @@ async fn snapshot_failure_omits_credentials_and_stops_descendants(
                 unreachable!("dropped captures have no result")
             }
         };
-        assert_eq!(format!("{error:?}"), expected);
+        assert_eq!(error.to_string(), expected);
     }
     tokio::time::sleep(Duration::from_millis(1_100)).await;
     assert!(

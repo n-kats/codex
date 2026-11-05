@@ -74,7 +74,12 @@ def build_source_binaries(
         ):
             codex_v8_env = resolve_codex_v8_cargo_env(spec)
             if codex_v8_env:
-                cargo_env = {**os.environ, **codex_v8_env}
+                cargo_env = {
+                    key: value
+                    for key, value in os.environ.items()
+                    if key != "V8_FROM_SOURCE"
+                }
+                cargo_env.update(codex_v8_env)
 
         print("+", " ".join(cmd))
         subprocess.run(

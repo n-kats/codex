@@ -1235,6 +1235,7 @@ mod tests {
     use codex_app_server_client::InProcessClientStartArgs;
     use codex_app_server_client::RemoteAppServerEndpoint;
     use codex_arg0::Arg0DispatchPaths;
+    #[cfg(feature = "cloud")]
     use codex_cloud_config::chatgpt_config_bundle_loader_for_storage;
     use codex_features::Feature;
     use codex_utils_absolute_path::AbsolutePathBuf;
@@ -1338,6 +1339,15 @@ mod tests {
             .await
             .unwrap();
         let mut auth_config = config.auth_config();
+        #[cfg(feature = "cloud")]
+        let cloud_config_bundle = chatgpt_config_bundle_loader_for_storage(
+            auth_config.clone(),
+            /*enable_codex_api_key_env*/ false,
+        )
+        .await
+        .expect("failed to initialize cloud config bundle");
+        #[cfg(not(feature = "cloud"))]
+        let cloud_config_bundle = codex_config::CloudConfigBundleLoader::default();
         let client = InProcessAppServerClient::start(InProcessClientStartArgs {
             required_human_approval: true,
             arg0_paths: Arg0DispatchPaths::default(),
@@ -1345,12 +1355,7 @@ mod tests {
             cli_overrides: Vec::new(),
             loader_overrides: Default::default(),
             strict_config: false,
-            cloud_config_bundle: chatgpt_config_bundle_loader_for_storage(
-                auth_config.clone(),
-                /*enable_codex_api_key_env*/ false,
-            )
-            .await
-            .expect("test cloud config loader"),
+            cloud_config_bundle,
             embedded_network_policy: Default::default(),
             feedback: codex_feedback::CodexFeedback::new(),
             log_db: None,

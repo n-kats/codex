@@ -179,34 +179,6 @@ jobs:
           toolchain: "1.95.0"
           targets: ${{ matrix.target }}
 
-      - name: Build Bazel V8 release pair
-        env:
-          PLATFORM: ${{ matrix.platform }}
-          SANDBOX: ${{ matrix.sandbox }}
-          TARGET: ${{ matrix.target }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          target_suffix="${TARGET//-/_}"
-          pair_kind="release_pair"
-          if [[ "${SANDBOX}" == "true" ]]; then
-            pair_kind="sandbox_release_pair"
-          fi
-          pair_target="//third_party/v8:rusty_v8_${pair_kind}_${target_suffix}"
-
-          bazel_args=(
-            build
-            "--platforms=@llvm//platforms:${PLATFORM}"
-            "${pair_target}"
-            --build_metadata=COMMIT_SHA=$(git rev-parse HEAD)
-          )
-
-          ./.github/scripts/run_bazel_with_buildbuddy.py \
-            --noexperimental_remote_repo_contents_cache \
-            "${bazel_args[@]}" \
-            "--config=${{ matrix.bazel_config }}"
-
       - name: Stage release pair
         env:
           BAZEL_CONFIG: ${{ matrix.bazel_config }}
@@ -222,6 +194,7 @@ jobs:
             --target "${TARGET}"
             --output-dir "dist/${TARGET}"
             --bazel-config "${BAZEL_CONFIG}"
+            --build-metadata "COMMIT_SHA=${GITHUB_SHA}"
           )
           if [[ "${SANDBOX}" == "true" ]]; then
             stage_args+=(--sandbox)

@@ -177,6 +177,7 @@ pub(super) fn validate_api_key_remote_host(base_url: &str) -> anyhow::Result<()>
 
 pub(super) async fn load_exec_server_config(
     root_config_overrides: &CliConfigOverrides,
+    root_loader_overrides: &LoaderOverrides,
     strict_config: bool,
     enable_cloud_config: bool,
     stdin_auth: Option<&CodexAuth>,
@@ -186,11 +187,12 @@ pub(super) async fn load_exec_server_config(
         .map_err(anyhow::Error::msg)?;
     let bootstrap_cli_overrides = cli_kv_overrides.clone();
     let mut builder = ConfigBuilder::default()
+        .loader_overrides(root_loader_overrides.clone())
         .cli_overrides(cli_kv_overrides)
         .strict_config(strict_config);
     if enable_cloud_config {
         let codex_home = find_codex_home()?;
-        let loader_overrides = LoaderOverrides::default();
+        let loader_overrides = root_loader_overrides.clone();
         let network_policy = EmbeddedNetworkPolicy::load(&loader_overrides).await;
         let bootstrap_cwd = AbsolutePathBuf::current_dir()?;
         let bootstrap_config = load_config_toml_with_layer_stack(

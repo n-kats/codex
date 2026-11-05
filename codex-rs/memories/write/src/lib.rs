@@ -118,7 +118,12 @@ mod workspace_diff {
 }
 
 pub fn memory_root(codex_home: &AbsolutePathBuf) -> AbsolutePathBuf {
-    codex_home.join("memories")
+    let root = codex_core::config::resolve_memory_root(
+        codex_home.as_path(),
+        codex_protocol::MemoryVersion::V1,
+        codex_protocol::MemoryVersion::V1,
+    );
+    AbsolutePathBuf::from_absolute_path(root).unwrap_or_else(|_| codex_home.join("memories"))
 }
 
 pub fn rollout_summaries_dir(root: &Path) -> PathBuf {

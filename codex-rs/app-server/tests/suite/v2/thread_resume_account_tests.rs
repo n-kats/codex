@@ -1,9 +1,12 @@
 //! Exercises CLI account checks through thread/resume, including attachment to loaded threads.
 
 use super::*;
+use app_test_support::ChatGptAuthFixture;
 use app_test_support::ChatGptIdTokenClaims;
 use app_test_support::encode_id_token;
+use app_test_support::write_chatgpt_auth;
 use codex_app_server_protocol::LoginAccountResponse;
+use codex_config::types::AuthCredentialsStoreMode;
 use pretty_assertions::assert_eq;
 use test_case::test_case;
 

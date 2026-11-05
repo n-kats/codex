@@ -85,7 +85,8 @@ async fn selected_plugin_mcp_startup_respects_explicit_mentions(
 ) -> Result<()> {
     let explicitly_mentioned = !matches!(mention, PluginMention::Unmentioned);
     let responses_server = responses::start_mock_server().await;
-    let fixture = selected_capability_fixture(&responses_server.uri(), &responses_server.uri())?;
+    let mut fixture =
+        selected_capability_fixture(&responses_server.uri(), &responses_server.uri())?;
     mount_analytics_capture(&responses_server, fixture.codex_home.path()).await?;
     let config_path = fixture.codex_home.path().join("config.toml");
     let config = std::fs::read_to_string(&config_path)?.replace(
@@ -113,7 +114,7 @@ async fn selected_plugin_mcp_startup_respects_explicit_mentions(
     )
     .await?;
     let mut exec_server =
-        spawn_exec_server(fixture.codex_home.path(), &fixture.exec_server_url).await?;
+        spawn_exec_server(fixture.codex_home.path(), &mut fixture.exec_server_url).await?;
     add_environment(&mut app_server, &fixture.exec_server_url).await?;
 
     let text_input = |text| UserInput::Text {
@@ -226,7 +227,7 @@ async fn managed_plugins_requirement_disables_selected_executor_plugin_capabilit
         Duration::ZERO,
     )
     .await?;
-    let fixture = selected_capability_fixture(&responses_server.uri(), &apps_url)?;
+    let mut fixture = selected_capability_fixture(&responses_server.uri(), &apps_url)?;
     let config_path = fixture.codex_home.path().join("config.toml");
     let config = std::fs::read_to_string(&config_path)?.replace(
         "executor_capability_discovery = true",
@@ -260,7 +261,7 @@ async fn managed_plugins_requirement_disables_selected_executor_plugin_capabilit
     )
     .await?;
     let mut exec_server =
-        spawn_exec_server(fixture.codex_home.path(), &fixture.exec_server_url).await?;
+        spawn_exec_server(fixture.codex_home.path(), &mut fixture.exec_server_url).await?;
     add_environment(&mut app_server, &fixture.exec_server_url).await?;
 
     run_turn(
@@ -310,7 +311,7 @@ async fn selected_capability_stack_tracks_environment_selection_and_resume() -> 
         Duration::ZERO,
     )
     .await?;
-    let fixture = selected_capability_fixture(&responses_server.uri(), &apps_url)?;
+    let mut fixture = selected_capability_fixture(&responses_server.uri(), &apps_url)?;
 
     let response_mock = responses::mount_sse_sequence(
         &responses_server,
@@ -387,7 +388,7 @@ async fn selected_capability_stack_tracks_environment_selection_and_resume() -> 
     assert_selected_capabilities_absent(&initial_requests[0]);
 
     let mut exec_server =
-        spawn_exec_server(fixture.codex_home.path(), &fixture.exec_server_url).await?;
+        spawn_exec_server(fixture.codex_home.path(), &mut fixture.exec_server_url).await?;
     add_environment(&mut app_server, &fixture.exec_server_url).await?;
 
     // The next turn selects the executor; its server mention waits for MCP startup.
@@ -452,7 +453,8 @@ async fn selected_capability_stack_tracks_environment_selection_and_resume() -> 
             .is_some_and(|text| text.contains(NO_SELECTED_SKILLS_MESSAGE))
     );
 
-    exec_server = spawn_exec_server(fixture.codex_home.path(), &fixture.exec_server_url).await?;
+    exec_server =
+        spawn_exec_server(fixture.codex_home.path(), &mut fixture.exec_server_url).await?;
     add_environment(&mut app_server, &fixture.exec_server_url).await?;
 
     run_turn(
@@ -560,11 +562,9 @@ fn selected_capability_fixture(
         AuthCredentialsStoreMode::File,
     )?;
 
-    // Reserve the URL before app-server starts. The configured environment initially fails to
-    // connect, then environment/add points the same stable ID at the same URL once it is live.
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-    let exec_server_url = format!("ws://{}", listener.local_addr()?);
-    drop(listener);
+    // Port zero keeps the initially configured environment unavailable. Each exec-server
+    // startup replaces it with the actual dynamically assigned URL before environment/add.
+    let exec_server_url = "ws://127.0.0.1:0".to_string();
     std::fs::write(
         codex_home.path().join("environments.toml"),
         format!(
@@ -827,9 +827,10 @@ async fn add_environment(app_server: &mut TestAppServer, exec_server_url: &str) 
     Ok(())
 }
 
-async fn spawn_exec_server(codex_home: &std::path::Path, url: &str) -> Result<Child> {
+async fn spawn_exec_server(codex_home: &std::path::Path, url: &mut String) -> Result<Child> {
+    *url = "ws://127.0.0.1:0".to_string();
     let mut child = Command::new(codex_utils_cargo_bin::cargo_bin("codex")?)
-        .args(["exec-server", "--listen", url])
+        .args(["exec-server", "--listen", url.as_str()])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -847,7 +848,8 @@ async fn spawn_exec_server(codex_home: &std::path::Path, url: &str) -> Result<Ch
             .await
             .context("timed out waiting for exec-server URL")??
             .context("exec-server exited before printing its URL")?;
-        if line.trim() == url {
+        if line.starts_with("ws://127.0.0.1:") {
+            *url = line;
             return Ok(child);
         }
     }

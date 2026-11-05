@@ -35,6 +35,7 @@ use codex_tools::ToolSpec;
 use codex_utils_output_truncation::approx_token_count;
 use codex_utils_path_uri::PathUri;
 use codex_utils_string::truncate_middle_chars;
+use futures::future::BoxFuture;
 
 use super::super::shell_spec::CommandToolOptions;
 use super::super::shell_spec::create_exec_command_tool_with_environment_id;
@@ -309,17 +310,22 @@ fn one_shot_exec_command_spec(spec: ToolSpec) -> ToolSpec {
 }
 
 impl CoreToolRuntime for ExecCommandHandler {
-    fn telemetry_tags(&self, invocation: &ToolInvocation) -> ToolTelemetryTags {
+    fn telemetry_tags<'a>(
+        &'a self,
+        invocation: &'a ToolInvocation,
+    ) -> BoxFuture<'a, ToolTelemetryTags> {
         // Record the configured mode so fallback calls remain in their rollout cohort.
         // This does not indicate whether the command actually used a snapshot.
-        let mode = if invocation.session.enabled(Feature::ShellSnapshotV2) {
-            "v2"
-        } else if invocation.session.enabled(Feature::ShellSnapshot) {
-            "v1"
-        } else {
-            "disabled"
-        };
-        vec![("shell_snapshot_mode", mode.to_string())]
+        Box::pin(async move {
+            let mode = if invocation.session.enabled(Feature::ShellSnapshotV2) {
+                "v2"
+            } else if invocation.session.enabled(Feature::ShellSnapshot) {
+                "v1"
+            } else {
+                "disabled"
+            };
+            vec![("shell_snapshot_mode", mode.to_string())]
+        })
     }
 
     fn environments_for_input(

@@ -5,6 +5,7 @@ use crate::memory_import::resources_root;
 use crate::model::ExternalAgentConfigMigrationItem;
 use crate::model::ExternalAgentConfigMigrationItemType;
 use crate::model::MigrationDetails;
+use codex_core::config::resolve_memory_root;
 use codex_protocol::MemoryVersion;
 use std::collections::BTreeSet;
 use std::io;
@@ -18,10 +19,8 @@ pub(super) fn detect(
     let memory_files = discover_external_memory_files(external_agent_home)?;
     let mut memory = BTreeSet::new();
     for version in memory_versions(codex_home, selection)? {
-        memory.extend(projects_needing_import(
-            &codex_home.join(version.directory_name()),
-            &memory_files,
-        )?);
+        let memory_root = resolve_memory_root(codex_home, selection, *version);
+        memory.extend(projects_needing_import(&memory_root, &memory_files)?);
     }
     if memory.is_empty() {
         return Ok(None);
@@ -32,7 +31,12 @@ pub(super) fn detect(
         description: format!(
             "Import memory files from {} to {}",
             external_agent_home.join("projects").display(),
-            resources_root(&codex_home.join(MemoryVersion::V2.directory_name())).display()
+            resources_root(&resolve_memory_root(
+                codex_home,
+                selection,
+                MemoryVersion::V2,
+            ))
+            .display()
         ),
         cwd: None,
         details: Some(MigrationDetails {

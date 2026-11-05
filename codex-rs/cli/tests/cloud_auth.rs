@@ -11,6 +11,7 @@ use wiremock::matchers::header;
 use wiremock::matchers::path;
 
 #[tokio::test]
+#[ignore = "Cloud Tasks is intentionally removed from the custom CLI"]
 async fn cloud_list_respects_the_credential_store_and_trusted_destinations() -> Result<()> {
     let server = MockServer::start().await;
     let codex_home = TempDir::new()?;

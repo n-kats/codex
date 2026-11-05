@@ -1,12 +1,25 @@
 use std::path::Path;
+use std::path::PathBuf;
+
+use codex_utils_absolute_path::AbsolutePathBuf;
 
 pub async fn clear_memory_roots_contents(codex_home: &Path) -> std::io::Result<()> {
-    for memory_root in [
+    let mut memory_roots = vec![
         codex_home.join("memories"),
         codex_home.join("memories_v2"),
         codex_home.join("memories_extensions"),
-    ] {
-        clear_memory_root_contents(memory_root.as_path()).await?;
+    ];
+    if let Some(memory_home) =
+        std::env::var_os("CODEX_MEMORIES_HOME").filter(|memory_home| !memory_home.is_empty())
+    {
+        let memory_home = AbsolutePathBuf::relative_to_current_dir(PathBuf::from(memory_home))?;
+        memory_roots.push(memory_home.to_path_buf());
+        memory_roots.push(memory_home.join("memories").to_path_buf());
+        memory_roots.push(memory_home.join("memories_v2").to_path_buf());
+    }
+
+    for memory_root in memory_roots {
+        clear_memory_root_contents(&memory_root).await?;
     }
 
     Ok(())

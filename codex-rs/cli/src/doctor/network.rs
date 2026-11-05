@@ -5,6 +5,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use codex_arg0::Arg0DispatchPaths;
+use codex_config::LoaderOverrides;
 use codex_core::config::Config;
 #[cfg(target_os = "macos")]
 use codex_http_client::MacosSystemProxyConfiguration;
@@ -27,21 +28,23 @@ use super::read_probe_file;
 
 pub(super) async fn checks(
     overrides: CliConfigOverrides,
+    loader_overrides: LoaderOverrides,
     interactive: &TuiCli,
     arg0_paths: &Arg0DispatchPaths,
     progress: &Arc<dyn DoctorProgress>,
 ) -> Vec<DoctorCheck> {
     progress.begin("config");
     let config_started = Instant::now();
-    let config = match super::load_config(overrides, interactive, arg0_paths).await {
-        Ok(config) => config,
-        Err(error) => {
-            let check = super::config_load_failure(&error)
-                .detail("network diagnostics: effective network configuration is unavailable");
-            progress.finish("config", check.status);
-            return vec![check];
-        }
-    };
+    let config =
+        match super::load_config(overrides, loader_overrides, interactive, arg0_paths).await {
+            Ok(config) => config,
+            Err(error) => {
+                let check = super::config_load_failure(&error)
+                    .detail("network diagnostics: effective network configuration is unavailable");
+                progress.finish("config", check.status);
+                return vec![check];
+            }
+        };
     let config_duration = config_started.elapsed();
     let mut config_check = super::config_check(&config).detail(format!(
         "configuration load ms: {}",
